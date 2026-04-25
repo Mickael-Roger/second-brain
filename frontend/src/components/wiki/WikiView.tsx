@@ -1,10 +1,10 @@
 // Wiki view: tree on the left, rendered note in the center, backlinks on the
 // right. Search bar above the tree.
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Home, Link2, Menu, Pencil, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Home, Link2, Menu, Pencil, X } from "lucide-react";
 
 import { api, type TreeEntry, type VaultNote } from "@/lib/api";
 import VaultTree from "./VaultTree";
@@ -20,9 +20,62 @@ export default function WikiView() {
   // null = vault home (root folder index). "" is reserved as a synonym for null.
   // A non-empty string is either a file path or a folder path.
   const [activePath, setActivePath] = useState<string | null>(null);
+  const [past, setPast] = useState<(string | null)[]>([]);
+  const [future, setFuture] = useState<(string | null)[]>([]);
   const [editing, setEditing] = useState(false);
   const [treeOpen, setTreeOpen] = useState(false);
   const [backlinksOpen, setBacklinksOpen] = useState(false);
+
+  // Browser-style navigation: every entry-point should call `navigate` so
+  // back/forward stay coherent. The arrow buttons use `goBack` / `goForward`,
+  // which traverse the stacks WITHOUT touching the future stack.
+  const navigate = useCallback(
+    (target: string | null) => {
+      setActivePath((prev) => {
+        if (prev === target) return prev;
+        setPast((p) => [...p, prev]);
+        setFuture([]);
+        return target;
+      });
+    },
+    [],
+  );
+
+  const goBack = useCallback(() => {
+    setPast((p) => {
+      if (p.length === 0) return p;
+      const prev = p[p.length - 1];
+      setFuture((f) => [activePath, ...f]);
+      setActivePath(prev);
+      return p.slice(0, -1);
+    });
+  }, [activePath]);
+
+  const goForward = useCallback(() => {
+    setFuture((f) => {
+      if (f.length === 0) return f;
+      const next = f[0];
+      setPast((p) => [...p, activePath]);
+      setActivePath(next);
+      return f.slice(1);
+    });
+  }, [activePath]);
+
+  // Alt+Left / Alt+Right keyboard shortcuts (browser convention).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!e.altKey || e.metaKey || e.ctrlKey) return;
+      if (e.key === "ArrowLeft") {
+        e.preventDefault();
+        goBack();
+      } else if (e.key === "ArrowRight") {
+        e.preventDefault();
+        goForward();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [goBack, goForward]);
 
   // Switching notes always exits edit mode and closes mobile drawers.
   useEffect(() => {
@@ -54,7 +107,7 @@ export default function WikiView() {
 
   const treeAside = (
     <>
-      <SearchBar onOpen={setActivePath} />
+      <SearchBar onOpen={navigate} />
       <div className="flex-1 overflow-y-auto">
         {tree.isLoading ? (
           <p className="px-3 py-2 text-xs text-muted">{t("common.loading")}</p>
@@ -66,7 +119,7 @@ export default function WikiView() {
           <VaultTree
             entries={tree.data ?? []}
             activePath={activePath}
-            onSelect={setActivePath}
+            onSelect={navigate}
           />
         )}
       </div>
@@ -115,16 +168,38 @@ export default function WikiView() {
           >
             <Menu className="h-5 w-5" />
           </button>
-          <button
-            type="button"
-            onClick={() => setActivePath(null)}
-            className={`flex items-center gap-1 rounded px-1.5 py-1 text-muted hover:bg-bg hover:text-text ${activePath === null ? "text-accent" : ""}`}
-            title={t("wiki.vaultRoot")}
-            aria-label={t("wiki.vaultRoot")}
-          >
-            <Home className="h-4 w-4" />
-          </button>
-          <Crumbs path={activePath} onCrumb={setActivePath} />
+          <div className="flex items-center gap-0.5">
+            <button
+              type="button"
+              onClick={goBack}
+              disabled={past.length === 0}
+              className="flex items-center justify-center rounded px-1.5 py-1 text-muted hover:bg-bg hover:text-text disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-muted"
+              title={t("wiki.back") + " (Alt+←)"}
+              aria-label={t("wiki.back")}
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </button>
+            <button
+              type="button"
+              onClick={() => navigate(null)}
+              className={`flex items-center justify-center rounded px-1.5 py-1 hover:bg-bg hover:text-text ${activePath === null ? "text-accent" : "text-muted"}`}
+              title={t("wiki.vaultRoot")}
+              aria-label={t("wiki.vaultRoot")}
+            >
+              <Home className="h-4 w-4" />
+            </button>
+            <button
+              type="button"
+              onClick={goForward}
+              disabled={future.length === 0}
+              className="flex items-center justify-center rounded px-1.5 py-1 text-muted hover:bg-bg hover:text-text disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-muted"
+              title={t("wiki.forward") + " (Alt+→)"}
+              aria-label={t("wiki.forward")}
+            >
+              <ChevronRight className="h-4 w-4" />
+            </button>
+          </div>
+          <Crumbs path={activePath} onCrumb={navigate} />
           {activeKind === "file" && note.data && !editing && (
             <>
               <button
@@ -172,7 +247,7 @@ export default function WikiView() {
                   <NoteRenderer
                     content={note.data.content}
                     treeEntries={tree.data ?? []}
-                    onOpen={setActivePath}
+                    onOpen={navigate}
                   />
                 </div>
               ) : null
@@ -181,7 +256,7 @@ export default function WikiView() {
                 <FolderIndex
                   folder={activePath ?? ""}
                   entries={tree.data ?? []}
-                  onOpen={setActivePath}
+                  onOpen={navigate}
                 />
               </div>
             )}
@@ -190,7 +265,7 @@ export default function WikiView() {
           {/* Backlinks (desktop: visible at lg+ only when reading a file) */}
           {!editing && activeKind === "file" && note.data && (
             <aside className="hidden w-64 shrink-0 border-l border-border bg-surface lg:block">
-              <Backlinks links={note.data.backlinks} onOpen={setActivePath} />
+              <Backlinks links={note.data.backlinks} onOpen={navigate} />
             </aside>
           )}
 
@@ -203,7 +278,7 @@ export default function WikiView() {
                 className="ml-auto flex h-full w-72 flex-col border-l border-border bg-surface"
                 onClick={(e) => e.stopPropagation()}
               >
-                <Backlinks links={note.data.backlinks} onOpen={setActivePath} />
+                <Backlinks links={note.data.backlinks} onOpen={navigate} />
               </aside>
             </div>
           )}

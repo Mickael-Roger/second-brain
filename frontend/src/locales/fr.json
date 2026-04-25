@@ -33,6 +33,8 @@
   "wiki": {
     "title": "Wiki",
     "vaultRoot": "Accueil du vault",
+    "back": "Précédent",
+    "forward": "Suivant",
     "empty": "Choisissez une note à lire.",
     "emptyFolder": "Dossier vide.",
     "foldersLabel": "Dossiers",

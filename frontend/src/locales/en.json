@@ -33,6 +33,8 @@
   "wiki": {
     "title": "Wiki",
     "vaultRoot": "Vault home",
+    "back": "Back",
+    "forward": "Forward",
     "empty": "Pick a note to read.",
     "emptyFolder": "Empty folder.",
     "foldersLabel": "Folders",
