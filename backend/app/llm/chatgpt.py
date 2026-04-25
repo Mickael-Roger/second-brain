@@ -35,6 +35,12 @@ log = logging.getLogger(__name__)
 
 ENDPOINT = "https://chatgpt.com/backend-api/codex/responses"
 
+
+def _truncate(s: str | None, n: int = 4000) -> str:
+    if not s:
+        return ""
+    return s if len(s) <= n else s[:n] + f"…[+{len(s) - n} chars]"
+
 # The Responses API enforces tool/function names matching ^[a-zA-Z0-9_-]+$.
 # Our internal names use a `family.verb` shape with a dot, so encode the dot
 # on the way out and reverse on the way in. Identical scheme to openai_compat.
@@ -238,9 +244,10 @@ class ChatGPTProvider:
         # output items.
         text_per_output: dict[int, list[str]] = {}
         tool_calls: dict[int, dict[str, Any]] = {}
-        ordered_indices: list[int] = []  # stable order for the final message
+        ordered_indices: list[int] = []     # stable order for the final message
         current_event = ""
         completed_response: dict[str, Any] | None = None
+        seen_event_types: set[str] = set()  # for diagnostic logging
 
         async for raw_line in resp.aiter_lines():
             if not raw_line:
@@ -262,6 +269,7 @@ class ChatGPTProvider:
                 continue
 
             etype = current_event or payload.get("type", "")
+            seen_event_types.add(etype)
 
             if etype == "response.output_item.added":
                 item = payload.get("item") or {}
@@ -286,6 +294,46 @@ class ChatGPTProvider:
                     text_per_output.setdefault(idx, []).append(delta)
                     yield StreamEvent(type="text_delta", text=delta)
 
+            elif etype == "response.output_text.done":
+                # Some servers only emit `done` (with the full text) and not
+                # `delta`. Capture the text if we haven't accumulated any yet.
+                idx = int(payload.get("output_index", 0))
+                if idx not in ordered_indices:
+                    ordered_indices.append(idx)
+                full = payload.get("text", "") or ""
+                if full and not text_per_output.get(idx):
+                    text_per_output[idx] = [full]
+                    yield StreamEvent(type="text_delta", text=full)
+
+            elif etype == "response.output_item.done":
+                # Item finalization — extract text/function_call from the
+                # carried `item` if we missed the deltas.
+                item = payload.get("item") or {}
+                idx = int(payload.get("output_index", 0))
+                if idx not in ordered_indices:
+                    ordered_indices.append(idx)
+                if item.get("type") == "message":
+                    if not text_per_output.get(idx):
+                        text = "".join(
+                            c.get("text", "") or ""
+                            for c in (item.get("content") or [])
+                            if c.get("type") == "output_text"
+                        )
+                        if text:
+                            text_per_output[idx] = [text]
+                            yield StreamEvent(type="text_delta", text=text)
+                elif item.get("type") == "function_call":
+                    tool_calls.setdefault(
+                        idx,
+                        {
+                            "id": item.get("call_id") or item.get("id") or f"call_{idx}",
+                            "name": _decode_tool_name(item.get("name", "")),
+                            "arguments": item.get("arguments", "") or "",
+                        },
+                    )
+                    if not tool_calls[idx]["arguments"] and item.get("arguments"):
+                        tool_calls[idx]["arguments"] = item["arguments"]
+
             elif etype == "response.function_call_arguments.delta":
                 idx = int(payload.get("output_index", 0))
                 if idx not in ordered_indices:
@@ -298,6 +346,8 @@ class ChatGPTProvider:
                     slot["arguments"] += delta
 
             elif etype == "response.completed":
+                # Codex sometimes wraps under `response`, sometimes ships the
+                # response object directly in the data payload.
                 completed_response = payload.get("response") or payload
 
             elif etype == "error" or etype == "response.failed":
@@ -311,10 +361,41 @@ class ChatGPTProvider:
         # response object, prefer that — it's authoritative.
         if completed_response is not None:
             final_blocks = self._blocks_from_completed(completed_response)
+            if not final_blocks:
+                # Fall back to streamed accumulators if the completed
+                # response had an unexpected shape.
+                final_blocks = self._blocks_from_streamed(
+                    ordered_indices, text_per_output, tool_calls
+                )
         else:
             final_blocks = self._blocks_from_streamed(
                 ordered_indices, text_per_output, tool_calls
             )
+
+        if not final_blocks:
+            log.warning(
+                "ChatGPT %s produced an empty assistant turn. "
+                "events_seen=%s; completed_response_keys=%s; "
+                "completed_output=%s; ordered=%s; text_buffers=%s; tool_calls=%s",
+                self.name,
+                sorted(seen_event_types),
+                sorted((completed_response or {}).keys()) if completed_response else None,
+                _truncate(json.dumps((completed_response or {}).get("output"), default=str)),
+                ordered_indices,
+                {k: "".join(v)[:200] for k, v in text_per_output.items()},
+                {k: {**v, "arguments": str(v.get("arguments"))[:200]} for k, v in tool_calls.items()},
+            )
+            # Surface a clearer error to the orchestrator instead of a
+            # silently-empty bubble.
+            yield StreamEvent(
+                type="error",
+                error=(
+                    f"ChatGPT provider {self.name} returned no usable content "
+                    f"(events seen: {sorted(seen_event_types)}). "
+                    f"Check the backend log for the full payload."
+                ),
+            )
+            return
 
         # Emit a tool_use event for each function call (matches the OpenAI-compat
         # adapter's contract — orchestrator depends on these to dispatch tools).
