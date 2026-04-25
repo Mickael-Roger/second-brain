@@ -77,12 +77,12 @@ def get_note(
 @router.get("/search", response_model=list[SearchHit])
 def get_search(
     q: str = Query(..., min_length=1),
-    folder: str = Query(default=""),
+    path: str = Query(default=""),
     limit: int = Query(default=50, ge=1, le=500),
     _user: str = Depends(current_user),
 ) -> list[SearchHit]:
     try:
-        return [SearchHit(**h) for h in search_vault(q, in_folder=folder, limit=limit)]
+        return [SearchHit(**h) for h in search_vault(q, in_path=path, limit=limit)]
     except VaultPathError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except RuntimeError as exc:

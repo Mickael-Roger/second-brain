@@ -14,6 +14,7 @@ from app.vault import (
     append_note,
     create_note,
     delete_note,
+    find_notes,
     list_tree,
     move_note,
     read_note,
@@ -54,12 +55,25 @@ async def _list(args: dict[str, Any]):
     return text_result("\n".join(lines))
 
 
-async def _search(args: dict[str, Any]):
-    q = args["query"]
+async def _find(args: dict[str, Any]):
+    pattern = args["pattern"]
     folder = args.get("folder", "")
+    limit = int(args.get("limit", 50))
+    try:
+        paths = find_notes(pattern, in_folder=folder, limit=limit)
+    except (FileNotFoundError, VaultPathError) as exc:
+        return text_result(str(exc), is_error=True)
+    if not paths:
+        return text_result("(no matching notes)")
+    return text_result("\n".join(paths))
+
+
+async def _grep(args: dict[str, Any]):
+    q = args["query"]
+    path = args.get("path", "")
     limit = int(args.get("limit", 30))
     try:
-        hits = search_vault(q, in_folder=folder, limit=limit)
+        hits = search_vault(q, in_path=path, limit=limit)
     except VaultPathError as exc:
         return text_result(str(exc), is_error=True)
     if not hits:
@@ -154,18 +168,60 @@ def register_all(reg: ToolRegistry) -> None:
         _list,
     )
     reg.register(
-        "vault.search",
-        "Full-text search across the vault (ripgrep). Returns up to `limit` matches.",
+        "vault.find",
+        (
+            "Find notes by FILENAME (not content). USE THIS FIRST when the user "
+            "mentions a topic — there is often a dedicated note named for it. "
+            "`pattern` is matched against the basename AND the relative path, "
+            "case-insensitively. Glob characters `*` `?` `[…]` are supported "
+            "(e.g. `S3NS*`, `*cheatsheet*`); without globs, plain substring "
+            "match. Examples that match `Tech/S3NS Cheatsheet.md`: "
+            "`S3NS`, `Cheatsheet`, `S3NS*`, `Tech/S3NS`."
+        ),
         {
             "type": "object",
             "properties": {
-                "query": {"type": "string"},
-                "folder": {"type": "string", "default": ""},
+                "pattern": {
+                    "type": "string",
+                    "description": "Filename pattern — substring or glob.",
+                },
+                "folder": {
+                    "type": "string",
+                    "description": "Restrict to a folder. Empty = whole vault.",
+                    "default": "",
+                },
+                "limit": {"type": "integer", "default": 50, "minimum": 1, "maximum": 500},
+            },
+            "required": ["pattern"],
+        },
+        _find,
+    )
+    reg.register(
+        "vault.grep",
+        (
+            "Search inside note CONTENT (ripgrep). Use this AFTER `vault.find` "
+            "when a topic is likely scattered across notes rather than being "
+            "its own page. Keep `query` short — single keywords or 2–3 words. "
+            "Long sentences almost never match. `path` may be empty (whole "
+            "vault), a folder, or a single .md file."
+        ),
+        {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Short keyword phrase. Smart-case matching.",
+                },
+                "path": {
+                    "type": "string",
+                    "description": "Vault-relative folder OR file path. Empty = whole vault.",
+                    "default": "",
+                },
                 "limit": {"type": "integer", "default": 30, "minimum": 1, "maximum": 200},
             },
             "required": ["query"],
         },
-        _search,
+        _grep,
     )
     reg.register(
         "vault.write",

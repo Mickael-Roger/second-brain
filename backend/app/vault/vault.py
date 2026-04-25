@@ -9,6 +9,7 @@ our purposes (we trust that an in-flight write completes between reads).
 from __future__ import annotations
 
 import asyncio
+import fnmatch
 import logging
 import shutil
 import subprocess
@@ -63,14 +64,55 @@ def list_tree(folder: str = "", *, glob: str = "**/*") -> list[dict]:
     return out
 
 
-def search_vault(query: str, *, in_folder: str = "", limit: int = 200) -> list[dict]:
-    """Full-text search via ripgrep, falling back to grep -r if rg is absent.
+def find_notes(pattern: str, *, in_folder: str = "", limit: int = 50) -> list[str]:
+    """Match notes by NAME (not content). Returns vault-relative paths.
 
-    Returns [{path, line_number, snippet}, …] — vault-relative paths.
+    `pattern` rules:
+      - if it contains `*`, `?`, or `[…]`, treated as a case-insensitive glob;
+      - otherwise, a case-insensitive substring against the file's basename
+        AND its relative path (so 'S3NS' finds 'Tech/S3NS Cheatsheet.md').
+    """
+    if not pattern.strip():
+        return []
+    base = resolve_vault_path(in_folder) if in_folder else vault_root()
+    if not base.is_dir():
+        if base.is_file():
+            return []
+        raise FileNotFoundError(f"folder not found: {in_folder!r}")
+
+    has_glob = any(c in pattern for c in "*?[")
+    needle = pattern.lower()
+    root = vault_root()
+    out: list[str] = []
+    for p in base.rglob("*.md"):
+        rel_parts = p.relative_to(root).parts
+        if any(part.startswith(".") for part in rel_parts):
+            continue
+        rel = p.relative_to(root).as_posix()
+        name = p.name
+        if has_glob:
+            matched = fnmatch.fnmatchcase(name.lower(), needle) or fnmatch.fnmatchcase(
+                rel.lower(), needle
+            )
+        else:
+            matched = needle in name.lower() or needle in rel.lower()
+        if matched:
+            out.append(rel)
+            if len(out) >= limit:
+                break
+    return out
+
+
+def search_vault(query: str, *, in_path: str = "", limit: int = 200) -> list[dict]:
+    """Full-text CONTENT search via ripgrep (falls back to grep -r).
+
+    `in_path` may be a folder (recursive) or a single `.md` file. Empty =
+    whole vault. Returns [{path, line_number, snippet}, …] with
+    vault-relative paths.
     """
     if not query.strip():
         return []
-    base = resolve_vault_path(in_folder) if in_folder else vault_root()
+    base = resolve_vault_path(in_path) if in_path else vault_root()
 
     rg = shutil.which("rg")
     if rg:
@@ -78,6 +120,7 @@ def search_vault(query: str, *, in_folder: str = "", limit: int = 200) -> list[d
             rg,
             "--no-heading",
             "--line-number",
+            "--with-filename",          # force prefix even when target is a single file
             "--smart-case",
             "--max-count",
             "5",
@@ -94,7 +137,7 @@ def search_vault(query: str, *, in_folder: str = "", limit: int = 200) -> list[d
     else:
         cmd = [
             "grep",
-            "-rIn",
+            "-rHIn",                    # -H: always print filename
             "--exclude-dir=.git",
             "--exclude-dir=.obsidian",
             "--",
