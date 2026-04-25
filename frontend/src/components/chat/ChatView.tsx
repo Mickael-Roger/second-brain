@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useQuery } from "@tanstack/react-query";
-import { Menu, X } from "lucide-react";
+import { Menu, Wrench, X } from "lucide-react";
 
 import { api, type ChatDetail, type ProviderInfo } from "@/lib/api";
 import { useChatStream, useDefaultSelection } from "@/lib/chat";
@@ -11,10 +11,21 @@ import MessageList from "@/components/chat/MessageList";
 import Composer from "@/components/chat/Composer";
 import ChatHistory from "@/components/chat/ChatHistory";
 
+const TOOL_DETAILS_KEY = "sb.chat.showToolDetails";
+
 export default function ChatView() {
   const { t } = useTranslation();
   const [activeChatId, setActiveChatId] = useState<string | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [showToolDetails, setShowToolDetails] = useState<boolean>(() => {
+    if (typeof window === "undefined") return false;
+    return window.localStorage.getItem(TOOL_DETAILS_KEY) === "1";
+  });
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(TOOL_DETAILS_KEY, showToolDetails ? "1" : "0");
+  }, [showToolDetails]);
 
   // Selecting / starting a chat closes the mobile drawer.
   useEffect(() => {
@@ -97,6 +108,19 @@ export default function ChatView() {
           <div className="flex-1 truncate text-sm text-muted">
             {detail.data?.title ?? t("sidebar.newChat")}
           </div>
+          <button
+            type="button"
+            onClick={() => setShowToolDetails((v) => !v)}
+            title={t("chat.toolDetailsToggle")}
+            aria-pressed={showToolDetails}
+            className={`flex items-center justify-center rounded border px-2 py-1 text-xs ${
+              showToolDetails
+                ? "border-accent text-accent"
+                : "border-border text-muted hover:border-accent hover:text-text"
+            }`}
+          >
+            <Wrench className="h-3.5 w-3.5" />
+          </button>
           {providerOptions.length > 0 && (
             <select
               value={selection}
@@ -123,6 +147,7 @@ export default function ChatView() {
             streamingText={streamingText ?? undefined}
             pendingToolUse={pendingToolUse}
             busy={busy}
+            showToolDetails={showToolDetails}
           />
         )}
 

@@ -28,7 +28,8 @@
     "empty": "Démarrez une conversation. Votre second cerveau a accès à vos outils.",
     "noHistory": "Aucune discussion.",
     "model": "Modèle",
-    "deleteConfirm": "Supprimer cette discussion ?"
+    "deleteConfirm": "Supprimer cette discussion ?",
+    "toolDetailsToggle": "Afficher les appels d'outils (debug)"
   },
   "wiki": {
     "title": "Wiki",

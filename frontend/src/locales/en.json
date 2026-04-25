@@ -28,7 +28,8 @@
     "empty": "Start a conversation. Your second brain has access to your tools.",
     "noHistory": "No chats yet.",
     "model": "Model",
-    "deleteConfirm": "Delete this chat?"
+    "deleteConfirm": "Delete this chat?",
+    "toolDetailsToggle": "Show tool calls (debug)"
   },
   "wiki": {
     "title": "Wiki",

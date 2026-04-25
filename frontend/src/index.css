@@ -205,6 +205,30 @@ textarea {
   scroll-margin-top: 0.75rem;
 }
 
+/* ─── Markdown inside a chat bubble ──────────────────────────────────── */
+/* Tighter spacing than the wiki view; collapse first/last child margins
+   so the bubble's px-4 py-3 stays visible. */
+.prose-sb-chat {
+  font-size: 0.95rem;
+  line-height: 1.5;
+}
+.prose-sb-chat > *:first-child { margin-top: 0; }
+.prose-sb-chat > *:last-child  { margin-bottom: 0; }
+.prose-sb-chat h1 { font-size: 1.2rem; margin-top: 0.6em; margin-bottom: 0.35em; }
+.prose-sb-chat h2 { font-size: 1.1rem; margin-top: 0.55em; margin-bottom: 0.3em; }
+.prose-sb-chat h3 { font-size: 1rem;   margin-top: 0.5em;  margin-bottom: 0.25em; }
+.prose-sb-chat p,
+.prose-sb-chat ul,
+.prose-sb-chat ol,
+.prose-sb-chat pre,
+.prose-sb-chat blockquote {
+  margin-top: 0.4em;
+  margin-bottom: 0.4em;
+}
+.prose-sb-chat pre {
+  font-size: 0.85em;
+}
+
 /* ─── Thinking indicator (animated dots while the LLM works) ────────── */
 @keyframes sb-thinking-fade {
   0%, 80%, 100% { opacity: 0.2; }
