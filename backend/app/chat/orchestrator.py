@@ -38,7 +38,12 @@ _DEFAULT_SYSTEM_PROMPT = (
     "unnecessary preambles. "
     "When the user wants to remember something, decide WHERE in their Obsidian "
     "vault it belongs (using INDEX.md as the map) and write it there with the "
-    "appropriate tool — do not just acknowledge in chat."
+    "appropriate tool — do not just acknowledge in chat. "
+    "USER.md tells you who the user is; PREFERENCES.md tells you how they want "
+    "you to operate. Update either one via vault.write / vault.append when the "
+    "user shares new facts about themselves or expresses a new operating "
+    "preference (e.g. 'I prefer cloze deletions for Anki', 'remember I'm "
+    "vegetarian')."
 )
 
 
@@ -58,33 +63,25 @@ class _NullDispatcher:
 _NULL_DISPATCHER: ToolDispatcher = _NullDispatcher()
 
 
-def _read_index() -> str | None:
-    """Read INDEX.md from the vault, if available. Failures are non-fatal —
-    the brain still works without one, just less informed."""
-    try:
-        from app.vault import read_note  # local import: vault may be unconfigured
-    except Exception:
-        return None
-    s = get_settings()
-    if s.obsidian.vault_path is None:
-        return None
-    try:
-        n = read_note(s.obsidian.index_file)
-    except Exception as exc:
-        log.debug("INDEX.md not loaded: %s", exc)
-        return None
-    return n.content
-
-
 def _build_system_prompt(custom: str | None, language: str) -> str:
     base = custom or _DEFAULT_SYSTEM_PROMPT
     base += f"\n\nThe user's preferred language is {language.upper()}."
-    index = _read_index()
-    if index:
-        base += (
-            "\n\n## Vault structure (from INDEX.md — your map of the user's brain)\n\n"
-            + index.strip()
-        )
+
+    # Read INDEX.md / USER.md / PREFERENCES.md (any may be missing — silently
+    # skipped). Late import: the vault package may be unconfigured at boot.
+    try:
+        from app.vault import read_context_files
+    except Exception:
+        return base
+
+    try:
+        files = read_context_files()
+    except Exception as exc:
+        log.debug("context files not loaded: %s", exc)
+        return base
+
+    for f in files:
+        base += f"\n\n## {f.label}\n\n{f.content.strip()}"
     return base
 
 

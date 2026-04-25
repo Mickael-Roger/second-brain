@@ -151,8 +151,10 @@ def _select_candidates(conn: sqlite3.Connection) -> tuple[list[Path], datetime |
 
 
 _SYSTEM_PROMPT = """\
-You are reviewing one note from the user's Obsidian vault. Use INDEX.md
-(provided below) as the authoritative map of where things belong.
+You are reviewing one note from the user's Obsidian vault. Use INDEX.md (the
+vault's structural map), USER.md (facts about the user), and PREFERENCES.md
+(operating preferences) — all three provided below — as authoritative
+context for your proposals.
 
 Return ONE JSON object and nothing else (no preamble, no code fences). The
 schema:
@@ -172,7 +174,7 @@ Rules:
 - Only propose `tags` if the existing frontmatter is missing/wrong.
 - Only propose `refactor` for grammar / spelling / clarity / structure
   fixes that materially improve the note. Preserve the user's voice; do
-  not invent content.
+  not invent content. Honor PREFERENCES.md if it constrains style.
 - Wikilinks are suggestions for the user to consider; the system does NOT
   auto-insert them.
 - If the note is already in good shape, return all-null fields.
@@ -234,16 +236,6 @@ def parse_proposal(path: str, raw: str) -> Proposal:
 # ── prompt builders ──────────────────────────────────────────────────
 
 
-def _read_index() -> str:
-    s = get_settings()
-    if s.obsidian.vault_path is None:
-        return ""
-    idx = vault_root() / s.obsidian.index_file
-    if not idx.is_file():
-        return ""
-    return idx.read_text(encoding="utf-8")
-
-
 def _vault_paths_sample() -> list[str]:
     root = vault_root()
     paths: list[str] = []
@@ -257,21 +249,31 @@ def _vault_paths_sample() -> list[str]:
     return paths
 
 
-def _build_user_prompt(note_path: str, content: str, index: str, paths: list[str]) -> str:
+def _build_user_prompt(
+    note_path: str,
+    content: str,
+    context_files: list[Any],
+    paths: list[str],
+) -> str:
     body = content
     if len(body) > MAX_NOTE_CHARS:
         body = body[:MAX_NOTE_CHARS] + "\n\n[…content truncated for review]"
-    parts = [
-        f"## Note path\n{note_path}",
-        f"## INDEX.md (vault map)\n```\n{index.strip() or '(empty)'}\n```",
-        "## Vault paths (sample)\n" + "\n".join(f"- {p}" for p in paths),
-        f"## Note content\n```markdown\n{body}\n```",
-    ]
+
+    parts: list[str] = [f"## Note path\n{note_path}"]
+    for cf in context_files:
+        parts.append(f"## {cf.label}\n```\n{cf.content.strip() or '(empty)'}\n```")
+    parts.append("## Vault paths (sample)\n" + "\n".join(f"- {p}" for p in paths))
+    parts.append(f"## Note content\n```markdown\n{body}\n```")
     return "\n\n".join(parts)
 
 
-async def _propose(note_path: str, content: str, index: str, paths: list[str]) -> Proposal:
-    user = _build_user_prompt(note_path, content, index, paths)
+async def _propose(
+    note_path: str,
+    content: str,
+    context_files: list[Any],
+    paths: list[str],
+) -> Proposal:
+    user = _build_user_prompt(note_path, content, context_files, paths)
     msgs = [Message(role="user", content=[TextBlock(text=user)])]
     raw = await complete(_SYSTEM_PROMPT, msgs)
     return parse_proposal(note_path, raw)
@@ -344,7 +346,9 @@ async def run_organize() -> OrganizeResult:
     proposals: list[Proposal] = []
     skipped: list[tuple[str, str]] = []
     if candidates:
-        index = _read_index()
+        from app.vault import read_context_files
+
+        context_files = read_context_files()  # INDEX, USER, PREFERENCES (each optional)
         paths = _vault_paths_sample()
         for p in candidates:
             rel = p.relative_to(vault_root()).as_posix()
@@ -354,7 +358,7 @@ async def run_organize() -> OrganizeResult:
                 skipped.append((rel, f"read error: {exc}"))
                 continue
             try:
-                proposals.append(await _propose(rel, content, index, paths))
+                proposals.append(await _propose(rel, content, context_files, paths))
             except Exception as exc:
                 log.exception("organize: proposal failed for %s", rel)
                 skipped.append((rel, f"LLM error: {exc}"))

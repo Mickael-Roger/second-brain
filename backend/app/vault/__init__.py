@@ -1,3 +1,4 @@
+from .context import ContextFile, read_context_files
 from .guard import GitConflictError, ObsidianGitGuard, get_guard
 from .journal import daily_relpath, journal_files
 from .paths import resolve_vault_path, vault_root
@@ -14,6 +15,7 @@ from .vault import (
 )
 
 __all__ = [
+    "ContextFile",
     "GitConflictError",
     "NoteRead",
     "ObsidianGitGuard",
@@ -25,6 +27,7 @@ __all__ = [
     "journal_files",
     "list_tree",
     "move_note",
+    "read_context_files",
     "read_note",
     "resolve_vault_path",
     "search_vault",

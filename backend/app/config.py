@@ -112,7 +112,12 @@ class ObsidianJournalSection(BaseModel):
 
 class ObsidianSection(BaseModel):
     vault_path: Path | None = None
-    index_file: str = "INDEX.md"
+    # Vault-relative filenames for the three "context" files that get
+    # auto-injected into the LLM's system prompt at every chat session.
+    # Each file is optional — a missing file is silently skipped.
+    index_file: str = "INDEX.md"             # the vault's structural map
+    user_file: str = "USER.md"               # facts about the user
+    preferences_file: str = "PREFERENCES.md" # how the brain should operate
     journal: ObsidianJournalSection = ObsidianJournalSection()
     git: ObsidianGitSection = ObsidianGitSection()
 

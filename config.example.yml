@@ -2,8 +2,8 @@ app:
   host: 0.0.0.0
   port: 8000
   base_url: http://localhost:8000
-  language: fr
-  data_dir: /data
+  language: fr            # default UI language; FR or EN
+  data_dir: /data         # bind-mount this in Docker — holds SQLite + chat transcripts
 
 auth:
   username: mickael
@@ -12,37 +12,45 @@ auth:
   session_secret: "change-me-to-a-long-random-string"
   session_lifetime_days: 30
 
+# ---------------------------------------------------------------------------
+# LLM providers — declare as many as you like; choose one as `default`.
+# Each provider exposes one or more `models`; the first model in the list is
+# the provider's default. The chat UI picks any provider/model combo, and
+# every chat request can override per-message.
+# ---------------------------------------------------------------------------
 llm:
-  # `default` is the provider name used when the UI / chat request doesn't
-  # specify one. The default model for a provider is the first item in `models`.
-  default: openai
-  max_tool_rounds: 10
+  default: chatgpt-pro    # provider name to use when none is specified
+  max_tool_rounds: 10     # stop runaway tool-call loops
+
   providers:
+    # ── ChatGPT Plus / Pro / Team subscription via OAuth ─────────────────
+    # Authenticate ONCE with the device flow:
+    #     docker compose run --rm second-brain second-brain chatgpt-login chatgpt-pro
+    # Visit https://auth.openai.com/codex/device, enter the printed code,
+    # authorize. Tokens land at {data_dir}/chatgpt_oauth/<provider>.json
+    # and refresh automatically before every request. No api_key / base_url
+    # needed — auth comes from the OAuth token file.
+    chatgpt-pro:
+      kind: chatgpt
+      models:
+        - gpt-5-codex            # default (first in list) — codex-tuned GPT-5
+        - gpt-5-codex-high       # higher reasoning effort
+        - gpt-5-codex-low        # lower reasoning effort, faster
+
+    # ── OpenAI API (paid credits, separate from a ChatGPT subscription) ──
     openai:
       kind: openai
       base_url: https://api.openai.com/v1
       api_key: sk-REPLACE_ME
       models:
-        - gpt-4o-mini       # default for this provider (first in list)
+        - gpt-4o-mini
         - gpt-4o
         - o4-mini
 
-    # ChatGPT Plus / Pro / Team subscription via OAuth (no API credits needed).
-    # No `api_key` or `base_url` here — authentication is done once via:
-    #     docker compose run --rm second-brain second-brain chatgpt-login chatgpt-pro
-    # The device-flow login prints a URL and a code; visit
-    # https://auth.openai.com/codex/device, enter the code, authorize, and the
-    # tokens are saved under {data_dir}/chatgpt_oauth/<provider_name>.json
-    # (refreshed automatically before each request).
-    chatgpt-pro:
-      kind: chatgpt
-      models:
-        - gpt-5-codex            # default — codex-tuned GPT-5
-        - gpt-5-codex-high       # higher reasoning effort
-        - gpt-5-codex-low        # lower reasoning effort, faster
-
+    # ── Anthropic API ────────────────────────────────────────────────────
+    # Adapter ships in a later phase; entry shown here for shape parity.
     anthropic:
-      kind: anthropic       # adapter ships in phase 4; entry shown for shape
+      kind: anthropic
       base_url: https://api.anthropic.com
       api_key: sk-ant-REPLACE_ME
       models:
@@ -50,8 +58,8 @@ llm:
         - claude-sonnet-4-5
         - claude-haiku-4-5
 
-    # Any OpenAI-compatible endpoint works (vLLM, llama.cpp server, OpenRouter,
-    # Groq, a local LM Studio, ...). Just point base_url at it.
+    # ── Any OpenAI-compatible endpoint (vLLM / llama.cpp / OpenRouter /
+    #     Groq / LM Studio / Ollama / …) — just point base_url at it. ─────
     local:
       kind: openai
       base_url: http://192.168.1.20:8080/v1
@@ -59,12 +67,27 @@ llm:
       models:
         - llama-3.1-70b-instruct
 
+# ---------------------------------------------------------------------------
+# Obsidian — your vault is the brain's only memory.
+#
+# Three context files at the vault root are auto-injected into the LLM's
+# system prompt at every chat session, so the brain always has them in mind:
+#   - INDEX.md       — your map of the vault (folders + conventions).
+#   - USER.md        — facts about you (role, languages, family, …).
+#   - PREFERENCES.md — how you want the brain to operate (tone, capture
+#                      rules, tag conventions, …).
+# Any of the three may be absent — the brain still works, just less informed.
+# The brain can also UPDATE these files via vault.write / vault.append when
+# you share new info or preferences (e.g. "remember I'm vegetarian").
+# ---------------------------------------------------------------------------
 obsidian:
   vault_path: /vault
   index_file: INDEX.md
+  user_file: USER.md
+  preferences_file: PREFERENCES.md
   journal:
     folder: Journal
-    # Today's note sits at "{folder}/{date}.md"; the nightly job moves prior
+    # Today's note sits at "{folder}/{date}.md". The nightly job moves prior
     # days into this archive_template path.
     archive_template: "{folder}/{year:04d}/{month:02d}/{date}.md"
   git:
@@ -75,17 +98,27 @@ obsidian:
     author_name: "Second Brain"
     author_email: "second-brain@local"
 
-# Nightly Organize. Step 6 runs only the journal archival pass + a
-# heartbeat email. Step 7 adds the LLM-driven Organize pass.
+# ---------------------------------------------------------------------------
+# Nightly Organize — runs in two phases:
+#   1. Journal archival: Journal/YYYY-MM-DD.md → Journal/YYYY/MM/...
+#   2. LLM Organize pass: per-note proposals (move, tags, wikilinks,
+#      refactor) using INDEX/USER/PREFERENCES as context.
+# In dry-run mode the proposals are emailed; in apply mode they are written
+# through the git guard (one descriptive commit per operation).
+# ---------------------------------------------------------------------------
 organize:
   enabled: true
-  schedule: "0 3 * * *"      # cron: nightly at 03:00
-  mode: dry-run              # dry-run | apply (Step 7+)
-  modified_since: last_run   # last_run | always_full (Step 7+)
+  schedule: "0 3 * * *"      # cron expression (UTC)
+  mode: dry-run              # dry-run | apply — start dry-run for the first month
+  modified_since: last_run   # last_run | always_full
 
-# Email out. Used by the nightly heartbeat / Organize report.
+# ---------------------------------------------------------------------------
+# SMTP — outbound only. Used for the nightly Organize report.
+# When `enabled: false`, the report is logged to stdout instead of emailed
+# (handy during initial setup so you can verify cron without an SMTP server).
+# ---------------------------------------------------------------------------
 smtp:
-  enabled: false             # set to true and fill in to enable email
+  enabled: false
   host: smtp.example.com
   port: 587
   starttls: true
@@ -95,51 +128,6 @@ smtp:
   to_address:   "you@example.com"
   format: text               # text | html
 
-# ---------------------------------------------------------------------------
-# Modules — built-in modules (chat, news, obsidian, personal_life) plus any
-# number of user-declared MCP-backed modules. The MCP wiring is implemented in
-# phase 5 of the roadmap; until then the section is parsed but not yet
-# activated, so it's safe to leave here.
-#
-# Transports:
-#   - stdio:  the app spawns the subprocess and talks MCP over stdin/stdout
-#   - http:   the app connects to a remote MCP server over Streamable HTTP
-# ---------------------------------------------------------------------------
-modules:
-  anki:
-    enabled: true
-    name: { en: "Anki", fr: "Anki" }
-    icon: cards
-    ui: anki                # built-in UI preset; "chat-only" for unknown modules
-    system_prompt: |
-      You manage the user's Anki decks. Default deck is "Daily".
-      When asked to create a card, prefer cloze deletions for facts and
-      basic Q/A for concepts.
-    # Per-module LLM override. Falls back to llm.default if omitted.
-    llm:
-      provider: openai
-      model: gpt-4o-mini
-    mcp:
-      transport: stdio
-      command: uvx
-      args: ["mcp-anki-server"]
-      env:
-        # Anki desktop with the AnkiConnect plugin must be running on the host.
-        # `host.docker.internal` is mapped via docker-compose.example.yml.
-        ANKI_CONNECT_URL: "http://host.docker.internal:8765"
-
-  # Example HTTP-transport MCP module (deferred — shape only):
-  # tasks:
-  #   enabled: true
-  #   name: { en: "Tasks", fr: "Tâches" }
-  #   icon: check
-  #   ui: tasks
-  #   mcp:
-  #     transport: http
-  #     url: http://tasks-mcp:9000/mcp
-  #     headers:
-  #       Authorization: "Bearer …"
-
 logging:
-  level: INFO
-  format: text
+  level: INFO                # DEBUG | INFO | WARNING | ERROR
+  format: text               # text | json
