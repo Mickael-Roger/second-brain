@@ -19,16 +19,15 @@ from apscheduler.triggers.cron import CronTrigger
 from app.config import get_settings
 
 from .journal_archive import ArchiveResult, run_journal_archive
+from .organize import OrganizeResult, run_organize
 
 log = logging.getLogger(__name__)
 
 _SCHEDULER: AsyncIOScheduler | None = None
 
 
-def _format_report(archive: ArchiveResult) -> str:
+def _format_archive_section(archive: ArchiveResult) -> str:
     lines = [
-        f"Run: {datetime.now(timezone.utc).isoformat()}",
-        "",
         "## Journal archive",
         f"Moved:   {archive.moved}",
         f"Skipped: {archive.skipped}",
@@ -45,23 +44,52 @@ def _format_report(archive: ArchiveResult) -> str:
 
 
 async def run_nightly() -> str:
-    """Execute the nightly job. Returns the rendered report."""
+    """Execute the nightly job: archive prior days, run the Organize pass,
+    email the combined report. Returns the report text."""
     log.info("nightly job: starting")
     archive = await run_journal_archive()
-    report = _format_report(archive)
     log.info("nightly job: archive moved=%d skipped=%d", archive.moved, archive.skipped)
 
-    # Heartbeat — even an empty night should land in the user's inbox so they
-    # can confirm cron is alive.
+    organize: OrganizeResult | None = None
+    organize_error: str | None = None
+    try:
+        organize = await run_organize()
+        log.info(
+            "nightly job: organize processed=%d proposals=%d skipped=%d",
+            organize.processed, len(organize.proposals), len(organize.skipped),
+        )
+    except Exception as exc:
+        organize_error = str(exc)
+        log.exception("nightly organize failed")
+
+    parts = [
+        f"# Nightly run — {datetime.now(timezone.utc).isoformat()}",
+        "",
+        _format_archive_section(archive),
+        "",
+    ]
+    if organize is not None:
+        parts.append(organize.report)
+    elif organize_error:
+        parts.append(f"## Organize\n\nFailed: {organize_error}")
+    report = "\n".join(parts)
+
     try:
         from app.services.email import send_email
 
-        send_email(
-            subject=f"[second-brain] nightly heartbeat — moved {archive.moved}, skipped {archive.skipped}",
-            body=report,
-        )
+        if organize is not None:
+            subject = (
+                f"[second-brain] nightly — archived {archive.moved}, "
+                f"reviewed {organize.processed}, proposals {len(organize.proposals)}"
+            )
+        else:
+            subject = (
+                f"[second-brain] nightly — archived {archive.moved} "
+                f"(organize failed)"
+            )
+        send_email(subject=subject, body=report)
     except Exception:
-        log.exception("nightly heartbeat email failed")
+        log.exception("nightly report email failed")
 
     return report
 

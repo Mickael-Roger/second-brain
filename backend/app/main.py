@@ -18,6 +18,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.api import auth as auth_api
 from app.api import chat as chat_api
+from app.api import organize as organize_api
 from app.api import vault as vault_api
 from app.config import get_settings
 from app.db.connection import open_connection
@@ -75,6 +76,7 @@ def create_app() -> FastAPI:
     app.include_router(auth_api.router)
     app.include_router(chat_api.router)
     app.include_router(vault_api.router)
+    app.include_router(organize_api.router)
 
     @app.get("/api/health")
     def health() -> dict[str, str]:

@@ -1,3 +1,4 @@
+from .helpers import complete
 from .router import LLMRouter, get_llm_router
 from .types import (
     ImageBlock,
@@ -18,5 +19,6 @@ __all__ = [
     "ToolDef",
     "ToolResultBlock",
     "ToolUseBlock",
+    "complete",
     "get_llm_router",
 ]
