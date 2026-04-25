@@ -38,9 +38,17 @@ _EXPIRY_MARGIN_SEC = 60
 # ── Path resolution ──────────────────────────────────────────────────────────
 
 
-def token_path_for(provider_name: str) -> Path:
-    """Where the OAuth tokens for a given provider config are persisted."""
-    root = get_settings().app.data_dir / "chatgpt_oauth"
+def token_path_for(provider_name: str, data_dir: Path | None = None) -> Path:
+    """Where the OAuth tokens for a given provider config are persisted.
+
+    By default the root is `app.data_dir` from the loaded config (the
+    container view). The CLI may pass an explicit `data_dir` so a host-side
+    login writes to a directory that the container will later see at its
+    mount point — e.g. host `/data/second-brain/data` ↔ container `/data`.
+    """
+    if data_dir is None:
+        data_dir = get_settings().app.data_dir
+    root = data_dir / "chatgpt_oauth"
     root.mkdir(parents=True, exist_ok=True)
     return root / f"{provider_name}.json"
 
@@ -162,12 +170,22 @@ def get_valid_access_token(provider_name: str) -> tuple[str, str | None]:
 # ── Device-flow login ────────────────────────────────────────────────────────
 
 
-def login_device_flow(provider_name: str, *, poll_timeout_sec: int = 300) -> Path:
+def login_device_flow(
+    provider_name: str,
+    *,
+    poll_timeout_sec: int = 300,
+    data_dir: Path | None = None,
+) -> Path:
     """Run the OAuth device-code flow interactively.
 
     Prints the verification URL and a user code, polls until the user
     authorizes (or the timeout fires), then stores the tokens. Returns the
     token file path.
+
+    `data_dir`, when given, overrides where the token file is written. Use
+    this when running the login on the host machine while the actual app
+    runs in a container: pass the host-side path that maps to the
+    container's `app.data_dir`.
     """
     print("\n── ChatGPT subscription login ───────────────────────────────────")
 
@@ -253,7 +271,7 @@ def login_device_flow(provider_name: str, *, poll_timeout_sec: int = 300) -> Pat
         "expires_at": time.time() + float(token_data.get("expires_in", 3600)),
         "account_id": account_id,
     }
-    path = token_path_for(provider_name)
+    path = token_path_for(provider_name, data_dir=data_dir)
     _save_tokens(path, tokens)
 
     print("\n\nAuthenticated successfully.")

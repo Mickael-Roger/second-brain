@@ -49,6 +49,14 @@ uv run second-brain migrate                             # apply pending SQL migr
 uv run second-brain chatgpt-login <provider-name>       # OAuth device-flow login for kind=chatgpt
 ```
 
+All commands accept `--config <path>` (or `-c`) before the subcommand to point
+at a config file other than `./config.yml`. The `CONFIG_PATH` env var is also
+honored.
+
+```bash
+uv run second-brain --config /etc/second-brain/config.yml chatgpt-login chatgpt-pro
+```
+
 ### ChatGPT Plus / Pro / Team subscription
 
 Add a `kind: chatgpt` entry under `llm.providers` (no `api_key`, no `base_url` —
@@ -56,10 +64,14 @@ see [`config.example.yml`](./config.example.yml)). Then run the device-flow
 login once. The tokens are persisted to `{data_dir}/chatgpt_oauth/<name>.json`
 and refreshed automatically before every request.
 
-In Docker:
+The command prints a URL and a one-time user code; visit
+<https://auth.openai.com/codex/device>, enter the code, and authorize.
+
+**In Docker** — the data volume is shared, so tokens land at the right path
+automatically:
 
 ```bash
-# one-shot, shares the data volume so tokens persist
+# one-shot
 docker compose -f docker-compose.example.yml run --rm second-brain \
   second-brain chatgpt-login chatgpt-pro
 
@@ -67,14 +79,26 @@ docker compose -f docker-compose.example.yml run --rm second-brain \
 docker exec -it second-brain second-brain chatgpt-login chatgpt-pro
 ```
 
-Outside Docker:
+**On the host while the app runs in a container** — `app.data_dir` in
+`config.yml` is the *container's* path (typically `/data`). When running the
+login from the host, point `--data-dir` at the host directory that's
+bind-mounted to the container's data dir:
+
+```bash
+# host layout: /data/second-brain/data ↔ container /data
+uv run second-brain --config /data/second-brain/config.yml \
+  chatgpt-login chatgpt-pro --data-dir /data/second-brain/data
+```
+
+The token file lands at `<data-dir>/chatgpt_oauth/chatgpt-pro.json`, which
+the running container then sees at `/data/chatgpt_oauth/chatgpt-pro.json` and
+refreshes automatically.
+
+**Outside Docker entirely**:
 
 ```bash
 uv run second-brain chatgpt-login chatgpt-pro
 ```
-
-The command prints a URL and a one-time user code; visit
-<https://auth.openai.com/codex/device>, enter the code, and authorize.
 
 ## Configuration
 

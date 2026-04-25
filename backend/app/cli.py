@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import getpass
+import os
 import sys
+from pathlib import Path
 
 import click
 
@@ -14,8 +16,21 @@ from app.db.migrations import run_migrations
 
 
 @click.group()
-def cli() -> None:
+@click.option(
+    "--config",
+    "-c",
+    "config_path",
+    type=click.Path(dir_okay=False),
+    default=None,
+    help="Path to config.yml (overrides the CONFIG_PATH env var; default: ./config.yml).",
+)
+def cli(config_path: str | None) -> None:
     """Second Brain administrative CLI."""
+    if config_path is not None:
+        os.environ["CONFIG_PATH"] = config_path
+        # Clear the lru_cache in case anything earlier in the process already
+        # called get_settings() — keeps the override authoritative.
+        get_settings.cache_clear()
 
 
 @cli.command("hash-password")
@@ -45,7 +60,19 @@ def migrate_cmd() -> None:
 
 @cli.command("chatgpt-login")
 @click.argument("provider", required=False)
-def chatgpt_login_cmd(provider: str | None) -> None:
+@click.option(
+    "--data-dir",
+    "data_dir",
+    type=click.Path(file_okay=False, path_type=Path),
+    default=None,
+    help=(
+        "Override where the OAuth token file is written. Defaults to the "
+        "`app.data_dir` from config.yml. Use this when running the login on "
+        "the host while the app runs in a container — pass the host-side "
+        "directory that's bind-mounted into the container's data_dir."
+    ),
+)
+def chatgpt_login_cmd(provider: str | None, data_dir: Path | None) -> None:
     """Authenticate a `kind: chatgpt` provider via the OAuth device flow.
 
     PROVIDER is the name of the entry under `llm.providers` in config.yml. If
@@ -82,7 +109,7 @@ def chatgpt_login_cmd(provider: str | None) -> None:
         )
         sys.exit(1)
 
-    login_device_flow(provider)
+    login_device_flow(provider, data_dir=data_dir)
 
 
 if __name__ == "__main__":
