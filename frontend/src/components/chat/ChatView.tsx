@@ -113,7 +113,7 @@ export default function ChatView() {
           )}
         </header>
 
-        {messages.length === 0 && streamingText === null ? (
+        {messages.length === 0 && streamingText === null && !busy ? (
           <div className="flex flex-1 items-center justify-center px-6 text-center text-muted">
             <p>{t("chat.empty")}</p>
           </div>
@@ -122,6 +122,7 @@ export default function ChatView() {
             messages={messages}
             streamingText={streamingText ?? undefined}
             pendingToolUse={pendingToolUse}
+            busy={busy}
           />
         )}
 

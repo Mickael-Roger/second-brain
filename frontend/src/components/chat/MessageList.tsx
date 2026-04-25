@@ -7,6 +7,20 @@ interface Props {
   messages: ChatMessage[];
   streamingText?: string;
   pendingToolUse?: { name: string; input: Record<string, unknown> } | null;
+  // True while a chat round is in flight (request → message_done). Lets us
+  // show a "thinking" indicator before the first token arrives and during
+  // the gap between rounds while a tool runs server-side.
+  busy?: boolean;
+}
+
+function ThinkingDots() {
+  return (
+    <span className="sb-thinking" aria-label="Thinking">
+      <span className="sb-thinking-dot" />
+      <span className="sb-thinking-dot" />
+      <span className="sb-thinking-dot" />
+    </span>
+  );
 }
 
 function renderBlock(block: ContentBlock, idx: number) {
@@ -59,12 +73,24 @@ function renderBlock(block: ContentBlock, idx: number) {
   }
 }
 
-export default function MessageList({ messages, streamingText, pendingToolUse }: Props) {
+export default function MessageList({
+  messages,
+  streamingText,
+  pendingToolUse,
+  busy,
+}: Props) {
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     ref.current?.scrollTo({ top: ref.current.scrollHeight, behavior: "smooth" });
-  }, [messages, streamingText, pendingToolUse]);
+  }, [messages, streamingText, pendingToolUse, busy]);
+
+  // Show the thinking indicator when the LLM is working but no text is
+  // currently streaming and no tool is mid-call. Covers:
+  //   - just-sent (waiting for first token)
+  //   - between rounds (after one message_done, before the next text_delta)
+  const showThinking =
+    busy && !pendingToolUse && (streamingText === undefined || streamingText === "");
 
   return (
     <div ref={ref} className="flex-1 overflow-y-auto px-4 py-6">
@@ -86,7 +112,7 @@ export default function MessageList({ messages, streamingText, pendingToolUse }:
           </div>
         ))}
 
-        {streamingText !== undefined && (
+        {streamingText !== undefined && streamingText !== "" && (
           <div className="flex justify-start">
             <div className="max-w-[85%] rounded-2xl border border-border bg-surface px-4 py-3">
               <p className="whitespace-pre-wrap leading-relaxed">
@@ -97,12 +123,21 @@ export default function MessageList({ messages, streamingText, pendingToolUse }:
           </div>
         )}
 
+        {showThinking && (
+          <div className="flex justify-start">
+            <div className="rounded-2xl border border-border bg-surface px-4 py-3">
+              <ThinkingDots />
+            </div>
+          </div>
+        )}
+
         {pendingToolUse && (
           <div className="flex justify-start">
             <div className="rounded-lg border border-border bg-bg/40 px-3 py-2 text-xs text-muted">
               <div className="flex items-center gap-1">
                 <Wrench className="h-3 w-3" />
                 <span className="font-mono">{pendingToolUse.name}</span>
+                <ThinkingDots />
               </div>
             </div>
           </div>
