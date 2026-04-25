@@ -51,6 +51,7 @@ async function request<T>(
 export const api = {
   get: <T>(path: string) => request<T>("GET", path),
   post: <T>(path: string, body?: unknown) => request<T>("POST", path, body),
+  put: <T>(path: string, body?: unknown) => request<T>("PUT", path, body),
   patch: <T>(path: string, body?: unknown) => request<T>("PATCH", path, body),
   delete: <T = void>(path: string) => request<T>("DELETE", path),
 };
@@ -99,9 +100,28 @@ export interface ProviderInfo {
   is_default: boolean;
 }
 
-export interface ModuleInfo {
-  id: string;
-  name: Record<string, string>;
-  icon: string;
-  ui: string;
+// ---- Vault ----
+
+export interface TreeEntry {
+  path: string;
+  type: "folder" | "file";
+  depth: number;
 }
+
+export interface VaultBacklink {
+  path: string;
+  snippet: string;
+}
+
+export interface VaultNote {
+  path: string;
+  content: string;
+  backlinks: VaultBacklink[];
+}
+
+export interface VaultSearchHit {
+  path: string;
+  line_number: number;
+  snippet: string;
+}
+

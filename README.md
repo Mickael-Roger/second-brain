@@ -19,8 +19,8 @@ cp config.example.yml config.yml
 mkdir -p data
 uv run second-brain migrate
 
-# 4. Run the backend (also auto-applies pending migrations on startup)
-uv run uvicorn app.main:app --reload --app-dir backend
+# 4. Run the backend (host/port come from config.yml; auto-applies migrations)
+cd backend && uv run second-brain serve --reload
 
 # 5. In another shell, run the frontend dev server
 cd frontend
@@ -44,6 +44,8 @@ The container serves the built SPA on port 8000.
 ## CLI
 
 ```bash
+uv run second-brain serve                               # start the HTTP server (host/port from config)
+uv run second-brain serve --reload                      # dev mode with hot-reload
 uv run second-brain hash-password                       # prompt for a password, print bcrypt hash
 uv run second-brain migrate                             # apply pending SQL migrations
 uv run second-brain chatgpt-login <provider-name>       # OAuth device-flow login for kind=chatgpt

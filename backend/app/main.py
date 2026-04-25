@@ -18,10 +18,14 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.api import auth as auth_api
 from app.api import chat as chat_api
-from app.api import modules as modules_api
+from app.api import vault as vault_api
 from app.config import get_settings
 from app.db.connection import open_connection
 from app.db.migrations import run_migrations
+
+# NOTE: bind host / port are NOT read here — uvicorn binds the socket before
+# importing this module. Use `second-brain serve` (see app.cli) to start the
+# server with the host/port from config.yml.
 
 
 def _configure_logging() -> None:
@@ -47,7 +51,9 @@ async def lifespan(_: FastAPI):
 
 
 def create_app() -> FastAPI:
-    settings = get_settings()
+    # Eagerly load settings so a malformed config fails at process start
+    # rather than on the first request.
+    get_settings()
     app = FastAPI(title="Second Brain", lifespan=lifespan)
 
     app.add_middleware(
@@ -63,7 +69,7 @@ def create_app() -> FastAPI:
 
     app.include_router(auth_api.router)
     app.include_router(chat_api.router)
-    app.include_router(modules_api.router)
+    app.include_router(vault_api.router)
 
     @app.get("/api/health")
     def health() -> dict[str, str]:
@@ -88,7 +94,6 @@ def create_app() -> FastAPI:
                 return FileResponse(file)
             return FileResponse(static_dir / "index.html")
 
-    _ = settings  # silence unused
     return app
 
 

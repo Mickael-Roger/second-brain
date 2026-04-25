@@ -58,6 +58,39 @@ def migrate_cmd() -> None:
     click.echo(f"Applied {applied} migration(s).")
 
 
+@cli.command("serve")
+@click.option("--host", "host_override", default=None, help="Override app.host from config.yml.")
+@click.option(
+    "--port", "port_override", type=int, default=None, help="Override app.port from config.yml."
+)
+@click.option(
+    "--reload", is_flag=True, default=False, help="Hot-reload on source changes (development only)."
+)
+@click.option("--log-level", default=None, help="Override logging.level from config.yml.")
+def serve_cmd(
+    host_override: str | None,
+    port_override: int | None,
+    reload: bool,
+    log_level: str | None,
+) -> None:
+    """Start the HTTP server using settings from config.yml."""
+    import uvicorn
+
+    settings = get_settings()
+    host = host_override or settings.app.host
+    port = port_override or settings.app.port
+    level = (log_level or settings.logging.level).lower()
+
+    click.echo(f"Starting Second Brain on http://{host}:{port} (reload={reload}, level={level})")
+    uvicorn.run(
+        "app.main:app",
+        host=host,
+        port=port,
+        reload=reload,
+        log_level=level,
+    )
+
+
 @cli.command("chatgpt-login")
 @click.argument("provider", required=False)
 @click.option(

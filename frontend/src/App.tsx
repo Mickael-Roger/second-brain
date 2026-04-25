@@ -3,14 +3,14 @@ import { useTranslation } from "react-i18next";
 
 import { useMe } from "@/lib/auth";
 import LoginPage from "@/routes/login";
-import ChatPage from "@/routes/chat";
-import Sidebar from "@/components/layout/Sidebar";
+import AppShell, { type ViewId } from "@/components/layout/AppShell";
+import ChatView from "@/components/chat/ChatView";
+import WikiView from "@/components/wiki/WikiView";
 
 export default function App() {
   const { t } = useTranslation();
   const me = useMe();
-  const [activeChatId, setActiveChatId] = useState<string | null>(null);
-  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [view, setView] = useState<ViewId>("chat");
 
   if (me.isLoading) {
     return (
@@ -25,27 +25,8 @@ export default function App() {
   }
 
   return (
-    <div className="flex h-full">
-      <Sidebar
-        activeChatId={activeChatId}
-        onSelectChat={(id) => {
-          setActiveChatId(id);
-          setSidebarOpen(false);
-        }}
-        onNewChat={() => {
-          setActiveChatId(null);
-          setSidebarOpen(false);
-        }}
-        open={sidebarOpen}
-        onClose={() => setSidebarOpen(false)}
-      />
-      <main className="flex-1 min-w-0">
-        <ChatPage
-          chatId={activeChatId}
-          onChatCreated={(id) => setActiveChatId(id)}
-          onOpenSidebar={() => setSidebarOpen(true)}
-        />
-      </main>
-    </div>
+    <AppShell active={view} onSelect={setView}>
+      {view === "chat" ? <ChatView /> : <WikiView />}
+    </AppShell>
   );
 }

@@ -54,3 +54,79 @@ textarea {
   background: rgb(var(--border));
   border-radius: 6px;
 }
+
+/* Markdown rendering inside the wiki view. */
+.prose-sb {
+  color: rgb(var(--text));
+  line-height: 1.6;
+  font-size: 0.95rem;
+}
+.prose-sb h1, .prose-sb h2, .prose-sb h3, .prose-sb h4 {
+  font-weight: 600;
+  margin-top: 1.5em;
+  margin-bottom: 0.5em;
+  line-height: 1.25;
+}
+.prose-sb h1 { font-size: 1.7rem; }
+.prose-sb h2 { font-size: 1.35rem; }
+.prose-sb h3 { font-size: 1.1rem; }
+.prose-sb h4 { font-size: 1rem; }
+.prose-sb p, .prose-sb ul, .prose-sb ol, .prose-sb pre, .prose-sb blockquote {
+  margin-top: 0.6em;
+  margin-bottom: 0.6em;
+}
+.prose-sb a {
+  color: rgb(var(--accent));
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.prose-sb a:hover { text-decoration: none; }
+.prose-sb ul, .prose-sb ol {
+  padding-left: 1.4em;
+}
+.prose-sb ul { list-style: disc; }
+.prose-sb ol { list-style: decimal; }
+.prose-sb code {
+  background: rgb(var(--bg));
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 0.85em;
+}
+.prose-sb pre {
+  background: rgb(var(--bg));
+  padding: 0.85em 1em;
+  border-radius: 8px;
+  border: 1px solid rgb(var(--border));
+  overflow-x: auto;
+}
+.prose-sb pre code {
+  background: transparent;
+  padding: 0;
+  border-radius: 0;
+}
+.prose-sb blockquote {
+  border-left: 3px solid rgb(var(--border));
+  padding-left: 1em;
+  color: rgb(var(--muted));
+}
+.prose-sb hr {
+  border: 0;
+  border-top: 1px solid rgb(var(--border));
+  margin: 2em 0;
+}
+.prose-sb img {
+  max-width: 100%;
+  border-radius: 8px;
+  border: 1px solid rgb(var(--border));
+}
+.prose-sb table {
+  border-collapse: collapse;
+}
+.prose-sb th, .prose-sb td {
+  border: 1px solid rgb(var(--border));
+  padding: 0.4em 0.7em;
+}
+.prose-sb input[type="checkbox"] {
+  margin-right: 0.4em;
+}

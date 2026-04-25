@@ -2,6 +2,10 @@
   "app": {
     "title": "Second Brain"
   },
+  "nav": {
+    "chat": "Chat",
+    "wiki": "Wiki"
+  },
   "login": {
     "title": "Sign in",
     "username": "Username",
@@ -13,7 +17,6 @@
   "sidebar": {
     "newChat": "New chat",
     "chats": "Chats",
-    "modules": "Modules",
     "logout": "Sign out",
     "search": "Search…"
   },
@@ -23,8 +26,16 @@
     "stop": "Stop",
     "thinking": "Thinking…",
     "empty": "Start a conversation. Your second brain has access to your tools.",
+    "noHistory": "No chats yet.",
     "model": "Model",
     "deleteConfirm": "Delete this chat?"
+  },
+  "wiki": {
+    "title": "Wiki",
+    "empty": "Pick a note to read.",
+    "backlinks": "Backlinks",
+    "noBacklinks": "No backlinks.",
+    "searchPlaceholder": "Search the vault…"
   },
   "common": {
     "loading": "Loading…",
@@ -32,6 +43,7 @@
     "rename": "Rename",
     "cancel": "Cancel",
     "save": "Save",
+    "edit": "Edit",
     "language": "Language"
   }
 }

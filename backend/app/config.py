@@ -103,9 +103,17 @@ class ObsidianGitSection(BaseModel):
     author_email: str = "second-brain@local"
 
 
+class ObsidianJournalSection(BaseModel):
+    folder: str = "Journal"
+    # Path of an archived daily note relative to the vault, with placeholders
+    # {folder}, {year}, {month}, {date}.
+    archive_template: str = "{folder}/{year:04d}/{month:02d}/{date}.md"
+
+
 class ObsidianSection(BaseModel):
     vault_path: Path | None = None
-    chats_subdir: str = "SecondBrain/Chats"
+    index_file: str = "INDEX.md"
+    journal: ObsidianJournalSection = ObsidianJournalSection()
     git: ObsidianGitSection = ObsidianGitSection()
 
 
@@ -130,11 +138,10 @@ class Settings(BaseModel):
     def chats_dir(self) -> Path:
         """Where chat markdown files are written.
 
-        If an Obsidian vault is configured, chats live under
-        `<vault>/<chats_subdir>`. Otherwise they go under `<data_dir>/chats`.
+        Always under the data dir — chat transcripts are not part of the
+        vault's permanent knowledge (the user explicitly keeps things via the
+        LLM's vault tools instead).
         """
-        if self.obsidian.vault_path is not None:
-            return self.obsidian.vault_path / self.obsidian.chats_subdir
         return self.app.data_dir / "chats"
 
 

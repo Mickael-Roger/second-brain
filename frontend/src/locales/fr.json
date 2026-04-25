@@ -2,6 +2,10 @@
   "app": {
     "title": "Second Brain"
   },
+  "nav": {
+    "chat": "Discussion",
+    "wiki": "Wiki"
+  },
   "login": {
     "title": "Connexion",
     "username": "Nom d'utilisateur",
@@ -11,9 +15,8 @@
     "error": "Échec de la connexion"
   },
   "sidebar": {
-    "newChat": "Nouveau chat",
+    "newChat": "Nouvelle discussion",
     "chats": "Discussions",
-    "modules": "Modules",
     "logout": "Se déconnecter",
     "search": "Rechercher…"
   },
@@ -23,8 +26,16 @@
     "stop": "Stop",
     "thinking": "Réflexion…",
     "empty": "Démarrez une conversation. Votre second cerveau a accès à vos outils.",
+    "noHistory": "Aucune discussion.",
     "model": "Modèle",
     "deleteConfirm": "Supprimer cette discussion ?"
+  },
+  "wiki": {
+    "title": "Wiki",
+    "empty": "Choisissez une note à lire.",
+    "backlinks": "Backlinks",
+    "noBacklinks": "Aucun backlink.",
+    "searchPlaceholder": "Rechercher dans le vault…"
   },
   "common": {
     "loading": "Chargement…",
@@ -32,6 +43,7 @@
     "rename": "Renommer",
     "cancel": "Annuler",
     "save": "Enregistrer",
+    "edit": "Éditer",
     "language": "Langue"
   }
 }

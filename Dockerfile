@@ -15,7 +15,7 @@ ENV PYTHONUNBUFFERED=1 \
     UV_LINK_MODE=copy
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        git openssh-client ca-certificates curl tini \
+        git openssh-client ca-certificates curl tini ripgrep \
     && rm -rf /var/lib/apt/lists/*
 
 RUN pip install --no-cache-dir uv
@@ -36,4 +36,7 @@ ENV PATH="/app/.venv/bin:${PATH}"
 
 EXPOSE 8000
 ENTRYPOINT ["/usr/bin/tini", "--"]
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--app-dir", "backend"]
+# Bind host/port come from config.yml (`app.host`, `app.port`); EXPOSE 8000 is
+# only the documented default. Override at the orchestrator level if you change
+# the configured port and need the published port to match.
+CMD ["second-brain", "serve"]
