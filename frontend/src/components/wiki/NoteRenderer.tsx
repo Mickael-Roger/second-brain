@@ -1,7 +1,7 @@
 // Render a vault note's markdown to HTML and intercept wikilink clicks so
 // they switch the active note instead of navigating away.
 
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 
 import { isWikilinkHref, renderMarkdown } from "@/lib/markdown";
 import type { TreeEntry } from "@/lib/api";
@@ -11,6 +11,10 @@ import "highlight.js/styles/github-dark.css";
 interface Props {
   content: string;
   treeEntries: TreeEntry[];
+  // Vault-relative path of the note we're rendering. Used to resolve
+  // relative image paths (e.g. `![alt](foo.png)` inside Notes/Tech/x.md
+  // resolves to /api/vault/file?path=Notes/Tech/foo.png).
+  currentPath?: string;
   onOpen: (path: string) => void;
 }
 
@@ -21,6 +25,84 @@ function slugify(s: string): string {
     .replace(/[^\p{L}\p{N}\s-]/gu, "")
     .replace(/\s+/g, "-")
     .replace(/^-+|-+$/g, "");
+}
+
+// Decide what URL an `<img src="…">` should actually point at.
+// Returns null when the existing src is fine (external / data URI / already
+// pointing at the vault file API).
+function resolveImageSrc(
+  src: string,
+  currentPath: string | undefined,
+  entries: TreeEntry[],
+): string | null {
+  if (!src) return null;
+  // External, blob/data, or already-rewritten — leave alone.
+  if (/^(https?:|data:|blob:|mailto:|sb:)/i.test(src) && !src.startsWith("sb:embed:")) {
+    return null;
+  }
+  if (src.startsWith("/api/")) return null;
+
+  let target: string;
+  if (src.startsWith("sb:embed:")) {
+    target = decodeURIComponent(src.slice("sb:embed:".length));
+  } else if (src.startsWith("/")) {
+    target = src.slice(1);
+  } else {
+    target = src;
+  }
+
+  // Strip a leading `./`.
+  target = target.replace(/^\.\//, "");
+
+  // Basename-only Obsidian embed (`![[image.png]]`): search the tree for a
+  // matching filename. Falls back to the same folder as the current note.
+  if (!target.includes("/")) {
+    const match = entries.find(
+      (e) =>
+        e.type === "file" &&
+        (e.path === target ||
+          e.path.endsWith("/" + target)),
+    );
+    if (match) target = match.path;
+    else if (currentPath) {
+      const folder = currentPath.split("/").slice(0, -1).join("/");
+      if (folder) target = `${folder}/${target}`;
+    }
+  } else if (currentPath && !target.startsWith("/") && !entries.some((e) => e.path === target)) {
+    // Relative path that doesn't directly hit the tree — try resolving
+    // against the current note's folder (e.g. `images/foo.png`).
+    const folder = currentPath.split("/").slice(0, -1).join("/");
+    if (folder) {
+      const candidate = `${folder}/${target}`;
+      if (entries.some((e) => e.path === candidate)) target = candidate;
+    }
+  }
+
+  return `/api/vault/file?path=${encodeURIComponent(target)}`;
+}
+
+// Walk the rendered HTML and rewrite <img src="…"> attributes to point at
+// /api/vault/file. Performed on the HTML string (off-DOM via <template>)
+// so the browser never tries to fetch the bogus `sb:embed:` URL.
+function rewriteImageSources(
+  html: string,
+  currentPath: string | undefined,
+  entries: TreeEntry[],
+): string {
+  if (!html) return html;
+  const tpl = document.createElement("template");
+  tpl.innerHTML = html;
+  const imgs = tpl.content.querySelectorAll("img");
+  for (const img of imgs) {
+    const src = img.getAttribute("src");
+    if (!src) continue;
+    const resolved = resolveImageSrc(src, currentPath, entries);
+    if (resolved && resolved !== src) {
+      img.setAttribute("src", resolved);
+      img.setAttribute("loading", "lazy");
+    }
+  }
+  return tpl.innerHTML;
 }
 
 function resolveWikilinkTarget(token: string, entries: TreeEntry[]): string | null {
@@ -36,7 +118,12 @@ function resolveWikilinkTarget(token: string, entries: TreeEntry[]): string | nu
   return byBasename ? byBasename.path : null;
 }
 
-export default function NoteRenderer({ content, treeEntries, onOpen }: Props) {
+export default function NoteRenderer({
+  content,
+  treeEntries,
+  currentPath,
+  onOpen,
+}: Props) {
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -81,8 +168,11 @@ export default function NoteRenderer({ content, treeEntries, onOpen }: Props) {
   }, [treeEntries, onOpen]);
 
   // Strip frontmatter from rendered output (it'd render as a degenerate <hr>).
-  const body = content.replace(/^---\s*\n[\s\S]*?\n---\s*\n?/, "");
-  const html = renderMarkdown(body);
+  const html = useMemo(() => {
+    const body = content.replace(/^---\s*\n[\s\S]*?\n---\s*\n?/, "");
+    const raw = renderMarkdown(body);
+    return rewriteImageSources(raw, currentPath, treeEntries);
+  }, [content, currentPath, treeEntries]);
 
   return (
     <div

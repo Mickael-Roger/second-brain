@@ -1,7 +1,7 @@
 // Wiki view: tree on the left, rendered note in the center, backlinks on the
 // right. Search bar above the tree.
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronLeft, ChevronRight, Home, Link2, Menu, Pencil, X } from "lucide-react";
@@ -14,7 +14,12 @@ import SearchBar from "./SearchBar";
 import WikiEditor from "./WikiEditor";
 import FolderIndex from "./FolderIndex";
 
-export default function WikiView() {
+export interface WikiTarget {
+  path: string | null;
+  nonce: number;
+}
+
+export default function WikiView({ target }: { target?: WikiTarget | null }) {
   const { t } = useTranslation();
   const qc = useQueryClient();
   // null = vault home (root folder index). "" is reserved as a synonym for null.
@@ -83,6 +88,17 @@ export default function WikiView() {
     setTreeOpen(false);
     setBacklinksOpen(false);
   }, [activePath]);
+
+  // External "open this wiki path" requests (e.g. clicking a wikilink in
+  // chat). Tracked by nonce so the same path can re-trigger.
+  const lastNonceRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (!target || lastNonceRef.current === target.nonce) return;
+    lastNonceRef.current = target.nonce;
+    navigate(target.path);
+    // navigate is stable (useCallback with [] deps).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [target?.nonce]);
 
   const tree = useQuery({
     queryKey: ["vault-tree"],
@@ -247,6 +263,7 @@ export default function WikiView() {
                   <NoteRenderer
                     content={note.data.content}
                     treeEntries={tree.data ?? []}
+                    currentPath={note.data.path}
                     onOpen={navigate}
                   />
                 </div>

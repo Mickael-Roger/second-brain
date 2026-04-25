@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import mimetypes
 import sqlite3
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from app.auth import current_user
@@ -12,6 +14,7 @@ from app.db.connection import get_db
 from app.vault import (
     list_tree,
     read_note,
+    resolve_vault_path,
     search_vault,
     write_note,
 )
@@ -72,6 +75,26 @@ def get_note(
         {"path": b.path, "snippet": b.snippet} for b in find_backlinks(n.path)
     ]
     return NoteResponse(path=n.path, content=n.content, backlinks=backlinks)
+
+
+@router.get("/file")
+def get_file(
+    path: str = Query(...),
+    _user: str = Depends(current_user),
+) -> FileResponse:
+    """Serve any file from the vault (images, PDFs, …) with proper
+    content-type. Used by the wiki to render `![[image.png]]` embeds and
+    standard markdown image links inside notes."""
+    try:
+        abs_path = resolve_vault_path(path)
+    except VaultPathError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    if not abs_path.is_file():
+        raise HTTPException(status_code=404, detail=f"file not found: {path}")
+    mime, _ = mimetypes.guess_type(str(abs_path))
+    return FileResponse(str(abs_path), media_type=mime or "application/octet-stream")
 
 
 @router.get("/search", response_model=list[SearchHit])

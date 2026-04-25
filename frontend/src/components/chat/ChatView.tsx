@@ -13,7 +13,11 @@ import ChatHistory from "@/components/chat/ChatHistory";
 
 const TOOL_DETAILS_KEY = "sb.chat.showToolDetails";
 
-export default function ChatView() {
+interface Props {
+  onOpenWiki?: (path: string | null) => void;
+}
+
+export default function ChatView({ onOpenWiki }: Props) {
   const { t } = useTranslation();
   const [activeChatId, setActiveChatId] = useState<string | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -148,6 +152,7 @@ export default function ChatView() {
             pendingToolUse={pendingToolUse}
             busy={busy}
             showToolDetails={showToolDetails}
+            onOpenWiki={onOpenWiki}
           />
         )}
 

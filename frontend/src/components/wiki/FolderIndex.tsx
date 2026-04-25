@@ -79,6 +79,7 @@ export default function FolderIndex({ folder, entries, onOpen }: Props) {
           <NoteRenderer
             content={indexNote.data.content}
             treeEntries={entries}
+            currentPath={indexNote.data.path}
             onOpen={onOpen}
           />
         </div>

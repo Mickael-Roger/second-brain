@@ -15,6 +15,10 @@ interface Props {
   // Hide tool_use / tool_result blocks (and the pending-tool indicator)
   // unless this is true. Default off — clean conversational view.
   showToolDetails?: boolean;
+  // Wikilinks in assistant text route here so the wiki tab can open the
+  // referenced page without leaving the app. External URLs (http/https)
+  // open in a new browser tab via target=_blank.
+  onOpenWiki?: (path: string | null) => void;
 }
 
 function ThinkingDots() {
@@ -27,19 +31,74 @@ function ThinkingDots() {
   );
 }
 
-function MarkdownText({ text }: { text: string }) {
+function MarkdownText({
+  text,
+  onOpenWiki,
+}: {
+  text: string;
+  onOpenWiki?: (path: string | null) => void;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+
+  // Make external links open in a new tab; intercept wikilinks and
+  // relative .md paths so they jump into the wiki tab in this app.
+  useEffect(() => {
+    const node = ref.current;
+    if (!node) return;
+    // Pre-process all <a> elements once after render.
+    for (const a of Array.from(node.querySelectorAll("a"))) {
+      const href = a.getAttribute("href") ?? "";
+      if (/^https?:/i.test(href)) {
+        a.setAttribute("target", "_blank");
+        a.setAttribute("rel", "noopener noreferrer");
+      }
+    }
+    const handler = (e: MouseEvent) => {
+      const a = (e.target as HTMLElement).closest("a");
+      if (!a) return;
+      const href = a.getAttribute("href") ?? "";
+
+      // Wikilink (`[[Note]]` rewritten by lib/markdown).
+      if (href.startsWith("sb:wikilink:")) {
+        e.preventDefault();
+        if (onOpenWiki) {
+          const decoded = decodeURIComponent(href.slice("sb:wikilink:".length));
+          // Strip an optional `#heading` suffix — heading-scroll inside
+          // the wiki happens after navigation; we just need the file path.
+          onOpenWiki(decoded.split("#")[0] || null);
+        }
+        return;
+      }
+      // External URL — let it open in the new tab we already configured.
+      if (/^[a-z]+:/i.test(href)) return;
+      // Relative path that looks like a vault note.
+      if (href.endsWith(".md") && onOpenWiki) {
+        e.preventDefault();
+        onOpenWiki(href.replace(/^\//, ""));
+      }
+    };
+    node.addEventListener("click", handler);
+    return () => node.removeEventListener("click", handler);
+  }, [text, onOpenWiki]);
+
   return (
     <div
+      ref={ref}
       className="prose-sb prose-sb-chat"
       dangerouslySetInnerHTML={{ __html: renderMarkdown(text) }}
     />
   );
 }
 
-function renderAssistantBlock(block: ContentBlock, idx: number, showToolDetails: boolean) {
+function renderAssistantBlock(
+  block: ContentBlock,
+  idx: number,
+  showToolDetails: boolean,
+  onOpenWiki?: (path: string | null) => void,
+) {
   switch (block.type) {
     case "text":
-      return <MarkdownText key={idx} text={block.text} />;
+      return <MarkdownText key={idx} text={block.text} onOpenWiki={onOpenWiki} />;
     case "image":
       return (
         <img
@@ -137,6 +196,7 @@ export default function MessageList({
   pendingToolUse,
   busy,
   showToolDetails = false,
+  onOpenWiki,
 }: Props) {
   const ref = useRef<HTMLDivElement>(null);
 
@@ -159,7 +219,6 @@ export default function MessageList({
           const visible = m.content.filter((b) => isVisibleBlock(b, showToolDetails));
           if (visible.length === 0) return null;
           const isUser = m.role === "user";
-          const renderer = isUser ? renderUserBlock : renderAssistantBlock;
           return (
             <div
               key={i}
@@ -172,7 +231,11 @@ export default function MessageList({
                     : "bg-surface text-text border border-border"
                 }`}
               >
-                {visible.map((b, j) => renderer(b, j, showToolDetails))}
+                {visible.map((b, j) =>
+                  isUser
+                    ? renderUserBlock(b, j, showToolDetails)
+                    : renderAssistantBlock(b, j, showToolDetails, onOpenWiki),
+                )}
               </div>
             </div>
           );
@@ -181,7 +244,7 @@ export default function MessageList({
         {streamingText !== undefined && streamingText !== "" && (
           <div className="flex justify-start">
             <div className="max-w-[85%] rounded-2xl border border-border bg-surface px-4 py-3">
-              <MarkdownText text={streamingText} />
+              <MarkdownText text={streamingText} onOpenWiki={onOpenWiki} />
             </div>
           </div>
         )}

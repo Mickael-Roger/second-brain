@@ -1,16 +1,25 @@
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { useMe } from "@/lib/auth";
 import LoginPage from "@/routes/login";
 import AppShell, { type ViewId } from "@/components/layout/AppShell";
 import ChatView from "@/components/chat/ChatView";
-import WikiView from "@/components/wiki/WikiView";
+import WikiView, { type WikiTarget } from "@/components/wiki/WikiView";
 
 export default function App() {
   const { t } = useTranslation();
   const me = useMe();
   const [view, setView] = useState<ViewId>("chat");
+
+  // Cross-view wiki navigation: chat (or anywhere else) can ask the wiki
+  // to open a specific path. The nonce makes consecutive requests for the
+  // same path actually re-trigger.
+  const [wikiTarget, setWikiTarget] = useState<WikiTarget | null>(null);
+  const openWiki = useCallback((path: string | null) => {
+    setWikiTarget((prev) => ({ path, nonce: (prev?.nonce ?? 0) + 1 }));
+    setView("wiki");
+  }, []);
 
   if (me.isLoading) {
     return (
@@ -26,7 +35,11 @@ export default function App() {
 
   return (
     <AppShell active={view} onSelect={setView}>
-      {view === "chat" ? <ChatView /> : <WikiView />}
+      {view === "chat" ? (
+        <ChatView onOpenWiki={openWiki} />
+      ) : (
+        <WikiView target={wikiTarget} />
+      )}
     </AppShell>
   );
 }
