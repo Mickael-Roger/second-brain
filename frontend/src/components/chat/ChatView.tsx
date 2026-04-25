@@ -1,8 +1,9 @@
 // Full chat surface: history sidebar + active conversation pane.
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useQuery } from "@tanstack/react-query";
+import { Menu, X } from "lucide-react";
 
 import { api, type ChatDetail, type ProviderInfo } from "@/lib/api";
 import { useChatStream, useDefaultSelection } from "@/lib/chat";
@@ -13,6 +14,12 @@ import ChatHistory from "@/components/chat/ChatHistory";
 export default function ChatView() {
   const { t } = useTranslation();
   const [activeChatId, setActiveChatId] = useState<string | null>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
+
+  // Selecting / starting a chat closes the mobile drawer.
+  useEffect(() => {
+    setHistoryOpen(false);
+  }, [activeChatId]);
 
   const providers = useQuery({
     queryKey: ["providers"],
@@ -38,18 +45,55 @@ export default function ChatView() {
     onChatCreated: setActiveChatId,
   });
 
+  const history = (
+    <ChatHistory
+      activeChatId={activeChatId}
+      onSelect={setActiveChatId}
+      onNew={() => setActiveChatId(null)}
+    />
+  );
+
   return (
     <div className="flex h-full">
       <aside className="hidden w-64 shrink-0 border-r border-border bg-surface md:block">
-        <ChatHistory
-          activeChatId={activeChatId}
-          onSelect={setActiveChatId}
-          onNew={() => setActiveChatId(null)}
-        />
+        {history}
       </aside>
 
+      {historyOpen && (
+        <div
+          className="fixed inset-0 z-40 bg-black/60 md:hidden"
+          onClick={() => setHistoryOpen(false)}
+        >
+          <aside
+            className="flex h-full w-72 flex-col border-r border-border bg-surface"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-border px-3 py-2">
+              <span className="text-sm font-medium">{t("sidebar.chats")}</span>
+              <button
+                type="button"
+                onClick={() => setHistoryOpen(false)}
+                className="text-muted"
+                aria-label={t("common.cancel")}
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            {history}
+          </aside>
+        </div>
+      )}
+
       <main className="flex h-full min-w-0 flex-1 flex-col">
-        <header className="flex items-center gap-2 border-b border-border bg-surface px-4 py-2">
+        <header className="flex items-center gap-2 border-b border-border bg-surface px-3 py-2 md:px-4">
+          <button
+            type="button"
+            onClick={() => setHistoryOpen(true)}
+            className="text-muted md:hidden"
+            aria-label={t("sidebar.chats")}
+          >
+            <Menu className="h-5 w-5" />
+          </button>
           <div className="flex-1 truncate text-sm text-muted">
             {detail.data?.title ?? t("sidebar.newChat")}
           </div>

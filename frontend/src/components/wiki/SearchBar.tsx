@@ -20,6 +20,22 @@ function useDebounced<T>(value: T, ms: number): T {
   return v;
 }
 
+function highlight(text: string, q: string): React.ReactNode {
+  const trimmed = q.trim();
+  if (!trimmed) return text;
+  const escaped = trimmed.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const parts = text.split(new RegExp(`(${escaped})`, "ig"));
+  return parts.map((part, i) =>
+    part.toLowerCase() === trimmed.toLowerCase() ? (
+      <mark key={i} className="rounded bg-accent/30 text-text">
+        {part}
+      </mark>
+    ) : (
+      <span key={i}>{part}</span>
+    ),
+  );
+}
+
 export default function SearchBar({ onOpen }: Props) {
   const { t } = useTranslation();
   const [q, setQ] = useState("");
@@ -60,7 +76,9 @@ export default function SearchBar({ onOpen }: Props) {
                 <span className="truncate text-xs font-medium text-accent">
                   {h.path}
                 </span>
-                <span className="line-clamp-1 text-xs text-muted">{h.snippet}</span>
+                <span className="line-clamp-1 text-xs text-muted">
+                  {highlight(h.snippet, debounced)}
+                </span>
               </button>
             </li>
           ))}

@@ -11,7 +11,7 @@ export default defineConfig({
       includeAssets: ["favicon.svg"],
       manifest: {
         name: "Second Brain",
-        short_name: "SB",
+        short_name: "Brain",
         description: "Personal second brain",
         theme_color: "#0f172a",
         background_color: "#0f172a",
@@ -19,14 +19,10 @@ export default defineConfig({
         start_url: "/",
         icons: [
           {
-            src: "icon-192.png",
-            sizes: "192x192",
-            type: "image/png",
-          },
-          {
-            src: "icon-512.png",
-            sizes: "512x512",
-            type: "image/png",
+            src: "favicon.svg",
+            sizes: "any",
+            type: "image/svg+xml",
+            purpose: "any maskable",
           },
         ],
       },
