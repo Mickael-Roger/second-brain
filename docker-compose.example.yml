@@ -1,0 +1,14 @@
+services:
+  second-brain:
+    build: .
+    image: second-brain:latest
+    container_name: second-brain
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./vault:/vault
+      - ./data:/data
+      - ./config.yml:/config/config.yml:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped

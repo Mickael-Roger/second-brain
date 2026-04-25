@@ -1,0 +1,100 @@
+app:
+  host: 0.0.0.0
+  port: 8000
+  base_url: http://localhost:8000
+  language: fr
+  data_dir: /data
+
+auth:
+  username: mickael
+  # Generate with: uv run second-brain hash-password
+  password_hash: "$2b$12$REPLACE_ME_WITH_A_REAL_BCRYPT_HASH_..............."
+  session_secret: "change-me-to-a-long-random-string"
+  session_lifetime_days: 30
+
+llm:
+  # `default` is the provider name used when the UI / chat request doesn't
+  # specify one. The default model for a provider is the first item in `models`.
+  default: openai
+  max_tool_rounds: 10
+  providers:
+    openai:
+      kind: openai
+      base_url: https://api.openai.com/v1
+      api_key: sk-REPLACE_ME
+      models:
+        - gpt-4o-mini       # default for this provider (first in list)
+        - gpt-4o
+        - o4-mini
+    anthropic:
+      kind: anthropic       # adapter ships in phase 4; entry shown for shape
+      base_url: https://api.anthropic.com
+      api_key: sk-ant-REPLACE_ME
+      models:
+        - claude-opus-4-5
+        - claude-sonnet-4-5
+        - claude-haiku-4-5
+    # Any OpenAI-compatible endpoint works (vLLM, llama.cpp server, OpenRouter,
+    # Groq, a local LM Studio, ...). Just point base_url at it.
+    local:
+      kind: openai
+      base_url: http://192.168.1.20:8080/v1
+      api_key: none
+      models:
+        - llama-3.1-70b-instruct
+
+obsidian:
+  # Phase 1: vault optional. If unset, chats are saved under {data_dir}/chats/.
+  vault_path: null
+  chats_subdir: SecondBrain/Chats
+  git:
+    enabled: false
+
+# ---------------------------------------------------------------------------
+# Modules — built-in modules (chat, news, obsidian, personal_life) plus any
+# number of user-declared MCP-backed modules. The MCP wiring is implemented in
+# phase 5 of the roadmap; until then the section is parsed but not yet
+# activated, so it's safe to leave here.
+#
+# Transports:
+#   - stdio:  the app spawns the subprocess and talks MCP over stdin/stdout
+#   - http:   the app connects to a remote MCP server over Streamable HTTP
+# ---------------------------------------------------------------------------
+modules:
+  anki:
+    enabled: true
+    name: { en: "Anki", fr: "Anki" }
+    icon: cards
+    ui: anki                # built-in UI preset; "chat-only" for unknown modules
+    system_prompt: |
+      You manage the user's Anki decks. Default deck is "Daily".
+      When asked to create a card, prefer cloze deletions for facts and
+      basic Q/A for concepts.
+    # Per-module LLM override. Falls back to llm.default if omitted.
+    llm:
+      provider: openai
+      model: gpt-4o-mini
+    mcp:
+      transport: stdio
+      command: uvx
+      args: ["mcp-anki-server"]
+      env:
+        # Anki desktop with the AnkiConnect plugin must be running on the host.
+        # `host.docker.internal` is mapped via docker-compose.example.yml.
+        ANKI_CONNECT_URL: "http://host.docker.internal:8765"
+
+  # Example HTTP-transport MCP module (deferred — shape only):
+  # tasks:
+  #   enabled: true
+  #   name: { en: "Tasks", fr: "Tâches" }
+  #   icon: check
+  #   ui: tasks
+  #   mcp:
+  #     transport: http
+  #     url: http://tasks-mcp:9000/mcp
+  #     headers:
+  #       Authorization: "Bearer …"
+
+logging:
+  level: INFO
+  format: text

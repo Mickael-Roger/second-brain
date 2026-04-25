@@ -1,0 +1,14 @@
+.git
+.gitignore
+.venv
+__pycache__
+*.pyc
+node_modules
+frontend/dist
+backend/app/static
+data
+config.yml
+*.db*
+.pytest_cache
+.ruff_cache
+.mypy_cache

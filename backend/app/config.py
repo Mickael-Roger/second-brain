@@ -1,0 +1,135 @@
+"""Configuration loading and validation.
+
+Loads `config.yml` once at process start and exposes a typed `Settings` object
+through `get_settings()`. The path is taken from the `CONFIG_PATH` env var or
+defaults to `./config.yml`.
+"""
+
+from __future__ import annotations
+
+import os
+from functools import lru_cache
+from pathlib import Path
+from typing import Literal
+
+import yaml
+from pydantic import BaseModel, Field, field_validator
+
+
+class AppSection(BaseModel):
+    host: str = "0.0.0.0"
+    port: int = 8000
+    base_url: str = "http://localhost:8000"
+    language: Literal["en", "fr"] = "fr"
+    data_dir: Path = Path("/data")
+
+
+class AuthSection(BaseModel):
+    username: str
+    password_hash: str
+    session_secret: str = Field(min_length=16)
+    session_lifetime_days: int = 30
+
+
+class LLMProviderConfig(BaseModel):
+    kind: Literal["openai", "anthropic"]
+    base_url: str
+    api_key: str
+    models: list[str] = Field(min_length=1)
+
+    @field_validator("models")
+    @classmethod
+    def _no_dupes(cls, v: list[str]) -> list[str]:
+        if len(set(v)) != len(v):
+            raise ValueError("models list contains duplicates")
+        return v
+
+    @property
+    def default_model(self) -> str:
+        return self.models[0]
+
+
+class LLMSection(BaseModel):
+    default: str
+    max_tool_rounds: int = 10
+    providers: dict[str, LLMProviderConfig]
+
+    @field_validator("providers")
+    @classmethod
+    def _at_least_one(cls, v: dict[str, LLMProviderConfig]) -> dict[str, LLMProviderConfig]:
+        if not v:
+            raise ValueError("at least one LLM provider must be configured")
+        return v
+
+    def resolved_default(self) -> LLMProviderConfig:
+        if self.default not in self.providers:
+            raise ValueError(
+                f"llm.default = '{self.default}' is not in llm.providers"
+            )
+        return self.providers[self.default]
+
+
+class ObsidianGitSection(BaseModel):
+    enabled: bool = False
+    remote: str = "origin"
+    branch: str = "main"
+    ssh_key_path: Path | None = None
+    author_name: str = "Second Brain"
+    author_email: str = "second-brain@local"
+
+
+class ObsidianSection(BaseModel):
+    vault_path: Path | None = None
+    chats_subdir: str = "SecondBrain/Chats"
+    git: ObsidianGitSection = ObsidianGitSection()
+
+
+class LoggingSection(BaseModel):
+    level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
+    format: Literal["text", "json"] = "text"
+
+
+class Settings(BaseModel):
+    app: AppSection = AppSection()
+    auth: AuthSection
+    llm: LLMSection
+    obsidian: ObsidianSection = ObsidianSection()
+    logging: LoggingSection = LoggingSection()
+
+    @property
+    def database_url(self) -> str:
+        db_path = self.app.data_dir / "second-brain.db"
+        return f"sqlite:///{db_path}"
+
+    @property
+    def chats_dir(self) -> Path:
+        """Where chat markdown files are written.
+
+        If an Obsidian vault is configured, chats live under
+        `<vault>/<chats_subdir>`. Otherwise they go under `<data_dir>/chats`.
+        """
+        if self.obsidian.vault_path is not None:
+            return self.obsidian.vault_path / self.obsidian.chats_subdir
+        return self.app.data_dir / "chats"
+
+
+def _load_yaml(path: Path) -> dict:
+    if not path.is_file():
+        raise FileNotFoundError(
+            f"config file not found at {path}. Set CONFIG_PATH or create ./config.yml"
+        )
+    with path.open("r", encoding="utf-8") as f:
+        return yaml.safe_load(f) or {}
+
+
+@lru_cache(maxsize=1)
+def get_settings() -> Settings:
+    path = Path(os.environ.get("CONFIG_PATH", "config.yml"))
+    raw = _load_yaml(path)
+    return Settings.model_validate(raw)
+
+
+def reload_settings() -> Settings:
+    """Force-reload of the config; only useful for tests."""
+    get_settings.cache_clear()
+    return get_settings()

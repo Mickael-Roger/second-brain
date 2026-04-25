@@ -1,0 +1,37 @@
+{
+  "app": {
+    "title": "Second Brain"
+  },
+  "login": {
+    "title": "Sign in",
+    "username": "Username",
+    "password": "Password",
+    "submit": "Sign in",
+    "invalid": "Invalid credentials",
+    "error": "Login failed"
+  },
+  "sidebar": {
+    "newChat": "New chat",
+    "chats": "Chats",
+    "modules": "Modules",
+    "logout": "Sign out",
+    "search": "Search…"
+  },
+  "chat": {
+    "placeholder": "Message your second brain…",
+    "send": "Send",
+    "stop": "Stop",
+    "thinking": "Thinking…",
+    "empty": "Start a conversation. Your second brain has access to your tools.",
+    "model": "Model",
+    "deleteConfirm": "Delete this chat?"
+  },
+  "common": {
+    "loading": "Loading…",
+    "delete": "Delete",
+    "rename": "Rename",
+    "cancel": "Cancel",
+    "save": "Save",
+    "language": "Language"
+  }
+}

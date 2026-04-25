@@ -1,0 +1,37 @@
+{
+  "app": {
+    "title": "Second Brain"
+  },
+  "login": {
+    "title": "Connexion",
+    "username": "Nom d'utilisateur",
+    "password": "Mot de passe",
+    "submit": "Se connecter",
+    "invalid": "Identifiants invalides",
+    "error": "Échec de la connexion"
+  },
+  "sidebar": {
+    "newChat": "Nouveau chat",
+    "chats": "Discussions",
+    "modules": "Modules",
+    "logout": "Se déconnecter",
+    "search": "Rechercher…"
+  },
+  "chat": {
+    "placeholder": "Parlez à votre second cerveau…",
+    "send": "Envoyer",
+    "stop": "Stop",
+    "thinking": "Réflexion…",
+    "empty": "Démarrez une conversation. Votre second cerveau a accès à vos outils.",
+    "model": "Modèle",
+    "deleteConfirm": "Supprimer cette discussion ?"
+  },
+  "common": {
+    "loading": "Chargement…",
+    "delete": "Supprimer",
+    "rename": "Renommer",
+    "cancel": "Annuler",
+    "save": "Enregistrer",
+    "language": "Langue"
+  }
+}
