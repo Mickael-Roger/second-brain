@@ -22,6 +22,7 @@ from app.api import vault as vault_api
 from app.config import get_settings
 from app.db.connection import open_connection
 from app.db.migrations import run_migrations
+from app.jobs import shutdown_scheduler, start_scheduler
 
 # NOTE: bind host / port are NOT read here — uvicorn binds the socket before
 # importing this module. Use `second-brain serve` (see app.cli) to start the
@@ -47,7 +48,11 @@ async def lifespan(_: FastAPI):
             logging.getLogger(__name__).info("Applied %d migration(s)", applied)
     finally:
         conn.close()
-    yield
+    start_scheduler()
+    try:
+        yield
+    finally:
+        shutdown_scheduler()
 
 
 def create_app() -> FastAPI:

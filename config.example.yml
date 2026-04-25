@@ -60,11 +60,40 @@ llm:
         - llama-3.1-70b-instruct
 
 obsidian:
-  # Phase 1: vault optional. If unset, chats are saved under {data_dir}/chats/.
-  vault_path: null
-  chats_subdir: SecondBrain/Chats
+  vault_path: /vault
+  index_file: INDEX.md
+  journal:
+    folder: Journal
+    # Today's note sits at "{folder}/{date}.md"; the nightly job moves prior
+    # days into this archive_template path.
+    archive_template: "{folder}/{year:04d}/{month:02d}/{date}.md"
   git:
-    enabled: false
+    enabled: true
+    remote: origin
+    branch: main
+    ssh_key_path: /run/secrets/obsidian_ssh
+    author_name: "Second Brain"
+    author_email: "second-brain@local"
+
+# Nightly Organize. Step 6 runs only the journal archival pass + a
+# heartbeat email. Step 7 adds the LLM-driven Organize pass.
+organize:
+  enabled: true
+  schedule: "0 3 * * *"      # cron: nightly at 03:00
+  mode: dry-run              # dry-run | apply (Step 7+)
+  modified_since: last_run   # last_run | always_full (Step 7+)
+
+# Email out. Used by the nightly heartbeat / Organize report.
+smtp:
+  enabled: false             # set to true and fill in to enable email
+  host: smtp.example.com
+  port: 587
+  starttls: true
+  username: brain@example.com
+  password: REPLACE_ME
+  from_address: "Second Brain <brain@example.com>"
+  to_address:   "you@example.com"
+  format: text               # text | html
 
 # ---------------------------------------------------------------------------
 # Modules — built-in modules (chat, news, obsidian, personal_life) plus any

@@ -117,6 +117,37 @@ class ObsidianSection(BaseModel):
     git: ObsidianGitSection = ObsidianGitSection()
 
 
+class OrganizeSection(BaseModel):
+    enabled: bool = False
+    schedule: str = "0 3 * * *"  # cron: nightly at 03:00
+    mode: Literal["dry-run", "apply"] = "dry-run"
+    modified_since: Literal["last_run", "always_full"] = "last_run"
+
+
+class SMTPSection(BaseModel):
+    enabled: bool = False
+    host: str | None = None
+    port: int = 587
+    starttls: bool = True
+    username: str | None = None
+    password: str | None = None
+    from_address: str | None = None
+    to_address: str | None = None
+    format: Literal["text", "html"] = "text"
+
+    @model_validator(mode="after")
+    def _required_when_enabled(self) -> "SMTPSection":
+        if self.enabled:
+            missing = [
+                f for f in ("host", "from_address", "to_address") if not getattr(self, f)
+            ]
+            if missing:
+                raise ValueError(
+                    f"smtp.enabled = true but missing fields: {', '.join(missing)}"
+                )
+        return self
+
+
 class LoggingSection(BaseModel):
     level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
     format: Literal["text", "json"] = "text"
@@ -127,6 +158,8 @@ class Settings(BaseModel):
     auth: AuthSection
     llm: LLMSection
     obsidian: ObsidianSection = ObsidianSection()
+    organize: OrganizeSection = OrganizeSection()
+    smtp: SMTPSection = SMTPSection()
     logging: LoggingSection = LoggingSection()
 
     @property
