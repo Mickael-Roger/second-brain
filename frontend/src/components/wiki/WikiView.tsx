@@ -1,10 +1,10 @@
 // Wiki view: tree on the left, rendered note in the center, backlinks on the
 // right. Search bar above the tree.
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { BookOpen, Link2, Menu, Pencil, X } from "lucide-react";
+import { Home, Link2, Menu, Pencil, X } from "lucide-react";
 
 import { api, type TreeEntry, type VaultNote } from "@/lib/api";
 import VaultTree from "./VaultTree";
@@ -12,10 +12,13 @@ import NoteRenderer from "./NoteRenderer";
 import Backlinks from "./Backlinks";
 import SearchBar from "./SearchBar";
 import WikiEditor from "./WikiEditor";
+import FolderIndex from "./FolderIndex";
 
 export default function WikiView() {
   const { t } = useTranslation();
   const qc = useQueryClient();
+  // null = vault home (root folder index). "" is reserved as a synonym for null.
+  // A non-empty string is either a file path or a folder path.
   const [activePath, setActivePath] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
   const [treeOpen, setTreeOpen] = useState(false);
@@ -33,24 +36,21 @@ export default function WikiView() {
     queryFn: () => api.get<TreeEntry[]>("/api/vault/tree"),
   });
 
+  // Resolve whether activePath is a file or a folder.
+  const activeKind = useMemo<"file" | "folder" | null>(() => {
+    if (!activePath) return null;
+    const e = tree.data?.find((x) => x.path === activePath);
+    return (e?.type as "file" | "folder" | undefined) ?? null;
+  }, [activePath, tree.data]);
+
   const note = useQuery<VaultNote | null>({
     queryKey: ["vault-note", activePath],
     queryFn: async () =>
-      activePath
+      activePath && activeKind === "file"
         ? api.get<VaultNote>(`/api/vault/note?path=${encodeURIComponent(activePath)}`)
         : null,
-    enabled: activePath !== null,
+    enabled: activePath !== null && activeKind === "file",
   });
-
-  // First-time: pick INDEX.md if it exists, otherwise the first file.
-  useEffect(() => {
-    if (activePath !== null) return;
-    const list = tree.data;
-    if (!list || list.length === 0) return;
-    const index = list.find((e) => e.type === "file" && e.path === "INDEX.md");
-    const first = list.find((e) => e.type === "file");
-    setActivePath(index?.path ?? first?.path ?? null);
-  }, [tree.data, activePath]);
 
   const treeAside = (
     <>
@@ -115,11 +115,17 @@ export default function WikiView() {
           >
             <Menu className="h-5 w-5" />
           </button>
-          <BookOpen className="h-4 w-4 text-accent" />
-          <span className="flex-1 truncate text-sm font-medium">
-            {activePath ?? t("wiki.title")}
-          </span>
-          {note.data && !editing && (
+          <button
+            type="button"
+            onClick={() => setActivePath(null)}
+            className={`flex items-center gap-1 rounded px-1.5 py-1 text-muted hover:bg-bg hover:text-text ${activePath === null ? "text-accent" : ""}`}
+            title={t("wiki.vaultRoot")}
+            aria-label={t("wiki.vaultRoot")}
+          >
+            <Home className="h-4 w-4" />
+          </button>
+          <Crumbs path={activePath} onCrumb={setActivePath} />
+          {activeKind === "file" && note.data && !editing && (
             <>
               <button
                 type="button"
@@ -154,37 +160,41 @@ export default function WikiView() {
                 }}
                 onCancel={() => setEditing(false)}
               />
-            ) : note.isLoading && activePath ? (
-              <p className="px-6 py-6 text-sm text-muted">{t("common.loading")}</p>
-            ) : note.isError ? (
-              <p className="px-6 py-6 text-sm text-red-400">
-                {(note.error as Error)?.message ?? "error"}
-              </p>
-            ) : note.data ? (
+            ) : activeKind === "file" ? (
+              note.isLoading ? (
+                <p className="px-6 py-6 text-sm text-muted">{t("common.loading")}</p>
+              ) : note.isError ? (
+                <p className="px-6 py-6 text-sm text-red-400">
+                  {(note.error as Error)?.message ?? "error"}
+                </p>
+              ) : note.data ? (
+                <div className="flex-1 overflow-y-auto">
+                  <NoteRenderer
+                    content={note.data.content}
+                    treeEntries={tree.data ?? []}
+                    onOpen={setActivePath}
+                  />
+                </div>
+              ) : null
+            ) : (
               <div className="flex-1 overflow-y-auto">
-                <NoteRenderer
-                  content={note.data.content}
-                  treeEntries={tree.data ?? []}
+                <FolderIndex
+                  folder={activePath ?? ""}
+                  entries={tree.data ?? []}
                   onOpen={setActivePath}
                 />
-              </div>
-            ) : (
-              <div className="flex h-full items-center justify-center px-6 text-center text-muted">
-                <p>{t("wiki.empty")}</p>
               </div>
             )}
           </div>
 
-          {/* Backlinks (desktop: always visible at lg+; mobile: drawer) */}
-          {!editing && (
+          {/* Backlinks (desktop: visible at lg+ only when reading a file) */}
+          {!editing && activeKind === "file" && note.data && (
             <aside className="hidden w-64 shrink-0 border-l border-border bg-surface lg:block">
-              {note.data ? (
-                <Backlinks links={note.data.backlinks} onOpen={setActivePath} />
-              ) : null}
+              <Backlinks links={note.data.backlinks} onOpen={setActivePath} />
             </aside>
           )}
 
-          {!editing && backlinksOpen && note.data && (
+          {!editing && activeKind === "file" && backlinksOpen && note.data && (
             <div
               className="fixed inset-0 z-40 bg-black/60 lg:hidden"
               onClick={() => setBacklinksOpen(false)}
@@ -200,5 +210,43 @@ export default function WikiView() {
         </div>
       </main>
     </div>
+  );
+}
+
+// Inline breadcrumbs for the wiki header. Path "Tech/RAG.md" → "Tech / RAG".
+function Crumbs({ path, onCrumb }: { path: string | null; onCrumb: (p: string | null) => void }) {
+  if (!path) {
+    return <span className="flex-1 truncate text-sm text-muted" />;
+  }
+  const parts = path.split("/");
+  const items: { label: string; target: string | null }[] = [];
+  let acc = "";
+  for (let i = 0; i < parts.length; i++) {
+    acc = i === 0 ? parts[0] : `${acc}/${parts[i]}`;
+    const isFile = i === parts.length - 1 && parts[i].endsWith(".md");
+    items.push({
+      label: isFile ? parts[i].replace(/\.md$/, "") : parts[i],
+      target: i === parts.length - 1 ? null : acc, // last item is the current page
+    });
+  }
+  return (
+    <span className="flex flex-1 min-w-0 items-center gap-1 truncate text-sm text-muted">
+      {items.map((it, i) => (
+        <span key={i} className="flex items-center gap-1 truncate">
+          {i > 0 && <span className="text-muted/60">/</span>}
+          {it.target !== null ? (
+            <button
+              type="button"
+              onClick={() => onCrumb(it.target)}
+              className="truncate hover:text-text"
+            >
+              {it.label}
+            </button>
+          ) : (
+            <span className="truncate text-text">{it.label}</span>
+          )}
+        </span>
+      ))}
+    </span>
   );
 }

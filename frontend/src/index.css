@@ -130,3 +130,77 @@ textarea {
 .prose-sb input[type="checkbox"] {
   margin-right: 0.4em;
 }
+
+/* ─── Obsidian callouts ─────────────────────────────────────────────── */
+.prose-sb .callout {
+  border-left: 4px solid var(--callout-color, rgb(var(--accent)));
+  background: color-mix(in srgb, var(--callout-color, rgb(var(--accent))) 8%, transparent);
+  border-radius: 6px;
+  padding: 0.5em 1em 0.6em 1em;
+  margin: 1em 0;
+}
+.prose-sb .callout > .callout-title {
+  font-weight: 600;
+  color: var(--callout-color, rgb(var(--accent)));
+  margin-bottom: 0.3em;
+  text-transform: capitalize;
+}
+.prose-sb .callout > p:first-of-type {
+  margin-top: 0.2em;
+}
+.prose-sb .callout > :last-child {
+  margin-bottom: 0;
+}
+
+.prose-sb .callout-note,
+.prose-sb .callout-info,
+.prose-sb .callout-abstract,
+.prose-sb .callout-summary,
+.prose-sb .callout-tldr {
+  --callout-color: #38bdf8;
+}
+.prose-sb .callout-tip,
+.prose-sb .callout-hint,
+.prose-sb .callout-important {
+  --callout-color: #2dd4bf;
+}
+.prose-sb .callout-success,
+.prose-sb .callout-check,
+.prose-sb .callout-done {
+  --callout-color: #4ade80;
+}
+.prose-sb .callout-warning,
+.prose-sb .callout-caution,
+.prose-sb .callout-attention {
+  --callout-color: #fbbf24;
+}
+.prose-sb .callout-danger,
+.prose-sb .callout-error,
+.prose-sb .callout-fail,
+.prose-sb .callout-failure,
+.prose-sb .callout-missing,
+.prose-sb .callout-bug {
+  --callout-color: #f87171;
+}
+.prose-sb .callout-todo,
+.prose-sb .callout-question,
+.prose-sb .callout-faq,
+.prose-sb .callout-help {
+  --callout-color: #c084fc;
+}
+.prose-sb .callout-example,
+.prose-sb .callout-quote,
+.prose-sb .callout-cite {
+  --callout-color: rgb(var(--muted));
+}
+
+/* ─── Code highlighting (highlight.js github-dark complements our palette) ─ */
+.prose-sb pre code.hljs {
+  background: transparent;
+  padding: 0;
+}
+
+/* ─── Heading anchor target offset (so the smooth-scroll lands cleanly) ── */
+.prose-sb h1[id], .prose-sb h2[id], .prose-sb h3[id], .prose-sb h4[id] {
+  scroll-margin-top: 0.75rem;
+}

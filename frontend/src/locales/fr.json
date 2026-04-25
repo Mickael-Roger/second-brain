@@ -32,7 +32,11 @@
   },
   "wiki": {
     "title": "Wiki",
+    "vaultRoot": "Accueil du vault",
     "empty": "Choisissez une note à lire.",
+    "emptyFolder": "Dossier vide.",
+    "foldersLabel": "Dossiers",
+    "filesLabel": "Notes",
     "backlinks": "Backlinks",
     "noBacklinks": "Aucun backlink.",
     "searchPlaceholder": "Rechercher dans le vault…",

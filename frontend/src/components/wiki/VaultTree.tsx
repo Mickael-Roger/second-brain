@@ -1,6 +1,13 @@
-// Folder-aware vault tree. Folders are collapsible; files trigger onSelect.
+// Folder-aware vault tree.
+//
+//  - All folders start CLOSED on first connect (sessionStorage is empty).
+//  - The open/closed state is kept in sessionStorage so it survives view
+//    switches and reloads within a session, and resets when a new session
+//    starts.
+//  - Within a folder, children sort folders-first then alphabetically,
+//    case-insensitively.
 
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { ChevronDown, ChevronRight, FileText, Folder, FolderOpen } from "lucide-react";
 
 import type { TreeEntry } from "@/lib/api";
@@ -18,11 +25,42 @@ interface Node {
   children: Node[];
 }
 
+const SS_KEY = "sb.wiki.openFolders";
+
+function loadOpen(): Set<string> {
+  if (typeof window === "undefined") return new Set();
+  try {
+    const raw = sessionStorage.getItem(SS_KEY);
+    if (!raw) return new Set();
+    const arr = JSON.parse(raw);
+    return new Set(Array.isArray(arr) ? (arr as string[]) : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function persistOpen(open: Set<string>) {
+  try {
+    sessionStorage.setItem(SS_KEY, JSON.stringify(Array.from(open)));
+  } catch {
+    // sessionStorage might be unavailable (private mode, embedded webviews)
+  }
+}
+
+function compareChildren(a: Node, b: Node): number {
+  // Folders first.
+  if (a.type !== b.type) return a.type === "folder" ? -1 : 1;
+  // Case-insensitive alpha.
+  return a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
+}
+
 function buildTree(entries: TreeEntry[]): Node {
   const root: Node = { name: "", path: "", type: "folder", children: [] };
   const byPath = new Map<string, Node>([["", root]]);
 
-  for (const e of entries.slice().sort((a, b) => a.path.localeCompare(b.path))) {
+  // Sort entries by path so parents are visited before their children.
+  const sorted = entries.slice().sort((a, b) => a.path.localeCompare(b.path));
+  for (const e of sorted) {
     const parts = e.path.split("/");
     const name = parts[parts.length - 1];
     const parentPath = parts.slice(0, -1).join("/");
@@ -31,19 +69,24 @@ function buildTree(entries: TreeEntry[]): Node {
     parent.children.push(node);
     byPath.set(e.path, node);
   }
+  // Sort each level: folders first, then files, alpha.
+  const sortRec = (n: Node) => {
+    n.children.sort(compareChildren);
+    n.children.forEach(sortRec);
+  };
+  sortRec(root);
   return root;
 }
 
-function NodeView({
-  node,
-  activePath,
-  onSelect,
-}: {
+interface NodeViewProps {
   node: Node;
   activePath: string | null;
+  isOpen: (path: string) => boolean;
+  toggle: (path: string) => void;
   onSelect: (path: string) => void;
-}) {
-  const [open, setOpen] = useState(true);
+}
+
+function NodeView({ node, activePath, isOpen, toggle, onSelect }: NodeViewProps) {
   if (node.type === "file") {
     const active = activePath === node.path;
     return (
@@ -59,12 +102,12 @@ function NodeView({
       </button>
     );
   }
-  // Folder
+  const open = isOpen(node.path);
   return (
     <div>
       <button
         type="button"
-        onClick={() => setOpen((o) => !o)}
+        onClick={() => toggle(node.path)}
         className="flex w-full items-center gap-1.5 rounded px-1.5 py-1 text-left text-sm text-text hover:bg-bg"
       >
         {open ? (
@@ -86,6 +129,8 @@ function NodeView({
               key={c.path}
               node={c}
               activePath={activePath}
+              isOpen={isOpen}
+              toggle={toggle}
               onSelect={onSelect}
             />
           ))}
@@ -97,6 +142,43 @@ function NodeView({
 
 export default function VaultTree({ entries, activePath, onSelect }: Props) {
   const root = useMemo(() => buildTree(entries), [entries]);
+
+  const [openFolders, setOpenFolders] = useState<Set<string>>(() => loadOpen());
+
+  // Persist whenever the set changes.
+  useEffect(() => {
+    persistOpen(openFolders);
+  }, [openFolders]);
+
+  // When the active path is set deep, auto-open ancestor folders so the
+  // selection is visible. Stored to sessionStorage like a manual toggle.
+  useEffect(() => {
+    if (!activePath) return;
+    const parts = activePath.split("/");
+    if (parts.length <= 1) return;
+    setOpenFolders((prev) => {
+      const next = new Set(prev);
+      let acc = "";
+      for (let i = 0; i < parts.length - 1; i++) {
+        acc = acc ? `${acc}/${parts[i]}` : parts[i];
+        next.add(acc);
+      }
+      return next;
+    });
+  }, [activePath]);
+
+  const isOpen = useCallback((p: string) => openFolders.has(p), [openFolders]);
+  const toggle = useCallback(
+    (p: string) =>
+      setOpenFolders((prev) => {
+        const next = new Set(prev);
+        if (next.has(p)) next.delete(p);
+        else next.add(p);
+        return next;
+      }),
+    [],
+  );
+
   return (
     <div className="px-2 py-2">
       {root.children.map((c) => (
@@ -104,6 +186,8 @@ export default function VaultTree({ entries, activePath, onSelect }: Props) {
           key={c.path}
           node={c}
           activePath={activePath}
+          isOpen={isOpen}
+          toggle={toggle}
           onSelect={onSelect}
         />
       ))}

@@ -35,6 +35,19 @@ log = logging.getLogger(__name__)
 
 ENDPOINT = "https://chatgpt.com/backend-api/codex/responses"
 
+# The Responses API enforces tool/function names matching ^[a-zA-Z0-9_-]+$.
+# Our internal names use a `family.verb` shape with a dot, so encode the dot
+# on the way out and reverse on the way in. Identical scheme to openai_compat.
+_NAME_SEP_OUT = "__"
+
+
+def _encode_tool_name(name: str) -> str:
+    return name.replace(".", _NAME_SEP_OUT)
+
+
+def _decode_tool_name(name: str) -> str:
+    return name.replace(_NAME_SEP_OUT, ".")
+
 
 # ── Wire-format conversion ───────────────────────────────────────────────────
 
@@ -104,7 +117,7 @@ def _messages_to_input(messages: list[Message]) -> list[dict]:
                     {
                         "type": "function_call",
                         "call_id": tu.id,
-                        "name": tu.name,
+                        "name": _encode_tool_name(tu.name),
                         "arguments": json.dumps(tu.input, ensure_ascii=False),
                     }
                 )
@@ -116,7 +129,7 @@ def _tools_to_responses(tools: list[ToolDef]) -> list[dict]:
     return [
         {
             "type": "function",
-            "name": t.name,
+            "name": _encode_tool_name(t.name),
             "description": t.description,
             "parameters": _sanitise_json_schema(t.input_schema),
             "strict": False,
@@ -258,7 +271,7 @@ class ChatGPTProvider:
                 if item.get("type") == "function_call":
                     tool_calls[idx] = {
                         "id": item.get("call_id") or item.get("id") or f"call_{idx}",
-                        "name": item.get("name", ""),
+                        "name": _decode_tool_name(item.get("name", "")),
                         "arguments": item.get("arguments", "") or "",
                     }
                 elif item.get("type") == "message":
@@ -334,7 +347,7 @@ class ChatGPTProvider:
                 blocks.append(
                     ToolUseBlock(
                         id=item.get("call_id") or item.get("id") or "call_unknown",
-                        name=item.get("name", "unknown"),
+                        name=_decode_tool_name(item.get("name", "unknown")),
                         input=args,
                     )
                 )

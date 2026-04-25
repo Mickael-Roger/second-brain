@@ -6,10 +6,21 @@ import { useEffect, useRef } from "react";
 import { isWikilinkHref, renderMarkdown } from "@/lib/markdown";
 import type { TreeEntry } from "@/lib/api";
 
+import "highlight.js/styles/github-dark.css";
+
 interface Props {
   content: string;
   treeEntries: TreeEntry[];
   onOpen: (path: string) => void;
+}
+
+function slugify(s: string): string {
+  return s
+    .trim()
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s-]/gu, "")
+    .replace(/\s+/g, "-")
+    .replace(/^-+|-+$/g, "");
 }
 
 function resolveWikilinkTarget(token: string, entries: TreeEntry[]): string | null {
@@ -35,11 +46,35 @@ export default function NoteRenderer({ content, treeEntries, onOpen }: Props) {
       const a = (e.target as HTMLElement).closest("a");
       if (!a) return;
       const href = a.getAttribute("href") ?? "";
+
+      // Wikilink to another note (with optional heading).
       const link = isWikilinkHref(href);
-      if (!link) return;
-      e.preventDefault();
-      const target = resolveWikilinkTarget(link.target, treeEntries);
-      if (target) onOpen(target);
+      if (link) {
+        e.preventDefault();
+        const target = resolveWikilinkTarget(link.target, treeEntries);
+        if (target) {
+          onOpen(target);
+          if (link.heading) {
+            // Defer until the new note has rendered.
+            const slug = slugify(link.heading);
+            window.setTimeout(() => {
+              const el = document.getElementById(slug);
+              if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+            }, 60);
+          }
+        }
+        return;
+      }
+
+      // Same-page anchor (#heading) — let the browser handle but use smooth scroll.
+      if (href.startsWith("#")) {
+        e.preventDefault();
+        const slug = href.slice(1);
+        const el = node.querySelector(`#${CSS.escape(slug)}`);
+        if (el instanceof HTMLElement) {
+          el.scrollIntoView({ behavior: "smooth", block: "start" });
+        }
+      }
     };
     node.addEventListener("click", handler);
     return () => node.removeEventListener("click", handler);
