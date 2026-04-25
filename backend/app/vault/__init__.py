@@ -5,6 +5,7 @@ from .paths import resolve_vault_path, vault_root
 from .vault import (
     NoteRead,
     append_note,
+    create_folder,
     create_note,
     delete_note,
     find_notes,
@@ -21,6 +22,7 @@ __all__ = [
     "NoteRead",
     "ObsidianGitGuard",
     "append_note",
+    "create_folder",
     "create_note",
     "daily_relpath",
     "delete_note",

@@ -12,6 +12,7 @@ from typing import Any
 
 from app.vault import (
     append_note,
+    create_folder,
     create_note,
     delete_note,
     find_notes,
@@ -82,7 +83,7 @@ async def _grep(args: dict[str, Any]):
     return text_result("\n".join(lines))
 
 
-async def _write(args: dict[str, Any]):
+async def _edit_note(args: dict[str, Any]):
     try:
         n = await write_note(args["path"], args["content"])
     except (VaultPathError, FileNotFoundError) as exc:
@@ -116,6 +117,18 @@ async def _create_note(args: dict[str, Any]):
     except GitConflictError as exc:
         return text_result(str(exc), is_error=True)
     return text_result(f"created {n.path}")
+
+
+async def _create_folder(args: dict[str, Any]):
+    try:
+        rel = await create_folder(args["path"])
+    except FileExistsError as exc:
+        return text_result(str(exc), is_error=True)
+    except VaultPathError as exc:
+        return text_result(str(exc), is_error=True)
+    except GitConflictError as exc:
+        return text_result(str(exc), is_error=True)
+    return text_result(f"created folder {rel}/")
 
 
 async def _move(args: dict[str, Any]):
@@ -224,18 +237,58 @@ def register_all(reg: ToolRegistry) -> None:
         _grep,
     )
     reg.register(
-        "vault.write",
-        "Overwrite a note with the given content. Creates parent folders. Goes through git: pull → write → commit → push.",
+        "vault.create_note",
+        (
+            "Create a NEW note. Use this to WRITE a fresh note. Fails if a "
+            "note already exists at folder/title.md, so it's safe — it never "
+            "clobbers existing content. Use `vault.edit_note` instead to "
+            "modify an existing note."
+        ),
+        {
+            "type": "object",
+            "properties": {
+                "folder": {
+                    "type": "string",
+                    "description": "Vault-relative folder, '' for root.",
+                },
+                "title": {
+                    "type": "string",
+                    "description": "Note title — used as filename without the .md extension.",
+                },
+                "body": {"type": "string", "default": ""},
+                "frontmatter": {
+                    "type": "object",
+                    "description": "Optional YAML frontmatter (object form).",
+                },
+            },
+            "required": ["folder", "title"],
+        },
+        _create_note,
+    )
+    reg.register(
+        "vault.edit_note",
+        (
+            "EDIT an existing note by overwriting it with the given content. "
+            "Pass the FULL new body (including frontmatter if any). Creates "
+            "the note if it doesn't exist. Goes through git: pull → write → "
+            "commit → push. Use `vault.append` for incremental additions, "
+            "or `vault.create_note` if you specifically want to fail when "
+            "the note already exists."
+        ),
         {
             "type": "object",
             "properties": {"path": _PATH, "content": {"type": "string"}},
             "required": ["path", "content"],
         },
-        _write,
+        _edit_note,
     )
     reg.register(
         "vault.append",
-        "Append content to the end of a note. Creates the file if it doesn't exist.",
+        (
+            "Append content to the end of an existing note. Creates the file "
+            "if it doesn't exist (parent folders included). Cheaper and safer "
+            "than `vault.edit_note` when you only want to add a paragraph."
+        ),
         {
             "type": "object",
             "properties": {"path": _PATH, "content": {"type": "string"}},
@@ -244,23 +297,32 @@ def register_all(reg: ToolRegistry) -> None:
         _append,
     )
     reg.register(
-        "vault.create_note",
-        "Create a brand-new note. Fails if it already exists.",
+        "vault.create_folder",
+        (
+            "Create a folder under the vault root. Use this when the user "
+            "asks for a new section or topic area that doesn't fit any "
+            "existing folder. A `.gitkeep` placeholder is added so git "
+            "tracks the empty directory. No-op if the folder already exists."
+        ),
         {
             "type": "object",
             "properties": {
-                "folder": {"type": "string", "description": "Vault-relative folder, '' for root."},
-                "title": {"type": "string", "description": "Note title — used as filename without extension."},
-                "body": {"type": "string", "default": ""},
-                "frontmatter": {"type": "object", "description": "Optional YAML frontmatter (object form)."},
+                "path": {
+                    "type": "string",
+                    "description": "Vault-relative folder path, e.g. 'Notes/Cooking'.",
+                }
             },
-            "required": ["folder", "title"],
+            "required": ["path"],
         },
-        _create_note,
+        _create_folder,
     )
     reg.register(
         "vault.move",
-        "Move/rename a note within the vault.",
+        (
+            "Move or rename a note. Use this to MOVE A NOTE INTO ANOTHER "
+            "FOLDER (e.g. promote an Inbox capture into Tech/) or to rename "
+            "a file. Fails if the destination already exists."
+        ),
         {
             "type": "object",
             "properties": {"src": _PATH, "dst": _PATH},

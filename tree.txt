@@ -1,0 +1,26 @@
+Books/         -> Contains notes on books I read
+Bug bounty/    -> Notes about hacking bug bounties
+Divers/        -> Divers notes
+Excalidraw/    -> Draw made by the excalidraw extension
+Exkalibur/     -> Notes about the treasure hunt called "Excalibur"
+Famille/       -> Notes about my family (like school meetings notes, ...)
+Feeds/         -> This folder is populated by my freshRSS module.
+  Articles/    -> My freshRSS module create one note that make a full notes about an article when I ask for it
+  Notes/       -> My freshRSS module create one note per information I want to Keep (When I asked for it). The "Organizing" task must merge these note information into one markdown file that will contains all the noted information (classified by theme)
+  Youtube      -> My freshRSS module (That is listen to Youtube channel RSS feed) set here one note per youtube video I want to watch. It would be good if the "Organizing" night task, get each one of this element and add it to a markdown file dedicated to Youtube watch list
+files/         -> Contains files like pdf, ... that are part of notes
+Ideas/         -> Ideas folder
+Inbox/         -> Every new non classified note arrives here
+Journal/       -> Journal folder
+Logger/
+  Opencode/    -> When I use my coding agent, I could ask for archiving the conversation. It is where it ended
+Maker/         -> Folder about all my Maker stuff (Tutorial about 3D printing, modeling, electronics, ...)
+Notes/         -> Classified notes folder
+People management/  -> Folder that contains notes about people management, people mindset stuff, mindset hack, ...
+ReadItLater Inbox/  -> Folder used by ReadItLater Obsidian extension
+Science/       -> Notes about science stuff
+Tech/          -> Notes about tech and computing stuff
+Templates/     -> Templates for daily, monthy, ... notes
+Cheatsheet.md  -> My tech command cheatsheet
+S3NS cheatsheet.md -> My tech command cheatsheet but for S3NS (The previous company I worked for)
+

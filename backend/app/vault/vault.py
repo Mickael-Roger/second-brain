@@ -254,6 +254,32 @@ async def delete_note(path: str, *, message: str | None = None) -> None:
         await asyncio.to_thread(abs_path.unlink)
 
 
+async def create_folder(path: str, *, message: str | None = None) -> str:
+    """Create a folder under the vault root.
+
+    Git doesn't track empty directories, so a tiny `.gitkeep` file is
+    placed inside newly-created empty folders to make them persist across
+    pulls. If the folder already exists with content, this is a no-op.
+    """
+    abs_path = resolve_vault_path(path)
+    if abs_path.exists() and not abs_path.is_dir():
+        raise FileExistsError(f"path exists but is a file: {path}")
+
+    rel = to_relative(abs_path) if abs_path.exists() else Path(path).as_posix()
+
+    if abs_path.is_dir() and any(abs_path.iterdir()):
+        # Already exists with content — nothing to do.
+        return rel
+
+    msg = message or f"vault.create_folder {rel}"
+    async with get_guard().transaction(msg):
+        abs_path.mkdir(parents=True, exist_ok=True)
+        gitkeep = abs_path / ".gitkeep"
+        if not any(p for p in abs_path.iterdir() if p.name != ".gitkeep"):
+            gitkeep.write_text("", encoding="utf-8")
+    return to_relative(abs_path)
+
+
 # ── filesystem helpers ────────────────────────────────────────────────
 
 
