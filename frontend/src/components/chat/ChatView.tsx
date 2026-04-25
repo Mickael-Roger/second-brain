@@ -5,7 +5,7 @@ import { useTranslation } from "react-i18next";
 import { useQuery } from "@tanstack/react-query";
 import { Menu, Wrench, X } from "lucide-react";
 
-import { api, type ChatDetail, type ProviderInfo } from "@/lib/api";
+import { api, type ChatDetail, type ProviderInfo, type TreeEntry } from "@/lib/api";
 import { useChatStream, useDefaultSelection } from "@/lib/chat";
 import MessageList from "@/components/chat/MessageList";
 import Composer from "@/components/chat/Composer";
@@ -39,6 +39,14 @@ export default function ChatView({ onOpenWiki }: Props) {
   const providers = useQuery({
     queryKey: ["providers"],
     queryFn: () => api.get<ProviderInfo[]>("/api/llm/providers"),
+  });
+  // Vault tree feeds auto-linkification of plain-text note mentions in
+  // assistant replies. Shared cache key with the wiki view so we don't
+  // double-fetch.
+  const vaultTree = useQuery({
+    queryKey: ["vault-tree"],
+    queryFn: () => api.get<TreeEntry[]>("/api/vault/tree"),
+    staleTime: 30_000,
   });
   const [selection, setSelection] = useState<string | undefined>();
   useDefaultSelection(providers.data, selection, setSelection);
@@ -153,6 +161,7 @@ export default function ChatView({ onOpenWiki }: Props) {
             busy={busy}
             showToolDetails={showToolDetails}
             onOpenWiki={onOpenWiki}
+            vaultEntries={vaultTree.data ?? []}
           />
         )}
 
