@@ -35,7 +35,11 @@
     "empty": "Pick a note to read.",
     "backlinks": "Backlinks",
     "noBacklinks": "No backlinks.",
-    "searchPlaceholder": "Search the vault…"
+    "searchPlaceholder": "Search the vault…",
+    "editing": "Editing {{path}}",
+    "acquiring": "Acquiring lock…",
+    "lockBusy": "Another session is editing this note.",
+    "lockError": "Could not acquire the edit lock."
   },
   "common": {
     "loading": "Loading…",

@@ -3,18 +3,26 @@
 
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { useQuery } from "@tanstack/react-query";
-import { BookOpen } from "lucide-react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { BookOpen, Pencil } from "lucide-react";
 
 import { api, type TreeEntry, type VaultNote } from "@/lib/api";
 import VaultTree from "./VaultTree";
 import NoteRenderer from "./NoteRenderer";
 import Backlinks from "./Backlinks";
 import SearchBar from "./SearchBar";
+import WikiEditor from "./WikiEditor";
 
 export default function WikiView() {
   const { t } = useTranslation();
+  const qc = useQueryClient();
   const [activePath, setActivePath] = useState<string | null>(null);
+  const [editing, setEditing] = useState(false);
+
+  // Switching notes always exits edit mode.
+  useEffect(() => {
+    setEditing(false);
+  }, [activePath]);
 
   const tree = useQuery({
     queryKey: ["vault-tree"],
@@ -64,25 +72,47 @@ export default function WikiView() {
       <main className="flex h-full min-w-0 flex-1 flex-col">
         <header className="flex items-center gap-2 border-b border-border bg-surface px-4 py-2">
           <BookOpen className="h-4 w-4 text-accent" />
-          <span className="truncate text-sm font-medium">
+          <span className="flex-1 truncate text-sm font-medium">
             {activePath ?? t("wiki.title")}
           </span>
+          {note.data && !editing && (
+            <button
+              type="button"
+              onClick={() => setEditing(true)}
+              className="flex items-center gap-1 rounded border border-border px-2 py-1 text-xs text-muted hover:border-accent hover:text-text"
+            >
+              <Pencil className="h-3.5 w-3.5" />
+              {t("common.edit")}
+            </button>
+          )}
         </header>
 
         <div className="flex flex-1 min-h-0">
-          <div className="flex-1 overflow-y-auto">
-            {note.isLoading && activePath ? (
+          <div className="flex flex-1 min-w-0 flex-col">
+            {editing && note.data ? (
+              <WikiEditor
+                path={note.data.path}
+                initialContent={note.data.content}
+                onSaved={() => {
+                  setEditing(false);
+                  qc.invalidateQueries({ queryKey: ["vault-note", activePath] });
+                }}
+                onCancel={() => setEditing(false)}
+              />
+            ) : note.isLoading && activePath ? (
               <p className="px-6 py-6 text-sm text-muted">{t("common.loading")}</p>
             ) : note.isError ? (
               <p className="px-6 py-6 text-sm text-red-400">
                 {(note.error as Error)?.message ?? "error"}
               </p>
             ) : note.data ? (
-              <NoteRenderer
-                content={note.data.content}
-                treeEntries={tree.data ?? []}
-                onOpen={setActivePath}
-              />
+              <div className="flex-1 overflow-y-auto">
+                <NoteRenderer
+                  content={note.data.content}
+                  treeEntries={tree.data ?? []}
+                  onOpen={setActivePath}
+                />
+              </div>
             ) : (
               <div className="flex h-full items-center justify-center px-6 text-center text-muted">
                 <p>{t("wiki.empty")}</p>
@@ -90,11 +120,13 @@ export default function WikiView() {
             )}
           </div>
 
-          <aside className="hidden w-64 shrink-0 border-l border-border bg-surface lg:block">
-            {note.data ? (
-              <Backlinks links={note.data.backlinks} onOpen={setActivePath} />
-            ) : null}
-          </aside>
+          {!editing && (
+            <aside className="hidden w-64 shrink-0 border-l border-border bg-surface lg:block">
+              {note.data ? (
+                <Backlinks links={note.data.backlinks} onOpen={setActivePath} />
+              ) : null}
+            </aside>
+          )}
         </div>
       </main>
     </div>

@@ -241,12 +241,17 @@ async def chat_stream(
         yield _sse("chat", {"id": chat.id, "title": chat.title, "module_id": chat.module_id})
 
         try:
+            from app.tools import get_registry
+
+            registry = get_registry()
             async for ev in run_chat(
                 conn,
                 chat=chat,
                 user_message=user_message,
                 provider_name=provider_name,
                 model=model_name,
+                tools=registry.defs(),
+                dispatcher=registry,
             ):
                 if ev.type == "text_delta":
                     yield _sse("text_delta", {"text": ev.text or ""})

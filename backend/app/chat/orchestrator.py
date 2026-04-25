@@ -1,8 +1,12 @@
 """Chat orchestration loop.
 
-Runs the LLM with the configured tools (none in phase 1), streams events to the
-caller, and persists the full transcript on completion. The loop is structured
-so phase 5 (MCP tools) can plug in without churning this module.
+Runs the LLM with the registered tool families (vault.*, daily.*, chat.search
+in Phase 1), streams events to the caller, and persists the full transcript
+on completion.
+
+The system prompt is augmented at session start with the contents of
+`INDEX.md` from the vault — this is how the LLM knows the user's folder
+conventions and where things live.
 """
 
 from __future__ import annotations
@@ -10,7 +14,7 @@ from __future__ import annotations
 import logging
 import sqlite3
 from collections.abc import AsyncIterator
-from typing import Any
+from typing import Any, Protocol
 
 from app.config import get_settings
 from app.db.models import Chat
@@ -31,17 +35,18 @@ log = logging.getLogger(__name__)
 _DEFAULT_SYSTEM_PROMPT = (
     "You are the user's second brain. You are concise, helpful, and proactive. "
     "You speak the user's language. The user prefers direct answers without "
-    "unnecessary preambles."
+    "unnecessary preambles. "
+    "When the user wants to remember something, decide WHERE in their Obsidian "
+    "vault it belongs (using INDEX.md as the map) and write it there with the "
+    "appropriate tool — do not just acknowledge in chat."
 )
 
 
-class ToolDispatcher:
-    """Bridges LLM tool calls to actual handlers.
+class ToolDispatcher(Protocol):
+    async def call(self, name: str, arguments: dict[str, Any]) -> ToolResultBlock: ...
 
-    Phase 1 ships with no tools. Phase 5 will replace this with the
-    ModuleRegistry-backed dispatcher.
-    """
 
+class _NullDispatcher:
     async def call(self, name: str, arguments: dict[str, Any]) -> ToolResultBlock:
         return ToolResultBlock(
             tool_use_id="(unset)",
@@ -50,7 +55,37 @@ class ToolDispatcher:
         )
 
 
-_NULL_DISPATCHER = ToolDispatcher()
+_NULL_DISPATCHER: ToolDispatcher = _NullDispatcher()
+
+
+def _read_index() -> str | None:
+    """Read INDEX.md from the vault, if available. Failures are non-fatal —
+    the brain still works without one, just less informed."""
+    try:
+        from app.vault import read_note  # local import: vault may be unconfigured
+    except Exception:
+        return None
+    s = get_settings()
+    if s.obsidian.vault_path is None:
+        return None
+    try:
+        n = read_note(s.obsidian.index_file)
+    except Exception as exc:
+        log.debug("INDEX.md not loaded: %s", exc)
+        return None
+    return n.content
+
+
+def _build_system_prompt(custom: str | None, language: str) -> str:
+    base = custom or _DEFAULT_SYSTEM_PROMPT
+    base += f"\n\nThe user's preferred language is {language.upper()}."
+    index = _read_index()
+    if index:
+        base += (
+            "\n\n## Vault structure (from INDEX.md — your map of the user's brain)\n\n"
+            + index.strip()
+        )
+    return base
 
 
 async def run_chat(
@@ -79,8 +114,7 @@ async def run_chat(
     history.append(user_message)
     persistence.write_messages(chat, history)
 
-    sys_prompt = system_prompt or _DEFAULT_SYSTEM_PROMPT
-    sys_prompt += f"\n\nThe user's preferred language is {(language or settings.app.language).upper()}."
+    sys_prompt = _build_system_prompt(system_prompt, language or settings.app.language)
 
     rounds_left = settings.llm.max_tool_rounds
     while True:

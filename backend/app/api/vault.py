@@ -1,17 +1,23 @@
-"""HTTP endpoints for the wiki view (read-only at this step)."""
+"""HTTP endpoints for the wiki view."""
 
 from __future__ import annotations
+
+import sqlite3
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from app.auth import current_user
+from app.db.connection import get_db
 from app.vault import (
     list_tree,
     read_note,
     search_vault,
+    write_note,
 )
 from app.vault.backlinks import find_backlinks
+from app.vault.guard import GitConflictError
+from app.vault.locks import LockConflict, LockInvalid, acquire, release, verify
 from app.vault.paths import VaultPathError
 
 router = APIRouter(prefix="/api/vault", tags=["vault"])
@@ -81,3 +87,88 @@ def get_search(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+# ── Edit flow ────────────────────────────────────────────────────────
+
+
+class LockRequest(BaseModel):
+    path: str
+
+
+class LockResponse(BaseModel):
+    path: str
+    token: str
+    expires_at: str
+
+
+class ReleaseRequest(BaseModel):
+    path: str
+    token: str
+
+
+class WriteRequest(BaseModel):
+    path: str
+    content: str
+    token: str
+
+
+@router.post("/edit/lock", response_model=LockResponse)
+def lock_path(
+    payload: LockRequest,
+    _user: str = Depends(current_user),
+    conn: sqlite3.Connection = Depends(get_db),
+) -> LockResponse:
+    # Check the path is sane (resolves under the vault) before locking.
+    try:
+        from app.vault.paths import resolve_vault_path
+
+        resolve_vault_path(payload.path)
+    except VaultPathError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    try:
+        grant = acquire(conn, payload.path)
+    except LockConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return LockResponse(
+        path=grant.path, token=grant.token, expires_at=grant.expires_at.isoformat()
+    )
+
+
+@router.delete("/edit/lock", status_code=204)
+def unlock_path(
+    payload: ReleaseRequest,
+    _user: str = Depends(current_user),
+    conn: sqlite3.Connection = Depends(get_db),
+) -> None:
+    try:
+        release(conn, payload.path, payload.token)
+    except LockInvalid as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+
+@router.put("/note", response_model=NoteResponse)
+async def put_note(
+    payload: WriteRequest,
+    _user: str = Depends(current_user),
+    conn: sqlite3.Connection = Depends(get_db),
+) -> NoteResponse:
+    try:
+        verify(conn, payload.path, payload.token)
+    except LockInvalid as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+    try:
+        n = await write_note(payload.path, payload.content, message=f"wiki edit: {payload.path}")
+    except VaultPathError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except GitConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    backlinks = [{"path": b.path, "snippet": b.snippet} for b in find_backlinks(n.path)]
+    return NoteResponse(path=n.path, content=n.content, backlinks=backlinks)
