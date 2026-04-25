@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Literal
 
 import yaml
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class AppSection(BaseModel):
@@ -32,9 +32,23 @@ class AuthSection(BaseModel):
 
 
 class LLMProviderConfig(BaseModel):
-    kind: Literal["openai", "anthropic"]
-    base_url: str
-    api_key: str
+    """One LLM provider entry.
+
+    `kind` selects the wire format and authentication scheme:
+
+    - ``openai``    — OpenAI-compatible chat/completions, API key auth.
+                      Requires `base_url` and `api_key`.
+    - ``anthropic`` — Anthropic /v1/messages, API key auth (phase 4).
+                      Requires `base_url` and `api_key`.
+    - ``chatgpt``   — ChatGPT Plus / Pro / Team subscription via OAuth, hits
+                      the Codex Responses API. No `base_url` or `api_key`
+                      needed; tokens come from the device-flow login (run
+                      ``second-brain chatgpt-login <provider>``).
+    """
+
+    kind: Literal["openai", "anthropic", "chatgpt"]
+    base_url: str | None = None
+    api_key: str | None = None
     models: list[str] = Field(min_length=1)
 
     @field_validator("models")
@@ -43,6 +57,17 @@ class LLMProviderConfig(BaseModel):
         if len(set(v)) != len(v):
             raise ValueError("models list contains duplicates")
         return v
+
+    @model_validator(mode="after")
+    def _check_required(self) -> "LLMProviderConfig":
+        if self.kind in ("openai", "anthropic"):
+            if not self.base_url:
+                raise ValueError(f"{self.kind} provider requires `base_url`")
+            if not self.api_key:
+                raise ValueError(f"{self.kind} provider requires `api_key`")
+        # `chatgpt` providers intentionally have no api_key / base_url —
+        # auth comes from the OAuth token file.
+        return self
 
     @property
     def default_model(self) -> str:

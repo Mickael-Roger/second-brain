@@ -26,6 +26,21 @@ llm:
         - gpt-4o-mini       # default for this provider (first in list)
         - gpt-4o
         - o4-mini
+
+    # ChatGPT Plus / Pro / Team subscription via OAuth (no API credits needed).
+    # No `api_key` or `base_url` here — authentication is done once via:
+    #     docker compose run --rm second-brain second-brain chatgpt-login chatgpt-pro
+    # The device-flow login prints a URL and a code; visit
+    # https://auth.openai.com/codex/device, enter the code, authorize, and the
+    # tokens are saved under {data_dir}/chatgpt_oauth/<provider_name>.json
+    # (refreshed automatically before each request).
+    chatgpt-pro:
+      kind: chatgpt
+      models:
+        - gpt-5-codex            # default — codex-tuned GPT-5
+        - gpt-5-codex-high       # higher reasoning effort
+        - gpt-5-codex-low        # lower reasoning effort, faster
+
     anthropic:
       kind: anthropic       # adapter ships in phase 4; entry shown for shape
       base_url: https://api.anthropic.com
@@ -34,6 +49,7 @@ llm:
         - claude-opus-4-5
         - claude-sonnet-4-5
         - claude-haiku-4-5
+
     # Any OpenAI-compatible endpoint works (vLLM, llama.cpp server, OpenRouter,
     # Groq, a local LM Studio, ...). Just point base_url at it.
     local:

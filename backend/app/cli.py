@@ -8,6 +8,7 @@ import sys
 import click
 
 from app.auth.passwords import hash_password
+from app.config import get_settings
 from app.db.connection import open_connection
 from app.db.migrations import run_migrations
 
@@ -40,6 +41,48 @@ def migrate_cmd() -> None:
     finally:
         conn.close()
     click.echo(f"Applied {applied} migration(s).")
+
+
+@cli.command("chatgpt-login")
+@click.argument("provider", required=False)
+def chatgpt_login_cmd(provider: str | None) -> None:
+    """Authenticate a `kind: chatgpt` provider via the OAuth device flow.
+
+    PROVIDER is the name of the entry under `llm.providers` in config.yml. If
+    omitted and exactly one chatgpt provider is configured, that one is used.
+    """
+    from app.llm.chatgpt_auth import login_device_flow
+
+    settings = get_settings()
+    chatgpt_names = [
+        name for name, cfg in settings.llm.providers.items() if cfg.kind == "chatgpt"
+    ]
+    if not chatgpt_names:
+        click.echo(
+            "No `kind: chatgpt` provider is configured in config.yml. "
+            "Add one (see config.example.yml) and rerun.",
+            err=True,
+        )
+        sys.exit(1)
+
+    if provider is None:
+        if len(chatgpt_names) > 1:
+            click.echo(
+                "Multiple chatgpt providers are configured: "
+                f"{', '.join(chatgpt_names)}. Specify one explicitly.",
+                err=True,
+            )
+            sys.exit(1)
+        provider = chatgpt_names[0]
+    elif provider not in chatgpt_names:
+        click.echo(
+            f"'{provider}' is not a configured chatgpt provider. "
+            f"Known: {', '.join(chatgpt_names)}",
+            err=True,
+        )
+        sys.exit(1)
+
+    login_device_flow(provider)
 
 
 if __name__ == "__main__":

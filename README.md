@@ -44,9 +44,37 @@ The container serves the built SPA on port 8000.
 ## CLI
 
 ```bash
-uv run second-brain hash-password           # prompt for a password, print bcrypt hash
-uv run second-brain migrate                 # apply pending SQL migrations
+uv run second-brain hash-password                       # prompt for a password, print bcrypt hash
+uv run second-brain migrate                             # apply pending SQL migrations
+uv run second-brain chatgpt-login <provider-name>       # OAuth device-flow login for kind=chatgpt
 ```
+
+### ChatGPT Plus / Pro / Team subscription
+
+Add a `kind: chatgpt` entry under `llm.providers` (no `api_key`, no `base_url` —
+see [`config.example.yml`](./config.example.yml)). Then run the device-flow
+login once. The tokens are persisted to `{data_dir}/chatgpt_oauth/<name>.json`
+and refreshed automatically before every request.
+
+In Docker:
+
+```bash
+# one-shot, shares the data volume so tokens persist
+docker compose -f docker-compose.example.yml run --rm second-brain \
+  second-brain chatgpt-login chatgpt-pro
+
+# or, against an already-running container
+docker exec -it second-brain second-brain chatgpt-login chatgpt-pro
+```
+
+Outside Docker:
+
+```bash
+uv run second-brain chatgpt-login chatgpt-pro
+```
+
+The command prints a URL and a one-time user code; visit
+<https://auth.openai.com/codex/device>, enter the code, and authorize.
 
 ## Configuration
 

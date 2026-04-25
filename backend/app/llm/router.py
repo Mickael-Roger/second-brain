@@ -7,22 +7,28 @@ from functools import lru_cache
 from app.config import LLMProviderConfig, get_settings
 
 from .base import LLMProvider
+from .chatgpt import ChatGPTProvider
 from .openai_compat import OpenAICompatProvider
 
 
 def _build(name: str, cfg: LLMProviderConfig) -> LLMProvider:
     if cfg.kind == "openai":
+        assert cfg.base_url and cfg.api_key  # validated by config model
         return OpenAICompatProvider(
             name=name,
             base_url=cfg.base_url,
             api_key=cfg.api_key,
             model=cfg.default_model,
         )
+    if cfg.kind == "chatgpt":
+        # Auth via OAuth token file; no api_key / base_url required here.
+        return ChatGPTProvider(name=name, model=cfg.default_model)
     if cfg.kind == "anthropic":
-        # Phase 1 only ships the OpenAI-compat adapter. The Anthropic adapter
-        # arrives in phase 4; until then we surface a clear runtime error.
+        # Phase 1 only ships the OpenAI-compat and ChatGPT adapters. The
+        # Anthropic adapter arrives in phase 4.
         raise NotImplementedError(
-            "Anthropic provider arrives in phase 4. Configure an OpenAI-compatible provider for now."
+            "Anthropic provider arrives in phase 4. "
+            "Configure an OpenAI-compatible or ChatGPT provider for now."
         )
     raise ValueError(f"unknown provider kind: {cfg.kind}")
 
