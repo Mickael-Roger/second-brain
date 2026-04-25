@@ -15,6 +15,7 @@ backend/app/static/
 # Local data
 data/
 config.yml
+INDEX.example.md
 *.db
 *.db-journal
 *.db-wal
