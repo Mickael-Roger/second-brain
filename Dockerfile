@@ -19,6 +19,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/* \
     && git config --system --add safe.directory '*'
 
+# Non-root runtime user. UID/GID 1000 is the conventional first-user id on
+# Linux desktops; bind-mounting host directories owned by your user (vault,
+# data dir, SSH key) means files written by the container come back owned
+# by you, not root. Override at build time with `--build-arg APP_UID=…` if
+# your host user has a different uid.
+ARG APP_UID=1000
+ARG APP_GID=1000
+RUN groupadd --system --gid "${APP_GID}" brain && \
+    useradd  --system --uid "${APP_UID}" --gid "${APP_GID}" \
+             --home-dir /home/brain --create-home --shell /bin/bash brain
+
 RUN pip install --no-cache-dir uv
 
 WORKDIR /app
@@ -29,15 +40,21 @@ RUN uv sync --no-dev
 COPY backend/ ./backend/
 COPY --from=spa /app/dist ./backend/app/static/
 
+# /data is the bind-mount target for the SQLite DB + chat transcripts; pre-
+# create it owned by the runtime user so the first boot works even when the
+# host hasn't pre-created /data with the right ownership.
+RUN mkdir -p /data && chown -R brain:brain /app /data
+
 ENV CONFIG_PATH=/config/config.yml \
     DATA_DIR=/data \
-    PYTHONPATH=/app/backend
+    PYTHONPATH=/app/backend \
+    PATH="/app/.venv/bin:${PATH}"
 
-ENV PATH="/app/.venv/bin:${PATH}"
+USER brain
 
 EXPOSE 8000
 ENTRYPOINT ["/usr/bin/tini", "--"]
 # Bind host/port come from config.yml (`app.host`, `app.port`); EXPOSE 8000 is
-# only the documented default. Override at the orchestrator level if you change
-# the configured port and need the published port to match.
+# only the documented default. Override at the orchestrator level if you
+# change the configured port and need the published port to match.
 CMD ["second-brain", "serve"]
