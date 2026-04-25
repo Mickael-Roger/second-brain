@@ -16,6 +16,7 @@ backend/app/static/
 data/
 config.yml
 INDEX.example.md
+ORGANIZE.example.md
 *.db
 *.db-journal
 *.db-wal

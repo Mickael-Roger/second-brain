@@ -118,6 +118,9 @@ class ObsidianSection(BaseModel):
     index_file: str = "INDEX.md"             # the vault's structural map
     user_file: str = "USER.md"               # facts about the user
     preferences_file: str = "PREFERENCES.md" # how the brain should operate
+    # System prompt for the nightly Organize task. Optional — missing file
+    # falls back to the built-in default in app.jobs.organize.
+    organize_prompt_file: str = "ORGANIZE.md"
     journal: ObsidianJournalSection = ObsidianJournalSection()
     git: ObsidianGitSection = ObsidianGitSection()
 

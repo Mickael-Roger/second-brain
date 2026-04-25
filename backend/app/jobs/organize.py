@@ -150,7 +150,7 @@ def _select_candidates(conn: sqlite3.Connection) -> tuple[list[Path], datetime |
 # ── prompt + parser ──────────────────────────────────────────────────
 
 
-_SYSTEM_PROMPT = """\
+_DEFAULT_SYSTEM_PROMPT = """\
 You are reviewing one note from the user's Obsidian vault. Use INDEX.md (the
 vault's structural map), USER.md (facts about the user), and PREFERENCES.md
 (operating preferences) — all three provided below — as authoritative
@@ -179,6 +179,34 @@ Rules:
   auto-insert them.
 - If the note is already in good shape, return all-null fields.
 """
+
+
+def _load_system_prompt() -> str:
+    """Load the Organize task's system prompt from the vault.
+
+    Reads `<vault>/<obsidian.organize_prompt_file>` (default `ORGANIZE.md`),
+    strips an optional YAML frontmatter block. Falls back to the built-in
+    default when the file is missing, empty, or the vault is unconfigured.
+    """
+    s = get_settings()
+    if s.obsidian.vault_path is None:
+        return _DEFAULT_SYSTEM_PROMPT
+    try:
+        path = vault_root() / s.obsidian.organize_prompt_file
+    except RuntimeError:
+        return _DEFAULT_SYSTEM_PROMPT
+    if not path.is_file():
+        return _DEFAULT_SYSTEM_PROMPT
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        log.warning("could not read organize prompt %s: %s", path, exc)
+        return _DEFAULT_SYSTEM_PROMPT
+    if text.startswith("---\n"):
+        end = text.find("\n---", 4)
+        if end >= 0:
+            text = text[end + 4 :].lstrip("\n")
+    return text.strip() or _DEFAULT_SYSTEM_PROMPT
 
 
 def _strip_code_fences(text: str) -> str:
@@ -272,10 +300,11 @@ async def _propose(
     content: str,
     context_files: list[Any],
     paths: list[str],
+    system_prompt: str,
 ) -> Proposal:
     user = _build_user_prompt(note_path, content, context_files, paths)
     msgs = [Message(role="user", content=[TextBlock(text=user)])]
-    raw = await complete(_SYSTEM_PROMPT, msgs)
+    raw = await complete(system_prompt, msgs)
     return parse_proposal(note_path, raw)
 
 
@@ -350,6 +379,10 @@ async def run_organize() -> OrganizeResult:
 
         context_files = read_context_files()  # INDEX, USER, PREFERENCES (each optional)
         paths = _vault_paths_sample()
+        # Load the Organize system prompt once per run so updates to the
+        # vault file (default ORGANIZE.md) take effect on the next nightly
+        # without a restart.
+        system_prompt = _load_system_prompt()
         for p in candidates:
             rel = p.relative_to(vault_root()).as_posix()
             try:
@@ -358,7 +391,9 @@ async def run_organize() -> OrganizeResult:
                 skipped.append((rel, f"read error: {exc}"))
                 continue
             try:
-                proposals.append(await _propose(rel, content, context_files, paths))
+                proposals.append(
+                    await _propose(rel, content, context_files, paths, system_prompt)
+                )
             except Exception as exc:
                 log.exception("organize: proposal failed for %s", rel)
                 skipped.append((rel, f"LLM error: {exc}"))
