@@ -35,14 +35,21 @@ export default function FolderIndex({ folder, entries, onOpen }: Props) {
       return rest.length > 0 && !rest.includes("/") && e.depth === expectedDepth;
     });
     here.sort(compareEntries);
+    // At the vault root the INDEX.md is the system-injected map, not wiki
+    // content — stays clickable in the files list, but not auto-rendered
+    // above the cards. Sub-folder INDEX.md files are still auto-rendered
+    // because there they act as hub notes.
+    const isRoot = folder === "";
     const indexCandidate = `${prefix}INDEX.md`;
     const idx = entries.find(
       (e) => e.type === "file" && e.path === indexCandidate,
     );
     return {
       folders: here.filter((e) => e.type === "folder"),
-      files: here.filter((e) => e.type === "file" && e.path !== idx?.path),
-      indexPath: idx?.path ?? null,
+      files: here.filter(
+        (e) => e.type === "file" && (isRoot || e.path !== idx?.path),
+      ),
+      indexPath: isRoot ? null : (idx?.path ?? null),
     };
   }, [entries, folder]);
 
