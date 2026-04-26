@@ -1,20 +1,25 @@
 """News-fetch orchestration.
 
-Two modes:
+Two callers, both honoured by `fetch_all_sources`:
 
-  - Incremental (`from_ts is None`): used by the scheduler. Walks Fever
-    forward from the last `external_id` we already stored — efficient,
-    pulls only new items.
+  - Manual UI fetch — incremental (since_id from last stored max id).
+    Fast, just catches new items.
 
-  - Ranged (`from_ts` set): used by the manual API trigger. Walks Fever
-    backwards from the newest item via `max_id`, keeping only items
-    whose `created_on_time` falls in the [`from_ts`, `to_ts`] window.
+  - Scheduled cron — ranged over the last 30 days. Goes through every
+    item in the window so anything previously missed (read articles
+    older than the since_id reach, items not yet in our DB at all) is
+    captured. INSERT-OR-IGNORE dedups across runs.
 
-Each fetch:
-  1. Purges articles older than `RETENTION_DAYS` (with disk cleanup).
-  2. Pulls items from Fever.
-  3. For each new item: stores metadata in SQLite, full body on disk,
-     extracts the first image URL into the row.
+Both modes also run the unread-completeness pass: pull every unread
+item id from FreshRSS via `?api&unread_item_ids`, diff against what
+we've already stored, fetch the missing ids in 50-id batches via
+`?api&items&with_ids=…`. That covers very old unread items below the
+30-day window.
+
+Each new article gets:
+  - A row in news_articles (slim metadata only).
+  - A JSON file at <data_dir>/news/<safe_id>.json holding the full
+    record (url, author, image, summary, raw html).
 """
 
 from __future__ import annotations
@@ -22,13 +27,15 @@ from __future__ import annotations
 import logging
 import sqlite3
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 
 from app.config import get_settings
 from app.db.connection import open_connection
 
-from . import summaries
+from . import articles
 from .fever_client import (
     FeverClient,
+    FeverItem,
     extract_first_image,
     html_to_plain_text,
     published_iso,
@@ -36,6 +43,7 @@ from .fever_client import (
 from .store import (
     RETENTION_DAYS,
     create_fetch_run,
+    existing_external_ids,
     finish_fetch_run,
     insert_article,
     purge_old_articles_with_ids,
@@ -53,22 +61,50 @@ class FetchSummary:
     error: str | None = None
 
 
-_FAVICON_MAX_BYTES = 8192  # ~8 KB, plenty for a 16-32px PNG/ICO
+_FAVICON_MAX_BYTES = 8192
+
+
+def _normalise_favicon(raw: str | None) -> str | None:
+    """Coerce Fever's favicon payload into a `data:` URI."""
+    if raw is None:
+        return None
+    s = raw.strip()
+    if not s or len(s) > _FAVICON_MAX_BYTES:
+        return None
+    if s.startswith("data:"):
+        return s
+    if s.startswith("image/") and ";base64," in s:
+        return f"data:{s}"
+    return f"data:image/png;base64,{s}"
+
+
+def _last_external_id(conn: sqlite3.Connection, source: str) -> int:
+    row = conn.execute(
+        "SELECT external_id FROM news_articles WHERE source = ? "
+        "ORDER BY CAST(external_id AS INTEGER) DESC LIMIT 1",
+        (source,),
+    ).fetchone()
+    if row is None:
+        return 0
+    try:
+        return int(row["external_id"])
+    except (TypeError, ValueError):
+        return 0
 
 
 def _store_items(
-    items: list,
+    items: list[FeverItem],
     *,
     feeds: dict,
     excluded_group_ids: set[str],
     source: str,
 ) -> tuple[int, int]:
-    """Persist a list of FeverItem to the DB + disk. Returns
-    (inserted, skipped_excluded). Used by both the regular fetch
-    and the unread-completeness pass so the storage path stays
-    identical."""
+    """Persist FeverItems → SQLite (metadata) + JSON (full record).
+
+    Returns (inserted_count, skipped_excluded_count)."""
     inserted = 0
     skipped_excluded = 0
+    now_iso = datetime.now(timezone.utc).isoformat()
     conn = open_connection()
     try:
         for it in items:
@@ -84,73 +120,39 @@ def _store_items(
                 feed_id=it.feed_id or None,
                 feed_title=f.title if f else None,
                 feed_group=f.group_name if f else None,
-                url=it.url,
                 title=it.title,
-                author=it.author,
                 published_at=published_iso(it),
                 is_read=it.is_read,
-                image_url=extract_first_image(it.html),
             )
-            if is_new:
-                summaries.write_summary(
-                    article_id, html_to_plain_text(it.html)
+            if is_new or not articles.article_exists(article_id):
+                # Always make sure the JSON file exists for any row in
+                # the DB. On UPSERT we keep the existing JSON to avoid
+                # rewriting unchanged content; if the file went missing
+                # (manual deletion, partial corruption) we recreate.
+                articles.write_article(
+                    articles.ArticleRecord(
+                        id=article_id,
+                        source=source,
+                        external_id=it.id,
+                        feed_id=it.feed_id or None,
+                        feed_title=f.title if f else None,
+                        feed_group=f.group_name if f else None,
+                        site_url=f.site_url if f else None,
+                        url=it.url,
+                        title=it.title,
+                        author=it.author,
+                        published_at=published_iso(it),
+                        fetched_at=now_iso,
+                        image_url=extract_first_image(it.html),
+                        summary=html_to_plain_text(it.html),
+                        raw_html=it.html or None,
+                    )
                 )
-                inserted += 1
+                if is_new:
+                    inserted += 1
     finally:
         conn.close()
     return inserted, skipped_excluded
-
-
-def _existing_external_ids(source: str) -> set[str]:
-    """Set of external_ids already stored for `source`. Used by the
-    unread-completeness pass to subtract from FreshRSS's unread list."""
-    conn = open_connection()
-    try:
-        rows = conn.execute(
-            "SELECT external_id FROM news_articles WHERE source = ?",
-            (source,),
-        ).fetchall()
-    finally:
-        conn.close()
-    return {str(r["external_id"]) for r in rows}
-
-
-def _normalise_favicon(raw: str | None) -> str | None:
-    """Coerce Fever's favicon payload to a `data:` URI we can plug
-    straight into an <img src>. FreshRSS returns either a bare base64
-    string (e.g. 'iVBORw0KGgo…') or already-prefixed
-    'image/png;base64,iVBORw…' — guard both shapes. Drops payloads
-    above the size cap so a runaway favicon can't bloat the DB."""
-    if raw is None:
-        return None
-    s = raw.strip()
-    if not s:
-        return None
-    if len(s) > _FAVICON_MAX_BYTES:
-        return None
-    if s.startswith("data:"):
-        return s
-    if s.startswith("image/") and ";base64," in s:
-        return f"data:{s}"
-    # Bare base64 — assume PNG (the common case in FreshRSS).
-    return f"data:image/png;base64,{s}"
-
-
-def _last_external_id(conn: sqlite3.Connection, source: str) -> int:
-    """Highest external_id we've already stored for `source`. Fever ids
-    are monotonically-increasing integers, so the next fetch can use
-    `since_id=this` and only get new items."""
-    row = conn.execute(
-        "SELECT external_id FROM news_articles WHERE source = ? "
-        "ORDER BY CAST(external_id AS INTEGER) DESC LIMIT 1",
-        (source,),
-    ).fetchone()
-    if row is None:
-        return 0
-    try:
-        return int(row["external_id"])
-    except (TypeError, ValueError):
-        return 0
 
 
 async def fetch_freshrss(
@@ -160,9 +162,7 @@ async def fetch_freshrss(
 ) -> FetchSummary:
     """One fetch pass over the FreshRSS source.
 
-    When `from_ts` is set, walk newest-first via `max_id` and keep only
-    items in [from_ts, to_ts]. Otherwise do an incremental walk from
-    the last stored `external_id`."""
+    `from_ts is None` → incremental (fast). With from_ts → ranged."""
     settings = get_settings()
     cfg = settings.news.sources.freshrss
     if cfg is None:
@@ -172,17 +172,16 @@ async def fetch_freshrss(
     conn = open_connection()
     try:
         run_id = create_fetch_run(conn, kind="fetch", source=source)
-        # Purge old articles AND their on-disk summaries before we
-        # fetch — keeps both the DB and the data dir bounded without
-        # a separate housekeeping job.
+        # Read-only retention: purge READ articles older than the
+        # window AND remove their JSON files. Unread are kept forever.
         purged_ids = purge_old_articles_with_ids(conn)
         if purged_ids:
             log.info(
-                "news fetch: purged %d article(s) older than %d days",
+                "news fetch: purged %d read article(s) older than %d days",
                 len(purged_ids), RETENTION_DAYS,
             )
         for aid in purged_ids:
-            summaries.delete_summary(aid)
+            articles.delete_article(aid)
         since = _last_external_id(conn, source) if from_ts is None else 0
     finally:
         conn.close()
@@ -204,20 +203,13 @@ async def fetch_freshrss(
             try:
                 favicons = await client.favicons()
             except Exception:
-                # Favicons are nice-to-have — a 5xx on this endpoint
-                # shouldn't kill the fetch.
                 log.exception("news fetch: favicons endpoint failed (non-fatal)")
                 favicons = {}
-            # Refresh per-feed metadata (title, group, favicon) into
-            # news_feeds so the UI's article list can render the icon.
+            # Refresh per-feed metadata.
             conn = open_connection()
             try:
                 for f in feeds.values():
-                    fav = (
-                        favicons.get(f.favicon_id)
-                        if f.favicon_id
-                        else None
-                    )
+                    fav = favicons.get(f.favicon_id) if f.favicon_id else None
                     upsert_feed(
                         conn,
                         feed_id=f.id,
@@ -228,15 +220,19 @@ async def fetch_freshrss(
                     )
             finally:
                 conn.close()
+
+            # ── Primary fetch pass ───────────────────────────────────
             if from_ts is None:
                 items = await client.items_since(
                     since_id=since, max_items=cfg.max_items_per_run
                 )
             else:
+                # Ranged walks aren't capped by max_items_per_run — we
+                # want full 30-day coverage. The walk stops on its own
+                # once a whole page falls below from_ts.
                 items = await client.items_in_range(
                     from_ts=from_ts,
                     to_ts=to_ts,
-                    max_items=cfg.max_items_per_run,
                 )
             fetched = len(items)
             excluded = set(cfg.excluded_group_ids or [])
@@ -246,35 +242,31 @@ async def fetch_freshrss(
                     "news fetch: freshrss got %d items (read=%d, unread=%d)",
                     fetched, read_count, fetched - read_count,
                 )
-                ins, skipped_excluded = _store_items(
+                ins, skipped = _store_items(
                     items,
                     feeds=feeds,
                     excluded_group_ids=excluded,
                     source=source,
                 )
                 inserted += ins
-                if skipped_excluded:
+                if skipped:
                     log.info(
                         "news fetch: skipped %d items from excluded folders %s",
-                        skipped_excluded, sorted(excluded),
+                        skipped, sorted(excluded),
                     )
 
             # ── Unread completeness pass ─────────────────────────────
-            # Pull every unread item id FreshRSS knows about, and back-
-            # fill anything we don't have yet. Catches old unread items
-            # that fell below our since_id walk's reach (or that the
-            # ranged walk's date filter excluded). Capped at
-            # max_items_per_run per pass — leftovers ride the next
-            # cron tick.
             try:
                 unread_ids = await client.unread_item_ids()
             except Exception:
-                log.exception(
-                    "news fetch: unread_item_ids failed (non-fatal)"
-                )
+                log.exception("news fetch: unread_item_ids failed (non-fatal)")
                 unread_ids = []
             if unread_ids:
-                already = _existing_external_ids(source)
+                conn = open_connection()
+                try:
+                    already = existing_external_ids(conn, source)
+                finally:
+                    conn.close()
                 missing = [i for i in unread_ids if i not in already]
                 if missing:
                     cap = cfg.max_items_per_run
@@ -283,22 +275,28 @@ async def fetch_freshrss(
                         "backfilling up to %d",
                         len(missing), cap,
                     )
-                    extra_items = await client.items_by_ids(missing[:cap])
-                    fetched += len(extra_items)
-                    if extra_items:
+                    extra = await client.items_by_ids(missing[:cap])
+                    fetched += len(extra)
+                    if extra:
                         ins, _ = _store_items(
-                            extra_items,
+                            extra,
                             feeds=feeds,
                             excluded_group_ids=excluded,
                             source=source,
                         )
                         inserted += ins
-                        log.info(
-                            "news fetch: backfilled %d unread item(s) "
-                            "(of %d still missing — next cron picks up "
-                            "the rest)",
-                            ins, max(0, len(missing) - cap),
-                        )
+                        leftover = max(0, len(missing) - cap)
+                        if leftover:
+                            log.info(
+                                "news fetch: backfilled %d unread; %d still "
+                                "pending — next cron picks them up",
+                                ins, leftover,
+                            )
+                        else:
+                            log.info(
+                                "news fetch: backfilled %d unread (caught up)",
+                                ins,
+                            )
     except Exception as exc:
         error = str(exc)
         log.exception("news fetch: freshrss failed")
@@ -329,26 +327,32 @@ async def fetch_all_sources(
     from_ts: int | None = None,
     to_ts: int | None = None,
 ) -> list[FetchSummary]:
-    """Fetch every configured source, swallowing per-source failures so a
-    single bad source doesn't stop the rest."""
     settings = get_settings()
-    summaries_out: list[FetchSummary] = []
+    out: list[FetchSummary] = []
     if settings.news.sources.freshrss is None:
         log.warning("news fetch: no source configured (news.sources.freshrss is null)")
-        return summaries_out
+        return out
     try:
-        summaries_out.append(await fetch_freshrss(from_ts=from_ts, to_ts=to_ts))
+        out.append(await fetch_freshrss(from_ts=from_ts, to_ts=to_ts))
     except Exception as exc:
         log.exception("news fetch: freshrss raised")
-        summaries_out.append(
+        out.append(
             FetchSummary(source="freshrss", fetched=0, inserted=0, error=str(exc))
         )
-    return summaries_out
+    return out
+
+
+def thirty_days_ago_ts() -> int:
+    """Unix-seconds 30 days back, used by the cron to scope its
+    ranged walk. The cron always fetches the full 30-day window so
+    nothing is missed across restarts."""
+    return int(
+        (datetime.now(timezone.utc) - timedelta(days=RETENTION_DAYS)).timestamp()
+    )
 
 
 async def push_mark_read(article_id: str, *, source: str, external_id: str) -> None:
-    """Push a read-state change to the upstream source. Today only
-    freshrss is supported; other sources will land later."""
+    """Push a read-state change to the upstream source."""
     settings = get_settings()
     if source != "freshrss":
         log.warning("push_mark_read: unsupported source %s", source)
@@ -368,4 +372,5 @@ __all__ = [
     "fetch_all_sources",
     "fetch_freshrss",
     "push_mark_read",
+    "thirty_days_ago_ts",
 ]

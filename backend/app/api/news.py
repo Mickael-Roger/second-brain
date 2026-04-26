@@ -1,13 +1,15 @@
 """News endpoints.
 
-The webapp's News view drives this:
-
   - GET  /api/news/feeds                       feed list with counts
   - GET  /api/news/articles                    article list (per feed/category, optionally unread-only)
-  - GET  /api/news/articles/{id}               one article + summary + image
+  - GET  /api/news/articles/{id}               one article (header from SQLite, body from JSON)
   - POST /api/news/articles/{id}/read          flip local + push to FreshRSS
-  - POST /api/news/fetch                       manual trigger of a fetch pass
+  - POST /api/news/fetch                       manual trigger (incremental by default)
   - GET  /api/news/runs                        recent fetch runs (debug)
+
+The list endpoint stays metadata-only (cheap to scroll). The detail
+endpoint joins in the JSON-on-disk record so we can show the full
+body / image / source link.
 """
 
 from __future__ import annotations
@@ -24,12 +26,12 @@ from app.auth import current_user
 from app.db.connection import get_db
 from app.news import (
     StoredArticle,
+    articles,
     get_article,
     list_articles,
     list_feeds_with_counts,
     list_recent_runs,
     mark_article_read,
-    summaries,
 )
 
 router = APIRouter(prefix="/api/news", tags=["news"])
@@ -40,7 +42,10 @@ log = logging.getLogger(__name__)
 
 
 class ArticleSummaryDTO(BaseModel):
-    """Article header — what the per-feed list shows."""
+    """Article header — what the per-feed list shows. Slim by design:
+    list rendering only needs id, title, feed bits, date, read flag,
+    favicon. Body / image / url are loaded lazily from JSON in the
+    detail endpoint."""
 
     id: str
     source: str
@@ -48,18 +53,15 @@ class ArticleSummaryDTO(BaseModel):
     feed_title: str | None
     feed_group: str | None
     feed_favicon: str | None
-    url: str | None
     title: str
-    author: str | None
     published_at: str
     is_read: bool
-    image_url: str | None
 
 
 class ArticleDetailDTO(ArticleSummaryDTO):
-    """Article detail — the right pane of the News tab. The summary is
-    loaded from disk, not the DB."""
-
+    url: str | None
+    author: str | None
+    image_url: str | None
     summary: str | None
 
 
@@ -96,12 +98,9 @@ def _article_summary_dto(a: StoredArticle) -> ArticleSummaryDTO:
         feed_title=a.feed_title,
         feed_group=a.feed_group,
         feed_favicon=a.feed_favicon,
-        url=a.url,
         title=a.title,
-        author=a.author,
         published_at=a.published_at,
         is_read=a.is_read,
-        image_url=a.image_url,
     )
 
 
@@ -122,8 +121,6 @@ def _resolve_period_iso(
 def _resolve_period_ts(
     period: str, from_: str | None, to: str | None
 ) -> tuple[int, int | None]:
-    """Period selector → (from_ts, to_ts) in unix seconds (UTC).
-    Inclusive boundaries: from = 00:00 UTC, to = 23:59:59 UTC."""
     today = date.today()
     if period == "custom":
         f = date.fromisoformat(from_) if from_ else today
@@ -133,7 +130,7 @@ def _resolve_period_ts(
     elif period == "30d":
         f = today - timedelta(days=30)
         t = today
-    else:  # default: 7d
+    else:
         f = today - timedelta(days=7)
         t = today
     from_dt = datetime.combine(f, time.min, tzinfo=timezone.utc)
@@ -152,10 +149,6 @@ def get_feeds(
     _user: str = Depends(current_user),
     conn: sqlite3.Connection = Depends(get_db),
 ) -> list[FeedSummaryDTO]:
-    """Feed sidebar for the News tab. The frontend groups by
-    `feed_group` (the FreshRSS folder) to reproduce the FreshRSS
-    sidebar layout. Default period is 30d, matching the article
-    retention window — that means everything in the DB is visible."""
     f, t = _resolve_period_iso(period, from_, to)
     return [
         FeedSummaryDTO(
@@ -181,9 +174,6 @@ def get_articles(
     _user: str = Depends(current_user),
     conn: sqlite3.Connection = Depends(get_db),
 ) -> list[ArticleSummaryDTO]:
-    """Article list for the News tab — newest-first, optionally
-    filtered to one feed, one category (folder), or unread-only.
-    Default period 30d matches the retention window."""
     f, t = _resolve_period_iso(period, from_, to)
     arts = list_articles(
         conn,
@@ -202,14 +192,21 @@ def get_article_detail(
     _user: str = Depends(current_user),
     conn: sqlite3.Connection = Depends(get_db),
 ) -> ArticleDetailDTO:
-    """Single article — the right pane. Summary is read from disk
-    (the DB only stores metadata + the image URL)."""
+    """Article detail: header from SQLite, full body from JSON.
+    Returns the SQLite-only fields if the JSON file is missing
+    (shouldn't happen but guards against partial state)."""
     a = get_article(conn, article_id)
     if a is None:
         raise HTTPException(status_code=404, detail="article not found")
-    summary = summaries.read_summary(article_id)
+    record = articles.read_article(article_id)
     base = _article_summary_dto(a)
-    return ArticleDetailDTO(**base.model_dump(), summary=summary)
+    return ArticleDetailDTO(
+        **base.model_dump(),
+        url=record.url if record else None,
+        author=record.author if record else None,
+        image_url=record.image_url if record else None,
+        summary=record.summary if record else None,
+    )
 
 
 class MarkReadResponse(BaseModel):
@@ -223,10 +220,6 @@ async def mark_read(
     _user: str = Depends(current_user),
     conn: sqlite3.Connection = Depends(get_db),
 ) -> MarkReadResponse:
-    """Mark an article as read locally AND push the change to
-    FreshRSS via Fever's `mark=item&as=read` action. The FreshRSS
-    push runs in the background — local state is what the UI
-    reflects immediately."""
     a = get_article(conn, article_id)
     if a is None:
         raise HTTPException(status_code=404, detail="article not found")
@@ -252,20 +245,14 @@ async def trigger_fetch(
         None,
         description=(
             "Optional period scope (today | 7d | 30d | custom). When "
-            "omitted, the manual fetch runs in the same incremental "
-            "since_id mode the cron uses — fastest path, pulls only new "
-            "items."
+            "omitted, the manual fetch runs in incremental mode (since_id) "
+            "for speed."
         ),
     ),
     from_: str | None = Query(None, alias="from"),
     to: str | None = Query(None),
     _user: str = Depends(current_user),
 ) -> TriggerResponse:
-    """Kick off an immediate fetch pass in the background.
-
-    Default behaviour (no period given): incremental — same as the
-    every-5-minute cron. When `period` is supplied we walk Fever
-    backwards via `max_id` and keep only items in that window."""
     from app.config import get_settings
     from app.news.service import fetch_all_sources
 

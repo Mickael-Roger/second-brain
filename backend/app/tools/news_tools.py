@@ -16,11 +16,11 @@ from typing import Any
 
 from app.db.connection import open_connection
 from app.news import (
+    articles,
     get_article,
     list_articles,
     list_feeds_with_counts,
     mark_article_read,
-    summaries,
 )
 
 from .registry import ToolRegistry, text_result
@@ -134,13 +134,15 @@ async def _read_news(args: dict[str, Any]):
         conn.close()
     if a is None:
         return text_result(f"article {article_id!r} not found", is_error=True)
-    body = summaries.read_summary(article_id) or "(no body on disk)"
+    record = articles.read_article(article_id)
+    body = record.summary if record else "(article body not on disk)"
+    url = record.url if record else None
     parts = [
         f"# {a.title}",
         f"Feed: {a.feed_title or a.source}"
         + (f" / {a.feed_group}" if a.feed_group else ""),
         f"Published: {a.published_at}",
-        f"URL: {a.url or '(none)'}",
+        f"URL: {url or '(none)'}",
         f"Read: {'yes' if a.is_read else 'no'}",
         "",
         body,

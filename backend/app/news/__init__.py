@@ -1,10 +1,11 @@
-from . import summaries
+from . import articles
 from .store import (
     RETENTION_DAYS,
     FeedSummary,
     StoredArticle,
     StoredFetchRun,
     create_fetch_run,
+    existing_external_ids,
     finish_fetch_run,
     get_article,
     insert_article,
@@ -23,7 +24,9 @@ __all__ = [
     "FeedSummary",
     "StoredArticle",
     "StoredFetchRun",
+    "articles",
     "create_fetch_run",
+    "existing_external_ids",
     "finish_fetch_run",
     "get_article",
     "insert_article",
@@ -34,6 +37,5 @@ __all__ = [
     "purge_old_articles",
     "purge_old_articles_with_ids",
     "set_fetch_run_status",
-    "summaries",
     "upsert_feed",
 ]

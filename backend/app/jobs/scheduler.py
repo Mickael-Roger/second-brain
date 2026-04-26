@@ -99,10 +99,14 @@ async def run_nightly() -> str:
 
 
 async def _news_fetch_job() -> None:
-    from app.news.service import fetch_all_sources
+    """Cron-side fetch: ranged walk over the full retention window
+    (default 30 days) plus the unread-completeness pass. Slower per
+    tick than a since_id incremental, but guarantees we don't miss
+    anything published in the window across restarts/gaps."""
+    from app.news.service import fetch_all_sources, thirty_days_ago_ts
 
     try:
-        await fetch_all_sources()
+        await fetch_all_sources(from_ts=thirty_days_ago_ts())
     except Exception:
         log.exception("scheduled news fetch failed")
 

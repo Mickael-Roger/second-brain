@@ -150,15 +150,15 @@ export interface NewsArticleSummary {
   feed_title: string | null;
   feed_group: string | null;
   feed_favicon: string | null;
-  url: string | null;
   title: string;
-  author: string | null;
   published_at: string;
   is_read: boolean;
-  image_url: string | null;
 }
 
 export interface NewsArticleDetail extends NewsArticleSummary {
+  url: string | null;
+  author: string | null;
+  image_url: string | null;
   summary: string | null;
 }
 

@@ -1,10 +1,13 @@
-"""SQLite persistence for the News feature.
+"""SQLite persistence for the News feature (slim).
 
-Two tables: news_articles (one row per fetched item) and
-news_fetch_runs (observability for fetch jobs). All datetimes are
-stored as ISO-8601 UTC text — same convention as the rest of the
-codebase. The article body is stored on disk (see `summaries.py`),
-not in `news_articles`.
+Only indexed metadata lives here — the full article record (summary,
+url, author, image, …) sits at <data_dir>/news/<safe_id>.json. See
+`articles.py` for the disk format.
+
+Three tables:
+  - news_articles: per-article indexed columns (slim).
+  - news_feeds: per-feed metadata (title, group, favicon).
+  - news_fetch_runs: observability for fetch jobs.
 """
 
 from __future__ import annotations
@@ -24,20 +27,19 @@ def _utcnow_iso() -> str:
 
 @dataclass(slots=True)
 class StoredArticle:
+    """Indexed article row — what's in SQLite. Full body / url / image
+    / etc. live in the JSON file (load via `articles.read_article`)."""
+
     id: str
     source: str
     external_id: str
     feed_id: str | None
     feed_title: str | None
     feed_group: str | None
-    url: str | None
     title: str
-    author: str | None
     published_at: str
-    fetched_at: str
     is_read: bool
-    image_url: str | None
-    feed_favicon: str | None   # data URI joined from news_feeds
+    feed_favicon: str | None  # joined from news_feeds
 
 
 @dataclass(slots=True)
@@ -45,7 +47,7 @@ class FeedSummary:
     feed_id: str
     feed_title: str
     feed_group: str | None
-    favicon: str | None   # data URI; None if the feed has no favicon
+    favicon: str | None
     total: int
     unread: int
 
@@ -66,15 +68,13 @@ class StoredFetchRun:
 # ── Articles ───────────────────────────────────────────────────────
 
 
-# News articles age out fast — once a story is older than this we
-# don't show it any more, so it's just dead weight in the DB.
+# News articles age out after this — but only READ articles. Unread
+# stays forever (the user explicitly wants to keep all unread items
+# regardless of age).
 RETENTION_DAYS = 30
 
 
 def purge_old_articles(conn: sqlite3.Connection, *, days: int = RETENTION_DAYS) -> int:
-    """Delete READ articles older than `days`. Returns the count.
-    See `purge_old_articles_with_ids` for the unread-preservation
-    rationale."""
     cutoff = (
         datetime.now(timezone.utc) - timedelta(days=days)
     ).isoformat()
@@ -90,11 +90,8 @@ def purge_old_articles_with_ids(
     conn: sqlite3.Connection, *, days: int = RETENTION_DAYS
 ) -> list[str]:
     """Delete READ articles older than `days` and return their ids
-    so the caller can clean up summary files on disk.
-
-    Unread articles are NEVER auto-purged — the user explicitly
-    asked us to keep all unread items regardless of age. They age
-    out only once the user reads them and the next purge runs."""
+    so the caller can also remove the corresponding JSON files on
+    disk. Unread articles are preserved indefinitely."""
     cutoff = (
         datetime.now(timezone.utc) - timedelta(days=days)
     ).isoformat()
@@ -122,28 +119,19 @@ def insert_article(
     feed_id: str | None,
     feed_title: str | None,
     feed_group: str | None,
-    url: str | None,
     title: str,
-    author: str | None,
     published_at: str,
     is_read: bool = False,
-    image_url: str | None = None,
 ) -> bool:
-    """Insert a new article OR refresh its `is_read` state.
-
-    Returns True if a brand-new row was inserted, False if the article
-    was already known. On a duplicate we still update `is_read` so
-    reading an article in FreshRSS propagates here on the next fetch.
-
-    Other metadata stays immutable on re-fetch."""
+    """Insert (or refresh is_read on duplicate). Returns True on first
+    sight, False when the article was already known."""
     article_id = f"{source}:{external_id}"
     is_read_int = 1 if is_read else 0
     cur = conn.execute(
         "INSERT OR IGNORE INTO news_articles "
-        "(id, source, external_id, feed_id, feed_title, feed_group, url, "
-        " title, author, published_at, fetched_at, "
-        " is_read, image_url) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "(id, source, external_id, feed_id, feed_title, feed_group, "
+        " title, published_at, is_read) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             article_id,
             source,
@@ -151,18 +139,13 @@ def insert_article(
             feed_id,
             feed_title,
             feed_group,
-            url,
             title,
-            author,
             published_at,
-            _utcnow_iso(),
             is_read_int,
-            image_url,
         ),
     )
     if cur.rowcount > 0:
         return True
-    # Existing row — sync is_read so FreshRSS reads propagate here.
     conn.execute(
         "UPDATE news_articles SET is_read = ? WHERE id = ?",
         (is_read_int, article_id),
@@ -173,8 +156,6 @@ def insert_article(
 def mark_article_read(
     conn: sqlite3.Connection, article_id: str, *, is_read: bool = True
 ) -> bool:
-    """Flip the local read-state for one article. Returns True if a
-    row was updated."""
     cur = conn.execute(
         "UPDATE news_articles SET is_read = ? WHERE id = ?",
         (1 if is_read else 0, article_id),
@@ -191,10 +172,8 @@ def upsert_feed(
     site_url: str | None,
     favicon_data_uri: str | None,
 ) -> None:
-    """Refresh the per-feed metadata row. Called once per feed at the
-    start of a fetch pass (after we've pulled feeds + favicons from
-    Fever). The existing row is fully replaced — title/group/favicon
-    rotations in FreshRSS propagate here without a manual sync."""
+    """Refresh per-feed metadata. Called once per feed at the start
+    of every fetch pass."""
     conn.execute(
         "INSERT INTO news_feeds "
         "(id, title, feed_group, site_url, favicon_data_uri, updated_at) "
@@ -216,16 +195,20 @@ def upsert_feed(
     )
 
 
-# ── News tab queries (per-feed listing) ────────────────────────────
+# ── Reads ──────────────────────────────────────────────────────────
+
+
+_ARTICLE_SELECT = (
+    "SELECT a.*, f.favicon_data_uri AS feed_favicon "
+    "FROM news_articles a LEFT JOIN news_feeds f ON f.id = a.feed_id"
+)
 
 
 def list_feeds_with_counts(
     conn: sqlite3.Connection, *, from_iso: str, to_iso: str
 ) -> list[FeedSummary]:
     """For each feed, return total + unread article counts in the
-    [from, to] window, plus the feed's favicon (if any). Date-prefix
-    comparison on published_at so today's articles aren't dropped by
-    lexicographic mismatch."""
+    [from, to] window, plus the feed's favicon."""
     rows = conn.execute(
         "SELECT a.feed_id, "
         "       COALESCE(MAX(a.feed_title), '(unknown feed)') AS feed_title, "
@@ -253,12 +236,6 @@ def list_feeds_with_counts(
     ]
 
 
-_ARTICLE_SELECT = (
-    "SELECT a.*, f.favicon_data_uri AS feed_favicon "
-    "FROM news_articles a LEFT JOIN news_feeds f ON f.id = a.feed_id"
-)
-
-
 def list_articles(
     conn: sqlite3.Connection,
     *,
@@ -269,9 +246,6 @@ def list_articles(
     unread_only: bool = False,
     limit: int = 500,
 ) -> list[StoredArticle]:
-    """Articles in the window, optionally filtered to one feed, one
-    category (feed_group), and/or unread items. Newest-first.
-    Joins news_feeds to surface the feed favicon."""
     sql = (
         _ARTICLE_SELECT
         + " WHERE substr(a.published_at, 1, 10) >= ?"
@@ -297,6 +271,18 @@ def get_article(conn: sqlite3.Connection, article_id: str) -> StoredArticle | No
         _ARTICLE_SELECT + " WHERE a.id = ?", (article_id,)
     ).fetchone()
     return _row_to_article(row) if row is not None else None
+
+
+def existing_external_ids(
+    conn: sqlite3.Connection, source: str
+) -> set[str]:
+    """All external_ids stored for `source`. Used by the unread
+    completeness pass to find ids we haven't fetched yet."""
+    rows = conn.execute(
+        "SELECT external_id FROM news_articles WHERE source = ?",
+        (source,),
+    ).fetchall()
+    return {str(r["external_id"]) for r in rows}
 
 
 # ── Fetch runs ─────────────────────────────────────────────────────
@@ -366,13 +352,9 @@ def _row_to_article(row: sqlite3.Row) -> StoredArticle:
         feed_id=row["feed_id"],
         feed_title=row["feed_title"],
         feed_group=row["feed_group"] if "feed_group" in keys else None,
-        url=row["url"],
         title=row["title"],
-        author=row["author"],
         published_at=row["published_at"],
-        fetched_at=row["fetched_at"],
         is_read=bool(row["is_read"]) if "is_read" in keys else False,
-        image_url=row["image_url"] if "image_url" in keys else None,
         feed_favicon=row["feed_favicon"] if "feed_favicon" in keys else None,
     )
 

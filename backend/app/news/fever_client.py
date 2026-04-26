@@ -222,33 +222,32 @@ class FeverClient:
         *,
         from_ts: int,
         to_ts: int | None = None,
-        max_items: int = 500,
-        max_pages: int = 200,
+        max_items: int = 100_000,
+        max_pages: int = 1000,
     ) -> list[FeverItem]:
         """Walk items newest-first via Fever's `max_id` cursor and return
         those whose `created_on_time` falls in [from_ts, to_ts].
 
-        IMPORTANT: FreshRSS's Fever item ids are based on FETCH time
-        (microsecond timestamp at the moment FreshRSS imported the
-        article), NOT publication time. That means id-DESC order does
-        NOT correspond to publication-time order — a feed that
-        re-publishes an old article today gets a fresh high id with an
-        old `created_on_time`. So we cannot break early when we see
-        an out-of-window item: there may still be in-window items
-        below it in the id walk. We page all the way through.
+        IMPORTANT: FreshRSS's Fever item ids are based on FETCH time,
+        not publication time. So id-DESC order is NOT publication-DESC
+        order — a re-published old article gets a fresh high id with
+        an old created_on_time. We can't blanket-stop on the first
+        out-of-window item.
 
-        Two caps protect us from runaway walks on huge backlogs:
-        - `max_items`: once we have this many in-window items, stop.
-        - `max_pages`: hard cap on Fever calls (50 items each). Past
-          this we give up walking and trust the cron's incremental
-          fetches to fill in any gaps next time.
+        We DO stop when an entire page is below `from_ts`: if every
+        item on a 50-item page is older than the floor, we've walked
+        past the window and there's nothing useful below.
+
+        Caps:
+        - `max_items`: large default so a 30d backfill on a busy feed
+          completes in one pass; the caller can lower it.
+        - `max_pages`: hard cap (50,000 items potential at 50/page).
 
         `to_ts=None` means "no upper bound" (i.e. up to now). Returned
         items are newest-first."""
         out: list[FeverItem] = []
-        # Seed with a value larger than any plausible Fever item id.
-        # FreshRSS uses microsecond-timestamp ids (~1.78e15 for 2026),
-        # so 2^63-1 is comfortably above for centuries.
+        # 2^63-1 is comfortably above any plausible Fever item id
+        # (FreshRSS uses microsecond timestamps, ~1.78e15 in 2026).
         cursor: int = 2**63 - 1
         pages = 0
         items_seen = 0
@@ -261,6 +260,7 @@ class FeverClient:
                 break
             pages += 1
             items_seen += len(items)
+            page_all_below_floor = True
             for raw in items:
                 item = _parse_item(raw)
                 ts = item.created_on_time
@@ -268,10 +268,12 @@ class FeverClient:
                 if rid < cursor:
                     cursor = rid
                 if ts and ts < from_ts:
-                    # Out of window on the older side — skip but keep walking.
+                    # Out of window on the older side — skip.
                     continue
+                # At least one item on this page is in (or above) range,
+                # so the next page can still contribute.
+                page_all_below_floor = False
                 if to_ts is not None and ts and ts > to_ts:
-                    # Future relative to the requested window — skip.
                     continue
                 out.append(item)
                 if len(out) >= max_items:
@@ -281,6 +283,9 @@ class FeverClient:
                         max_items, pages, items_seen,
                     )
                     return out
+            if page_all_below_floor:
+                # Whole page below floor → we've walked past the window.
+                break
             if len(items) < 50:
                 # Caught up to the absolute oldest item in FreshRSS.
                 break
