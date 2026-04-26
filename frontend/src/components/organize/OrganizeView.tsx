@@ -8,7 +8,7 @@
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, ChevronDown, ChevronRight, Play, Sparkles } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, Play, Sparkles, Trash2 } from "lucide-react";
 
 import { api, type OrganizeProposal, type OrganizeRun } from "@/lib/api";
 import ProposalCard from "./ProposalCard";
@@ -66,6 +66,12 @@ export default function OrganizeView({ onOpenWiki }: Props) {
       api.post<{ state: string; operations: string[]; error: string | null }>(
         `/api/organize/runs/${runId}/proposals/apply?path=${encodeURIComponent(path)}`,
       ),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["organize-current"] }),
+  });
+
+  const discardRun = useMutation({
+    mutationFn: (runId: string) =>
+      api.post(`/api/organize/runs/${runId}/discard`),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["organize-current"] }),
   });
 
@@ -142,6 +148,24 @@ export default function OrganizeView({ onOpenWiki }: Props) {
             {apply.isPending
               ? t("organize.applying")
               : t("organize.applyN", { n: pendingCount })}
+          </button>
+        )}
+
+        {r && r.status !== "discarded" && (
+          <button
+            type="button"
+            onClick={() => {
+              if (confirm(t("organize.discardRunConfirm"))) {
+                discardRun.mutate(r.id);
+              }
+            }}
+            disabled={discardRun.isPending}
+            title={t("organize.discardRun")}
+            aria-label={t("organize.discardRun")}
+            className="flex items-center gap-1 rounded-lg border border-border px-2 py-1.5 text-xs text-muted hover:border-red-400 hover:text-red-300 disabled:opacity-50"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+            {t("organize.discardRunLabel")}
           </button>
         )}
       </header>

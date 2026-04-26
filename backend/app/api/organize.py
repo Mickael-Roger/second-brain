@@ -22,6 +22,7 @@ from app.db.connection import get_db
 from app.organize import (
     StoredRun,
     discard_proposal,
+    discard_run as store_discard_run,
     get_current_run,
     get_run,
 )
@@ -170,6 +171,22 @@ def get_one(
     if run is None:
         raise HTTPException(status_code=404, detail="run not found")
     return _run_to_dto(run)
+
+
+@router.post("/runs/{run_id}/discard", status_code=status.HTTP_204_NO_CONTENT)
+def discard_run_endpoint(
+    run_id: str,
+    _user: str = Depends(current_user),
+    conn: sqlite3.Connection = Depends(get_db),
+) -> None:
+    """Discard / abandon an entire run.
+
+    Use this to clear out a stuck `running` row (e.g. after a container
+    restart killed the background task), or to walk away from a completed
+    run whose proposals you don't want any more. Proposals still pending
+    are also flipped to `discarded`."""
+    if not store_discard_run(conn, run_id):
+        raise HTTPException(status_code=404, detail="run not found")
 
 
 @router.delete("/runs/{run_id}/proposals", status_code=status.HTTP_204_NO_CONTENT)

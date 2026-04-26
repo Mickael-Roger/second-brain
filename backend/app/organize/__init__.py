@@ -3,6 +3,7 @@ from .store import (
     StoredRun,
     create_run,
     discard_proposal,
+    discard_run,
     fetch_pending_proposals,
     finish_run,
     get_current_run,
@@ -11,6 +12,7 @@ from .store import (
     insert_proposal,
     list_runs,
     mark_note_reviewed,
+    reconcile_dangling_runs,
     set_proposal_state,
     set_run_status,
 )
@@ -20,6 +22,7 @@ __all__ = [
     "StoredRun",
     "create_run",
     "discard_proposal",
+    "discard_run",
     "fetch_pending_proposals",
     "finish_run",
     "get_current_run",
@@ -28,6 +31,7 @@ __all__ = [
     "insert_proposal",
     "list_runs",
     "mark_note_reviewed",
+    "reconcile_dangling_runs",
     "set_proposal_state",
     "set_run_status",
 ]

@@ -42,11 +42,25 @@ def _configure_logging() -> None:
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     _configure_logging()
+    log = logging.getLogger(__name__)
     conn = open_connection()
     try:
         applied = run_migrations(conn)
         if applied:
-            logging.getLogger(__name__).info("Applied %d migration(s)", applied)
+            log.info("Applied %d migration(s)", applied)
+        # If the previous container died mid-organize-run, the row is
+        # still status='running' but nothing will ever flip it. Reconcile
+        # so the UI doesn't spin forever.
+        from app.organize import reconcile_dangling_runs
+
+        try:
+            reaped = reconcile_dangling_runs(conn)
+            if reaped:
+                log.warning(
+                    "Reconciled %d dangling 'running' organize run(s) as failed", reaped
+                )
+        except Exception:
+            log.exception("organize-run reconcile failed at startup (non-fatal)")
     finally:
         conn.close()
     start_scheduler()

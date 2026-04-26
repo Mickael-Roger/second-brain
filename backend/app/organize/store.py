@@ -284,6 +284,42 @@ def mark_note_reviewed(
     )
 
 
+def reconcile_dangling_runs(conn: sqlite3.Connection) -> int:
+    """Mark every still-'running' run as 'failed' with a clear error.
+
+    Called at app startup. A run only stays 'running' while the
+    corresponding asyncio task is alive — if the container restarted, the
+    task is gone and nothing will ever flip the row out of 'running'. The
+    UI would otherwise spin forever waiting for status to change."""
+    cur = conn.execute(
+        "UPDATE organize_runs "
+        "SET status = 'failed', "
+        "    finished_at = COALESCE(finished_at, ?), "
+        "    error = COALESCE(error, 'interrupted by app restart') "
+        "WHERE status = 'running'",
+        (_utcnow_iso(),),
+    )
+    return cur.rowcount
+
+
+def discard_run(conn: sqlite3.Connection, run_id: str) -> bool:
+    """User-driven: mark the run discarded. Pending proposals are also
+    flipped to 'discarded' so the run is fully closed out."""
+    cur = conn.execute(
+        "UPDATE organize_runs SET status = 'discarded', "
+        "finished_at = COALESCE(finished_at, ?) WHERE id = ?",
+        (_utcnow_iso(), run_id),
+    )
+    if cur.rowcount == 0:
+        return False
+    conn.execute(
+        "UPDATE organize_proposals SET state = 'discarded' "
+        "WHERE run_id = ? AND state = 'pending'",
+        (run_id,),
+    )
+    return True
+
+
 def get_note_review_map(conn: sqlite3.Connection) -> dict[str, float]:
     """Path → last_reviewed_at as a unix timestamp. Used by the candidate
     selector to decide which notes are due for review."""
@@ -303,6 +339,7 @@ __all__ = [
     "StoredRun",
     "create_run",
     "discard_proposal",
+    "discard_run",
     "fetch_pending_proposals",
     "finish_run",
     "get_current_run",
@@ -312,6 +349,7 @@ __all__ = [
     "list_runs",
     "mark_note_reviewed",
     "proposal_summary",
+    "reconcile_dangling_runs",
     "set_proposal_state",
     "set_run_status",
 ]

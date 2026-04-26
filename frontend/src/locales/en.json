@@ -45,7 +45,10 @@
     "scopeLabel": "Scope",
     "scopeAll": "Whole vault",
     "scopeSince": "Modified since last run",
-    "scopeHelp": "Manual runs default to scanning the whole vault. Switch to incremental if you only want fresh notes reviewed."
+    "scopeHelp": "Manual runs default to scanning the whole vault. Switch to incremental if you only want fresh notes reviewed.",
+    "discardRun": "Discard this run",
+    "discardRunLabel": "Discard run",
+    "discardRunConfirm": "Discard this run? Pending proposals will be marked discarded; you can start a new run after."
   },
   "login": {
     "title": "Sign in",
