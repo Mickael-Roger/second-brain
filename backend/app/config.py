@@ -121,9 +121,6 @@ class ObsidianSection(BaseModel):
     # System prompt for the nightly Organize task. Optional — missing file
     # falls back to the built-in default in app.jobs.organize.
     organize_prompt_file: str = "ORGANIZE.md"
-    # System prompt for the News & Events synthesis (clustering). Optional
-    # — missing file falls back to the built-in default in app.news.cluster.
-    news_synthesis_file: str = "NEWS_SYNTHESIS.md"
     journal: ObsidianJournalSection = ObsidianJournalSection()
     git: ObsidianGitSection = ObsidianGitSection()
 
@@ -161,10 +158,7 @@ class NewsSourcesSection(BaseModel):
 
 class NewsSection(BaseModel):
     enabled: bool = False
-    fetch_schedule: str = "*/30 * * * *"   # cron, UTC
-    cluster_schedule: str = "10 6 * * *"   # cron, UTC — daily after fetch settles
-    cluster_window_days: int = 2           # how far back the cluster pass scans for new articles
-    cluster_llm_provider: str | None = None  # llm provider name; falls back to llm.default
+    fetch_schedule: str = "*/5 * * * *"    # cron, UTC — every 5 minutes by default
     sources: NewsSourcesSection = NewsSourcesSection()
 
 

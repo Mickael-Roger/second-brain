@@ -64,11 +64,12 @@ def get_registry() -> ToolRegistry:
     triggers their registration via side-effects."""
     registry = ToolRegistry()
     # Late imports so registration runs lazily on the first request.
-    from . import chat_tools, daily_tools, vault_tools
+    from . import chat_tools, daily_tools, news_tools, vault_tools
 
     vault_tools.register_all(registry)
     daily_tools.register_all(registry)
     chat_tools.register_all(registry)
+    news_tools.register_all(registry)
     return registry
 
 

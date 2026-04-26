@@ -43,6 +43,21 @@ export default function Composer({ onSend, onStop, busy }: Props) {
     el.style.height = `${el.scrollHeight}px`;
   }, [text]);
 
+  // Cross-tab handoff: when the News tab's "Chat about this article"
+  // button is clicked, it stashes the article context under this
+  // localStorage key and switches the view to chat. We pick it up on
+  // mount and pre-fill the composer.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const draft = window.localStorage.getItem("sb.chat.draft");
+    if (draft) {
+      setText(draft);
+      window.localStorage.removeItem("sb.chat.draft");
+      // Focus so the user can immediately edit / press send.
+      requestAnimationFrame(() => textArea.current?.focus());
+    }
+  }, []);
+
   function handleKey(e: KeyboardEvent<HTMLTextAreaElement>) {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();

@@ -113,20 +113,13 @@ organize:
   modified_since: last_run   # last_run | always_full
 
 # ---------------------------------------------------------------------------
-# News & Events — pulls articles from your RSS aggregator (FreshRSS via the
-# Fever-compatible API) on a cron schedule, then asks the LLM to group
-# same-topic articles into "events" the UI shows as bubbles.
-#
-# `fetch_schedule` runs frequently (every 30 min by default); `cluster_schedule`
-# runs once a day after the day's news has settled. Each pass is independent —
-# turning one off via the cron expression leaves the other working.
+# News — pulls articles from your RSS aggregator (FreshRSS via the
+# Fever-compatible API) on a cron schedule. Articles' metadata sits in
+# SQLite; full bodies live on disk under <data_dir>/news_summaries/.
 # ---------------------------------------------------------------------------
 news:
   enabled: false                     # flip to true once `sources.freshrss` is filled in
-  fetch_schedule:   "*/30 * * * *"   # cron (UTC) — pull new items
-  cluster_schedule: "10 6 * * *"     # cron (UTC) — group articles into events
-  cluster_window_days: 2             # how far back the cluster pass scans
-  cluster_llm_provider: null         # llm provider name; null = use llm.default
+  fetch_schedule: "*/5 * * * *"      # cron (UTC) — pull new items every 5 minutes
   sources:
     freshrss:
       base_url: "https://freshrss.example.com/api/fever.php"
@@ -135,11 +128,9 @@ news:
       api_key: "REPLACE_WITH_MD5_HASH"
       max_items_per_run: 500
       # FreshRSS folder/group ids to skip on every fetch. Articles
-      # from feeds in these folders are never stored (so they don't
-      # cost LLM cycles in the tagger and don't pollute the trends
-      # dashboard). Find a folder's id by editing the category in
-      # FreshRSS — it's in the URL. Stringify the ids; leave empty to
-      # ingest everything.
+      # from feeds in these folders are never stored. Find a folder's
+      # id by editing the category in FreshRSS — it's in the URL.
+      # Stringify the ids; leave empty to ingest everything.
       excluded_group_ids: []   # e.g. ["4", "12"]
 
 # ---------------------------------------------------------------------------

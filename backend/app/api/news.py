@@ -1,12 +1,13 @@
-"""News & Events endpoints.
+"""News endpoints.
 
 The webapp's News view drives this:
 
-  - GET  /api/news/events?from=&to=    bubbles for a period
-  - GET  /api/news/events/{id}         one event + its articles
-  - POST /api/news/fetch               manual trigger of a fetch pass
-  - POST /api/news/cluster             manual trigger of a cluster pass
-  - GET  /api/news/runs                recent fetch + cluster runs (debug)
+  - GET  /api/news/feeds                       feed list with counts
+  - GET  /api/news/articles                    article list (per feed/category, optionally unread-only)
+  - GET  /api/news/articles/{id}               one article + summary + image
+  - POST /api/news/articles/{id}/read          flip local + push to FreshRSS
+  - POST /api/news/fetch                       manual trigger of a fetch pass
+  - GET  /api/news/runs                        recent fetch runs (debug)
 """
 
 from __future__ import annotations
@@ -22,16 +23,13 @@ from pydantic import BaseModel
 from app.auth import current_user
 from app.db.connection import get_db
 from app.news import (
-    StoredEvent,
-    aggregate_tags,
+    StoredArticle,
     get_article,
-    get_event,
-    get_event_articles,
     list_articles,
-    list_articles_with_tag,
-    list_events,
     list_feeds_with_counts,
     list_recent_runs,
+    mark_article_read,
+    summaries,
 )
 
 router = APIRouter(prefix="/api/news", tags=["news"])
@@ -41,7 +39,9 @@ log = logging.getLogger(__name__)
 # ── DTOs ────────────────────────────────────────────────────────────
 
 
-class ArticleDTO(BaseModel):
+class ArticleSummaryDTO(BaseModel):
+    """Article header — what the per-feed list shows."""
+
     id: str
     source: str
     feed_id: str | None
@@ -49,11 +49,17 @@ class ArticleDTO(BaseModel):
     feed_group: str | None
     url: str | None
     title: str
-    description: str | None
     author: str | None
     published_at: str
-    tags: list[str] | None
     is_read: bool
+    image_url: str | None
+
+
+class ArticleDetailDTO(ArticleSummaryDTO):
+    """Article detail — the right pane of the News tab. The summary is
+    loaded from disk, not the DB."""
+
+    summary: str | None
 
 
 class FeedSummaryDTO(BaseModel):
@@ -62,35 +68,6 @@ class FeedSummaryDTO(BaseModel):
     feed_group: str | None
     total: int
     unread: int
-
-
-class TrendDTO(BaseModel):
-    """One bubble in the trends view. Sized by `count` (number of
-    articles tagged with this hashtag in the period)."""
-
-    tag: str
-    count: int
-
-
-class TrendDetailDTO(BaseModel):
-    tag: str
-    count: int
-    articles: list[ArticleDTO]
-
-
-class EventBubbleDTO(BaseModel):
-    """One bubble in the News view. The frontend sizes the bubble by
-    `article_count` and shows the article list on hover."""
-
-    id: str
-    title: str
-    summary: str | None
-    occurred_on: str
-    article_count: int
-
-
-class EventDetailDTO(EventBubbleDTO):
-    articles: list[ArticleDTO]
 
 
 class RunDTO(BaseModel):
@@ -102,7 +79,6 @@ class RunDTO(BaseModel):
     status: str
     fetched: int
     inserted: int
-    clustered: int
     error: str | None
 
 
@@ -110,69 +86,8 @@ class TriggerResponse(BaseModel):
     started: bool
 
 
-def _event_to_bubble(e: StoredEvent) -> EventBubbleDTO:
-    return EventBubbleDTO(
-        id=e.id,
-        title=e.title,
-        summary=e.summary,
-        occurred_on=e.occurred_on,
-        article_count=e.article_count,
-    )
-
-
-# ── Endpoints ───────────────────────────────────────────────────────
-
-
-@router.get("/events", response_model=list[EventBubbleDTO])
-def get_events(
-    period: str = Query("7d", description="today | 7d | 30d | custom"),
-    from_: str | None = Query(None, alias="from"),
-    to: str | None = Query(None),
-    _user: str = Depends(current_user),
-    conn: sqlite3.Connection = Depends(get_db),
-) -> list[EventBubbleDTO]:
-    """List event bubbles for a period.
-
-    Convenience aliases: `period=today | 7d | 30d`. Or pass explicit
-    `from=YYYY-MM-DD&to=YYYY-MM-DD`. Custom range overrides the alias."""
-    today = date.today()
-    if from_ and to:
-        f, t = from_, to
-    elif period == "today":
-        d = today.isoformat()
-        f, t = d, d
-    elif period == "30d":
-        f = (today - timedelta(days=30)).isoformat()
-        t = today.isoformat()
-    else:  # default: 7d
-        f = (today - timedelta(days=7)).isoformat()
-        t = today.isoformat()
-    events = list_events(conn, from_iso=f, to_iso=t)
-    return [_event_to_bubble(e) for e in events]
-
-
-@router.get("/events/{event_id}", response_model=EventDetailDTO)
-def get_event_detail(
-    event_id: str,
-    _user: str = Depends(current_user),
-    conn: sqlite3.Connection = Depends(get_db),
-) -> EventDetailDTO:
-    e = get_event(conn, event_id)
-    if e is None:
-        raise HTTPException(status_code=404, detail="event not found")
-    articles = get_event_articles(conn, event_id)
-    return EventDetailDTO(
-        id=e.id,
-        title=e.title,
-        summary=e.summary,
-        occurred_on=e.occurred_on,
-        article_count=e.article_count,
-        articles=[_article_to_dto(a) for a in articles],
-    )
-
-
-def _article_to_dto(a) -> ArticleDTO:  # noqa: ANN001 — StoredArticle dataclass
-    return ArticleDTO(
+def _article_summary_dto(a: StoredArticle) -> ArticleSummaryDTO:
+    return ArticleSummaryDTO(
         id=a.id,
         source=a.source,
         feed_id=a.feed_id,
@@ -180,19 +95,16 @@ def _article_to_dto(a) -> ArticleDTO:  # noqa: ANN001 — StoredArticle dataclas
         feed_group=a.feed_group,
         url=a.url,
         title=a.title,
-        description=a.description,
         author=a.author,
         published_at=a.published_at,
-        tags=a.tags,
         is_read=a.is_read,
+        image_url=a.image_url,
     )
 
 
 def _resolve_period_iso(
     period: str, from_: str | None, to: str | None
 ) -> tuple[str, str]:
-    """ISO-date version of the period selector — the trends queries
-    need string boundaries, not unix timestamps."""
     today = date.today()
     if period == "custom" and from_ and to:
         return from_, to
@@ -201,126 +113,14 @@ def _resolve_period_iso(
         return d, d
     if period == "30d":
         return (today - timedelta(days=30)).isoformat(), today.isoformat()
-    # default: 7d
     return (today - timedelta(days=7)).isoformat(), today.isoformat()
-
-
-@router.get("/trends", response_model=list[TrendDTO])
-def get_trends(
-    period: str = Query("7d", description="today | 7d | 30d | custom"),
-    from_: str | None = Query(None, alias="from"),
-    to: str | None = Query(None),
-    min_count: int = Query(1, ge=1, le=100),
-    _user: str = Depends(current_user),
-    conn: sqlite3.Connection = Depends(get_db),
-) -> list[TrendDTO]:
-    """Hot-topics dashboard: every tag attached to articles in the
-    period, ranked by how many distinct articles carry it.
-
-    The bubble-size scaling (sqrt(count)) is the visual filter — a
-    1-article tag renders as a tiny bubble, a 10-article tag is huge.
-    Pass `min_count=2` (or higher) to force a strict-trend filter
-    that drops singletons; the default 1 keeps the dashboard
-    populated even on small corpora."""
-    f, t = _resolve_period_iso(period, from_, to)
-    pairs = aggregate_tags(conn, from_iso=f, to_iso=t, min_count=min_count)
-    return [TrendDTO(tag=tag, count=n) for tag, n in pairs]
-
-
-@router.get("/trends/{tag}", response_model=TrendDetailDTO)
-def get_trend_detail(
-    tag: str,
-    period: str = Query("7d"),
-    from_: str | None = Query(None, alias="from"),
-    to: str | None = Query(None),
-    _user: str = Depends(current_user),
-    conn: sqlite3.Connection = Depends(get_db),
-) -> TrendDetailDTO:
-    """Articles tagged with `tag` in the period — what the UI shows
-    when you hover the bubble."""
-    f, t = _resolve_period_iso(period, from_, to)
-    articles = list_articles_with_tag(conn, tag, from_iso=f, to_iso=t)
-    if not articles:
-        raise HTTPException(status_code=404, detail="no articles with that tag in period")
-    return TrendDetailDTO(
-        tag=tag,
-        count=len(articles),
-        articles=[_article_to_dto(a) for a in articles],
-    )
-
-
-# ── News tab (per-feed article browsing) ──────────────────────────
-
-
-@router.get("/feeds", response_model=list[FeedSummaryDTO])
-def get_feeds(
-    period: str = Query("7d"),
-    from_: str | None = Query(None, alias="from"),
-    to: str | None = Query(None),
-    _user: str = Depends(current_user),
-    conn: sqlite3.Connection = Depends(get_db),
-) -> list[FeedSummaryDTO]:
-    """Feed sidebar for the News tab: every feed that has at least one
-    article in the period, with total + unread counts."""
-    f, t = _resolve_period_iso(period, from_, to)
-    return [
-        FeedSummaryDTO(
-            feed_id=s.feed_id,
-            feed_title=s.feed_title,
-            feed_group=s.feed_group,
-            total=s.total,
-            unread=s.unread,
-        )
-        for s in list_feeds_with_counts(conn, from_iso=f, to_iso=t)
-    ]
-
-
-@router.get("/articles", response_model=list[ArticleDTO])
-def get_articles(
-    period: str = Query("7d"),
-    from_: str | None = Query(None, alias="from"),
-    to: str | None = Query(None),
-    feed_id: str | None = Query(None),
-    unread_only: bool = Query(False),
-    _user: str = Depends(current_user),
-    conn: sqlite3.Connection = Depends(get_db),
-) -> list[ArticleDTO]:
-    """Article list for the News tab. Newest-first, optionally filtered
-    to one feed and/or unread items only."""
-    f, t = _resolve_period_iso(period, from_, to)
-    arts = list_articles(
-        conn,
-        from_iso=f,
-        to_iso=t,
-        feed_id=feed_id,
-        unread_only=unread_only,
-    )
-    return [_article_to_dto(a) for a in arts]
-
-
-@router.get("/articles/{article_id}", response_model=ArticleDTO)
-def get_article_detail(
-    article_id: str,
-    _user: str = Depends(current_user),
-    conn: sqlite3.Connection = Depends(get_db),
-) -> ArticleDTO:
-    """Single article — full description + tags. Used when the user
-    clicks an item in the News list."""
-    a = get_article(conn, article_id)
-    if a is None:
-        raise HTTPException(status_code=404, detail="article not found")
-    return _article_to_dto(a)
 
 
 def _resolve_period_ts(
     period: str, from_: str | None, to: str | None
 ) -> tuple[int, int | None]:
-    """Map the UI's period selector to a (from_ts, to_ts) pair, in unix
-    seconds (UTC). `to_ts=None` means "no upper bound" (i.e. up to now).
-
-    Boundaries are inclusive — the date `from_` becomes 00:00 UTC of
-    that day, the date `to` becomes 23:59:59 UTC of that day, so an
-    article published any time on `to` is captured."""
+    """Period selector → (from_ts, to_ts) in unix seconds (UTC).
+    Inclusive boundaries: from = 00:00 UTC, to = 23:59:59 UTC."""
     today = date.today()
     if period == "custom":
         f = date.fromisoformat(from_) if from_ else today
@@ -338,6 +138,108 @@ def _resolve_period_ts(
     return int(from_dt.timestamp()), int(to_dt.timestamp())
 
 
+# ── Endpoints ───────────────────────────────────────────────────────
+
+
+@router.get("/feeds", response_model=list[FeedSummaryDTO])
+def get_feeds(
+    period: str = Query("7d"),
+    from_: str | None = Query(None, alias="from"),
+    to: str | None = Query(None),
+    _user: str = Depends(current_user),
+    conn: sqlite3.Connection = Depends(get_db),
+) -> list[FeedSummaryDTO]:
+    """Feed sidebar for the News tab. The frontend groups by
+    `feed_group` (the FreshRSS folder) to reproduce the FreshRSS
+    sidebar layout."""
+    f, t = _resolve_period_iso(period, from_, to)
+    return [
+        FeedSummaryDTO(
+            feed_id=s.feed_id,
+            feed_title=s.feed_title,
+            feed_group=s.feed_group,
+            total=s.total,
+            unread=s.unread,
+        )
+        for s in list_feeds_with_counts(conn, from_iso=f, to_iso=t)
+    ]
+
+
+@router.get("/articles", response_model=list[ArticleSummaryDTO])
+def get_articles(
+    period: str = Query("7d"),
+    from_: str | None = Query(None, alias="from"),
+    to: str | None = Query(None),
+    feed_id: str | None = Query(None),
+    feed_group: str | None = Query(None),
+    unread_only: bool = Query(False),
+    _user: str = Depends(current_user),
+    conn: sqlite3.Connection = Depends(get_db),
+) -> list[ArticleSummaryDTO]:
+    """Article list for the News tab — newest-first, optionally
+    filtered to one feed, one category (folder), or unread-only."""
+    f, t = _resolve_period_iso(period, from_, to)
+    arts = list_articles(
+        conn,
+        from_iso=f,
+        to_iso=t,
+        feed_id=feed_id,
+        feed_group=feed_group,
+        unread_only=unread_only,
+    )
+    return [_article_summary_dto(a) for a in arts]
+
+
+@router.get("/articles/{article_id}", response_model=ArticleDetailDTO)
+def get_article_detail(
+    article_id: str,
+    _user: str = Depends(current_user),
+    conn: sqlite3.Connection = Depends(get_db),
+) -> ArticleDetailDTO:
+    """Single article — the right pane. Summary is read from disk
+    (the DB only stores metadata + the image URL)."""
+    a = get_article(conn, article_id)
+    if a is None:
+        raise HTTPException(status_code=404, detail="article not found")
+    summary = summaries.read_summary(article_id)
+    base = _article_summary_dto(a)
+    return ArticleDetailDTO(**base.model_dump(), summary=summary)
+
+
+class MarkReadResponse(BaseModel):
+    article_id: str
+    is_read: bool
+
+
+@router.post("/articles/{article_id}/read", response_model=MarkReadResponse)
+async def mark_read(
+    article_id: str,
+    _user: str = Depends(current_user),
+    conn: sqlite3.Connection = Depends(get_db),
+) -> MarkReadResponse:
+    """Mark an article as read locally AND push the change to
+    FreshRSS via Fever's `mark=item&as=read` action. The FreshRSS
+    push runs in the background — local state is what the UI
+    reflects immediately."""
+    a = get_article(conn, article_id)
+    if a is None:
+        raise HTTPException(status_code=404, detail="article not found")
+    mark_article_read(conn, article_id, is_read=True)
+
+    async def _push() -> None:
+        from app.news.service import push_mark_read
+
+        try:
+            await push_mark_read(
+                article_id, source=a.source, external_id=a.external_id
+            )
+        except Exception:
+            log.exception("push_mark_read background failed for %s", article_id)
+
+    asyncio.create_task(_push())
+    return MarkReadResponse(article_id=article_id, is_read=True)
+
+
 @router.post("/fetch", response_model=TriggerResponse, status_code=202)
 async def trigger_fetch(
     period: str = Query(
@@ -347,12 +249,8 @@ async def trigger_fetch(
     to: str | None = Query(None),
     _user: str = Depends(current_user),
 ) -> TriggerResponse:
-    """Kick off an immediate fetch pass in the background, scoped to the
-    selected period. Only articles published in that range are stored.
-
-    The scheduler uses incremental fetches (no period) for efficiency;
-    manual fetches use a date range so the user gets predictable
-    results regardless of what's already in the DB."""
+    """Kick off an immediate fetch pass in the background, scoped to
+    the selected period."""
     from app.config import get_settings
     from app.news.service import fetch_all_sources
 
@@ -370,8 +268,8 @@ async def trigger_fetch(
 
     async def _go() -> None:
         try:
-            summaries = await fetch_all_sources(from_ts=from_ts, to_ts=to_ts)
-            for s in summaries:
+            results = await fetch_all_sources(from_ts=from_ts, to_ts=to_ts)
+            for s in results:
                 if s.error:
                     log.warning("manual news fetch: %s error=%s", s.source, s.error)
                 else:
@@ -379,44 +277,8 @@ async def trigger_fetch(
                         "manual news fetch: %s fetched=%d inserted=%d",
                         s.source, s.fetched, s.inserted,
                     )
-            # Chain the tagger so freshly-inserted articles surface in
-            # the trends view immediately, without a separate click.
-            try:
-                from app.news.tagger import run_tagger_pass
-
-                tag_result = await run_tagger_pass()
-                log.info(
-                    "manual news fetch: tagger processed=%d failed=%d total_tags=%d",
-                    tag_result.processed, tag_result.failed, tag_result.total_tags,
-                )
-            except Exception:
-                log.exception("manual news fetch: tagger pass failed (non-fatal)")
         except Exception:
             log.exception("manual news fetch failed")
-
-    asyncio.create_task(_go())
-    return TriggerResponse(started=True)
-
-
-@router.post("/cluster", response_model=TriggerResponse, status_code=202)
-async def trigger_cluster(_user: str = Depends(current_user)) -> TriggerResponse:
-    """Kick off an immediate tagger pass in the background.
-
-    The endpoint is named `/cluster` for backwards compatibility with
-    the original event-clustering design; what it actually drives now
-    is per-article hashtag extraction. The frontend calls this when
-    the user clicks 'Re-cluster'."""
-    from app.news.tagger import run_tagger_pass
-
-    async def _go() -> None:
-        try:
-            r = await run_tagger_pass()
-            log.info(
-                "manual news tagger: processed=%d failed=%d total_tags=%d",
-                r.processed, r.failed, r.total_tags,
-            )
-        except Exception:
-            log.exception("manual news tagger failed")
 
     asyncio.create_task(_go())
     return TriggerResponse(started=True)
@@ -439,7 +301,6 @@ def get_runs(
             status=r.status,
             fetched=r.fetched,
             inserted=r.inserted,
-            clustered=r.clustered,
             error=r.error,
         )
         for r in runs

@@ -9,11 +9,12 @@ Two modes:
   - Ranged (`from_ts` set): used by the manual API trigger. Walks Fever
     backwards from the newest item via `max_id`, keeping only items
     whose `created_on_time` falls in the [`from_ts`, `to_ts`] window.
-    Slower but lets the user say "fetch only the last 7 days" even on
-    a fresh DB or after deleting old articles.
 
-Clustering is a separate pass (see `cluster.py`) because it's expensive
-enough that we don't want to run it on every fetch.
+Each fetch:
+  1. Purges articles older than `RETENTION_DAYS` (with disk cleanup).
+  2. Pulls items from Fever.
+  3. For each new item: stores metadata in SQLite, full body on disk,
+     extracts the first image URL into the row.
 """
 
 from __future__ import annotations
@@ -25,13 +26,19 @@ from dataclasses import dataclass
 from app.config import get_settings
 from app.db.connection import open_connection
 
-from .fever_client import FeverClient, html_to_plain_text, published_iso
+from . import summaries
+from .fever_client import (
+    FeverClient,
+    extract_first_image,
+    html_to_plain_text,
+    published_iso,
+)
 from .store import (
     RETENTION_DAYS,
     create_fetch_run,
     finish_fetch_run,
     insert_article,
-    purge_old_articles,
+    purge_old_articles_with_ids,
 )
 
 log = logging.getLogger(__name__)
@@ -81,12 +88,17 @@ async def fetch_freshrss(
     conn = open_connection()
     try:
         run_id = create_fetch_run(conn, kind="fetch", source=source)
-        purged = purge_old_articles(conn)
-        if purged:
+        # Purge old articles AND their on-disk summaries before we
+        # fetch — keeps both the DB and the data dir bounded without
+        # a separate housekeeping job.
+        purged_ids = purge_old_articles_with_ids(conn)
+        if purged_ids:
             log.info(
                 "news fetch: purged %d article(s) older than %d days",
-                purged, RETENTION_DAYS,
+                len(purged_ids), RETENTION_DAYS,
             )
+        for aid in purged_ids:
+            summaries.delete_summary(aid)
         since = _last_external_id(conn, source) if from_ts is None else 0
     finally:
         conn.close()
@@ -117,11 +129,6 @@ async def fetch_freshrss(
                 )
             fetched = len(items)
             if items:
-                # Fever's `items` endpoint returns BOTH read and unread
-                # items in the range. We persist both — read state isn't
-                # part of our model. The breakdown below confirms this in
-                # the logs so the user can see we're not losing already-
-                # read articles.
                 read_count = sum(1 for it in items if it.is_read)
                 log.info(
                     "news fetch: freshrss got %d items (read=%d, unread=%d)",
@@ -136,7 +143,8 @@ async def fetch_freshrss(
                         if f and f.group_id and f.group_id in excluded:
                             skipped_excluded += 1
                             continue
-                        if insert_article(
+                        article_id = f"{source}:{it.id}"
+                        is_new = insert_article(
                             conn,
                             source=source,
                             external_id=it.id,
@@ -145,11 +153,19 @@ async def fetch_freshrss(
                             feed_group=f.group_name if f else None,
                             url=it.url,
                             title=it.title,
-                            description=html_to_plain_text(it.html),
                             author=it.author,
                             published_at=published_iso(it),
                             is_read=it.is_read,
-                        ):
+                            image_url=extract_first_image(it.html),
+                        )
+                        if is_new:
+                            # Persist the full body to disk only on
+                            # first sight. On a duplicate the row
+                            # already has the body file from before
+                            # and the content is unchanged.
+                            summaries.write_summary(
+                                article_id, html_to_plain_text(it.html)
+                            )
                             inserted += 1
                 finally:
                     conn.close()
@@ -189,22 +205,42 @@ async def fetch_all_sources(
     to_ts: int | None = None,
 ) -> list[FetchSummary]:
     """Fetch every configured source, swallowing per-source failures so a
-    single bad source doesn't stop the rest. Used by the scheduled job
-    (no range = incremental) and the manual API trigger (range from the
-    UI's period selector)."""
+    single bad source doesn't stop the rest."""
     settings = get_settings()
-    summaries: list[FetchSummary] = []
+    summaries_out: list[FetchSummary] = []
     if settings.news.sources.freshrss is None:
         log.warning("news fetch: no source configured (news.sources.freshrss is null)")
-        return summaries
+        return summaries_out
     try:
-        summaries.append(await fetch_freshrss(from_ts=from_ts, to_ts=to_ts))
+        summaries_out.append(await fetch_freshrss(from_ts=from_ts, to_ts=to_ts))
     except Exception as exc:
         log.exception("news fetch: freshrss raised")
-        summaries.append(
+        summaries_out.append(
             FetchSummary(source="freshrss", fetched=0, inserted=0, error=str(exc))
         )
-    return summaries
+    return summaries_out
 
 
-__all__ = ["FetchSummary", "fetch_all_sources", "fetch_freshrss"]
+async def push_mark_read(article_id: str, *, source: str, external_id: str) -> None:
+    """Push a read-state change to the upstream source. Today only
+    freshrss is supported; other sources will land later."""
+    settings = get_settings()
+    if source != "freshrss":
+        log.warning("push_mark_read: unsupported source %s", source)
+        return
+    cfg = settings.news.sources.freshrss
+    if cfg is None:
+        return
+    try:
+        async with FeverClient(base_url=cfg.base_url, api_key=cfg.api_key) as client:
+            await client.mark_item_read(external_id)
+    except Exception:
+        log.exception("push_mark_read: failed for %s", article_id)
+
+
+__all__ = [
+    "FetchSummary",
+    "fetch_all_sources",
+    "fetch_freshrss",
+    "push_mark_read",
+]

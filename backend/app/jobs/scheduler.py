@@ -100,32 +100,11 @@ async def run_nightly() -> str:
 
 async def _news_fetch_job() -> None:
     from app.news.service import fetch_all_sources
-    from app.news.tagger import run_tagger_pass
 
     try:
         await fetch_all_sources()
     except Exception:
         log.exception("scheduled news fetch failed")
-        return
-    # Chain the tagger after fetching so newly-stored articles get
-    # hashtags before the next trends query, without waiting for the
-    # separate cluster cron. Soft-fails so a tagger blip doesn't mark
-    # the fetch itself as failed.
-    try:
-        await run_tagger_pass()
-    except Exception:
-        log.exception("scheduled news fetch: tagger pass failed (non-fatal)")
-
-
-async def _news_cluster_job() -> None:
-    """Backstop tagger pass on its own cron — catches any articles that
-    failed to tag during the fetch chain (LLM blip, rate-limit, etc)."""
-    from app.news.tagger import run_tagger_pass
-
-    try:
-        await run_tagger_pass()
-    except Exception:
-        log.exception("scheduled news cluster (tagger) failed")
 
 
 def start_scheduler() -> None:
@@ -159,18 +138,7 @@ def start_scheduler() -> None:
             max_instances=1,
             coalesce=True,
         )
-        sched.add_job(
-            _news_cluster_job,
-            trigger=CronTrigger.from_crontab(settings.news.cluster_schedule, timezone="UTC"),
-            id="news-cluster",
-            replace_existing=True,
-            max_instances=1,
-            coalesce=True,
-        )
-        log.info(
-            "scheduler: news fetch = %s, news cluster = %s",
-            settings.news.fetch_schedule, settings.news.cluster_schedule,
-        )
+        log.info("scheduler: news fetch = %s", settings.news.fetch_schedule)
 
     sched.start()
     _SCHEDULER = sched

@@ -143,15 +143,7 @@ export interface OrganizeProposal {
 
 // ---- News ----
 
-export interface NewsEventBubble {
-  id: string;
-  title: string;
-  summary: string | null;
-  occurred_on: string;
-  article_count: number;
-}
-
-export interface NewsArticle {
+export interface NewsArticleSummary {
   id: string;
   source: string;
   feed_id: string | null;
@@ -159,11 +151,14 @@ export interface NewsArticle {
   feed_group: string | null;
   url: string | null;
   title: string;
-  description: string | null;
   author: string | null;
   published_at: string;
-  tags: string[] | null;
   is_read: boolean;
+  image_url: string | null;
+}
+
+export interface NewsArticleDetail extends NewsArticleSummary {
+  summary: string | null;
 }
 
 export interface NewsFeedSummary {
@@ -172,21 +167,6 @@ export interface NewsFeedSummary {
   feed_group: string | null;
   total: number;
   unread: number;
-}
-
-export interface NewsEventDetail extends NewsEventBubble {
-  articles: NewsArticle[];
-}
-
-export interface NewsTrend {
-  tag: string;
-  count: number;
-}
-
-export interface NewsTrendDetail {
-  tag: string;
-  count: number;
-  articles: NewsArticle[];
 }
 
 export interface OrganizeRun {

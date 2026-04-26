@@ -88,6 +88,12 @@ class FeverClient:
             raise RuntimeError("Fever auth failed (check api_key)")
         return body
 
+    async def mark_item_read(self, item_id: str) -> None:
+        """Push read-state back to FreshRSS via Fever's `mark` action.
+        Fever signature: `?api&mark=item&as=read&id=<external_id>`.
+        We don't read the response — it just echoes the unread count."""
+        await self._post(params={"mark": "item", "as": "read", "id": item_id})
+
     async def feeds(self) -> dict[str, FeverFeed]:
         """Return feed_id → FeverFeed (with group/folder name resolved).
 
@@ -260,14 +266,29 @@ def published_iso(item: FeverItem) -> str:
     return datetime.fromtimestamp(ts, tz=timezone.utc).isoformat()
 
 
-def html_to_plain_text(html: str, *, max_len: int = 1200) -> str:
+def html_to_plain_text(html: str, *, max_len: int | None = None) -> str:
     """Strip HTML tags from a Fever item's `html` field. The feed's
     description is what the user (per their workflow) has already
-    LLM-synthesised — we just want the readable text out of it."""
+    LLM-synthesised — we just want the readable text out of it.
+
+    `max_len` is now optional — we keep the full body for on-disk
+    storage. Pass an explicit cap if you only want a preview."""
     import re
 
     text = re.sub(r"<[^>]+>", " ", html)
     text = re.sub(r"\s+", " ", text).strip()
-    if len(text) > max_len:
+    if max_len is not None and len(text) > max_len:
         text = text[: max_len - 1].rstrip() + "…"
     return text
+
+
+def extract_first_image(html: str) -> str | None:
+    """Pull the first `<img src="...">` URL from a Fever item's body.
+    Used as a thumbnail in the article-detail pane. Returns None if
+    nothing matches."""
+    import re
+
+    if not html:
+        return None
+    m = re.search(r'<img[^>]+src=["\']([^"\']+)["\']', html, re.IGNORECASE)
+    return m.group(1) if m else None
