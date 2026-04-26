@@ -154,6 +154,7 @@ export interface NewsEventBubble {
 export interface NewsArticle {
   id: string;
   source: string;
+  feed_id: string | null;
   feed_title: string | null;
   feed_group: string | null;
   url: string | null;
@@ -162,6 +163,15 @@ export interface NewsArticle {
   author: string | null;
   published_at: string;
   tags: string[] | null;
+  is_read: boolean;
+}
+
+export interface NewsFeedSummary {
+  feed_id: string;
+  feed_title: string;
+  feed_group: string | null;
+  total: number;
+  unread: number;
 }
 
 export interface NewsEventDetail extends NewsEventBubble {

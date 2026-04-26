@@ -40,6 +40,16 @@ class StoredArticle:
     event_id: str | None
     tags: list[str] | None
     tags_extracted_at: str | None
+    is_read: bool
+
+
+@dataclass(slots=True)
+class FeedSummary:
+    feed_id: str
+    feed_title: str
+    feed_group: str | None
+    total: int
+    unread: int
 
 
 @dataclass(slots=True)
@@ -121,19 +131,25 @@ def insert_article(
     description: str | None,
     author: str | None,
     published_at: str,
+    is_read: bool = False,
 ) -> bool:
-    """Insert a new article. Returns True if a row was inserted, False on
-    duplicate (the article was already stored on a previous fetch).
+    """Insert a new article OR refresh its `is_read` state.
 
-    `feed_group` is the FreshRSS folder/category the source feed lives
-    in — captured for trend filtering ("only show me trends from the
-    Tech folder")."""
+    Returns True if a brand-new row was inserted, False if the article
+    was already known. On a duplicate we still update `is_read` so
+    reading an article in FreshRSS propagates here on the next fetch.
+
+    Other metadata (title, description, tags, …) is intentionally NOT
+    overwritten on a re-fetch: rewriting the row would invalidate the
+    tagger's idempotency assumptions."""
     article_id = f"{source}:{external_id}"
+    is_read_int = 1 if is_read else 0
     cur = conn.execute(
         "INSERT OR IGNORE INTO news_articles "
         "(id, source, external_id, feed_id, feed_title, feed_group, url, "
-        " title, description, author, published_at, fetched_at, event_id) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)",
+        " title, description, author, published_at, fetched_at, event_id, "
+        " is_read) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)",
         (
             article_id,
             source,
@@ -147,9 +163,88 @@ def insert_article(
             author,
             published_at,
             _utcnow_iso(),
+            is_read_int,
         ),
     )
-    return cur.rowcount > 0
+    if cur.rowcount > 0:
+        return True
+    # Existing row — sync is_read so FreshRSS reads propagate here.
+    conn.execute(
+        "UPDATE news_articles SET is_read = ? WHERE id = ?",
+        (is_read_int, article_id),
+    )
+    return False
+
+
+# ── News tab queries (per-feed listing) ────────────────────────────
+
+
+def list_feeds_with_counts(
+    conn: sqlite3.Connection, *, from_iso: str, to_iso: str
+) -> list[FeedSummary]:
+    """For each feed, return total + unread article counts in the
+    [from, to] window. Used to populate the News tab's feed sidebar.
+
+    Same date-prefix trick as the trend queries: published_at is a
+    full datetime, comparison boundaries are bare YYYY-MM-DD."""
+    rows = conn.execute(
+        "SELECT feed_id, "
+        "       COALESCE(MAX(feed_title), '(unknown feed)') AS feed_title, "
+        "       MAX(feed_group) AS feed_group, "
+        "       COUNT(*) AS total, "
+        "       SUM(CASE WHEN is_read = 0 THEN 1 ELSE 0 END) AS unread "
+        "FROM news_articles "
+        "WHERE substr(published_at, 1, 10) >= ? "
+        "  AND substr(published_at, 1, 10) <= ? "
+        "GROUP BY feed_id "
+        "ORDER BY feed_title COLLATE NOCASE ASC",
+        (from_iso, to_iso),
+    ).fetchall()
+    return [
+        FeedSummary(
+            feed_id=str(r["feed_id"] or ""),
+            feed_title=r["feed_title"],
+            feed_group=r["feed_group"],
+            total=int(r["total"] or 0),
+            unread=int(r["unread"] or 0),
+        )
+        for r in rows
+    ]
+
+
+def list_articles(
+    conn: sqlite3.Connection,
+    *,
+    from_iso: str,
+    to_iso: str,
+    feed_id: str | None = None,
+    unread_only: bool = False,
+    limit: int = 500,
+) -> list[StoredArticle]:
+    """Articles in the window, optionally filtered to one feed and/or
+    unread items. Newest-first."""
+    sql = (
+        "SELECT * FROM news_articles "
+        "WHERE substr(published_at, 1, 10) >= ? "
+        "  AND substr(published_at, 1, 10) <= ?"
+    )
+    params: list = [from_iso, to_iso]
+    if feed_id:
+        sql += " AND feed_id = ?"
+        params.append(feed_id)
+    if unread_only:
+        sql += " AND is_read = 0"
+    sql += " ORDER BY published_at DESC LIMIT ?"
+    params.append(limit)
+    rows = conn.execute(sql, params).fetchall()
+    return [_row_to_article(r) for r in rows]
+
+
+def get_article(conn: sqlite3.Connection, article_id: str) -> StoredArticle | None:
+    row = conn.execute(
+        "SELECT * FROM news_articles WHERE id = ?", (article_id,)
+    ).fetchone()
+    return _row_to_article(row) if row is not None else None
 
 
 # ── Tag extraction ────────────────────────────────────────────────
@@ -405,7 +500,8 @@ def list_recent_runs(
 def _row_to_article(row: sqlite3.Row) -> StoredArticle:
     import json as _json
 
-    raw_tags = row["tags_json"] if "tags_json" in row.keys() else None
+    keys = row.keys()
+    raw_tags = row["tags_json"] if "tags_json" in keys else None
     tags: list[str] | None = None
     if raw_tags:
         try:
@@ -420,7 +516,7 @@ def _row_to_article(row: sqlite3.Row) -> StoredArticle:
         external_id=row["external_id"],
         feed_id=row["feed_id"],
         feed_title=row["feed_title"],
-        feed_group=row["feed_group"] if "feed_group" in row.keys() else None,
+        feed_group=row["feed_group"] if "feed_group" in keys else None,
         url=row["url"],
         title=row["title"],
         description=row["description"],
@@ -430,8 +526,9 @@ def _row_to_article(row: sqlite3.Row) -> StoredArticle:
         event_id=row["event_id"],
         tags=tags,
         tags_extracted_at=(
-            row["tags_extracted_at"] if "tags_extracted_at" in row.keys() else None
+            row["tags_extracted_at"] if "tags_extracted_at" in keys else None
         ),
+        is_read=bool(row["is_read"]) if "is_read" in keys else False,
     )
 
 

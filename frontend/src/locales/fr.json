@@ -29,7 +29,18 @@
     "occurredOn": "Survenu le",
     "noDescription": "Pas de description.",
     "fetchTriggered": "Récupération lancée — rafraîchissez dans un instant.",
-    "clusterTriggered": "Regroupement lancé — les événements vont se mettre à jour."
+    "clusterTriggered": "Regroupement lancé — les événements vont se mettre à jour.",
+    "tabTrends": "Tendances",
+    "tabArticles": "Articles",
+    "feedsHeader": "Flux",
+    "allFeeds": "Tous les flux",
+    "unreadOnly": "Non lus uniquement",
+    "noArticles": "Aucun article sur cette période.",
+    "selectArticle": "Sélectionnez un article dans la liste.",
+    "openOriginal": "Ouvrir l'original",
+    "summaryHeader": "Résumé",
+    "tagsHeader": "Hashtags",
+    "noTags": "Pas encore de hashtags — le tagger n'a pas traité cet article."
   },
   "organize": {
     "title": "Organisation nocturne",

@@ -29,7 +29,18 @@
     "occurredOn": "Occurred",
     "noDescription": "No description.",
     "fetchTriggered": "Fetch started — refresh in a moment.",
-    "clusterTriggered": "Clustering started — events will refresh shortly."
+    "clusterTriggered": "Clustering started — events will refresh shortly.",
+    "tabTrends": "Trends",
+    "tabArticles": "News",
+    "feedsHeader": "Feeds",
+    "allFeeds": "All feeds",
+    "unreadOnly": "Unread only",
+    "noArticles": "No articles in this period.",
+    "selectArticle": "Pick an article from the list.",
+    "openOriginal": "Open original",
+    "summaryHeader": "Summary",
+    "tagsHeader": "Hashtags",
+    "noTags": "No hashtags yet — the tagger hasn't processed this article."
   },
   "organize": {
     "title": "Nightly Organize",

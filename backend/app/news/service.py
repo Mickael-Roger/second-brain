@@ -148,6 +148,7 @@ async def fetch_freshrss(
                             description=html_to_plain_text(it.html),
                             author=it.author,
                             published_at=published_iso(it),
+                            is_read=it.is_read,
                         ):
                             inserted += 1
                 finally:

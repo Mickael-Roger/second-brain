@@ -24,10 +24,13 @@ from app.db.connection import get_db
 from app.news import (
     StoredEvent,
     aggregate_tags,
+    get_article,
     get_event,
     get_event_articles,
+    list_articles,
     list_articles_with_tag,
     list_events,
+    list_feeds_with_counts,
     list_recent_runs,
 )
 
@@ -41,6 +44,7 @@ log = logging.getLogger(__name__)
 class ArticleDTO(BaseModel):
     id: str
     source: str
+    feed_id: str | None
     feed_title: str | None
     feed_group: str | None
     url: str | None
@@ -49,6 +53,15 @@ class ArticleDTO(BaseModel):
     author: str | None
     published_at: str
     tags: list[str] | None
+    is_read: bool
+
+
+class FeedSummaryDTO(BaseModel):
+    feed_id: str
+    feed_title: str
+    feed_group: str | None
+    total: int
+    unread: int
 
 
 class TrendDTO(BaseModel):
@@ -162,6 +175,7 @@ def _article_to_dto(a) -> ArticleDTO:  # noqa: ANN001 — StoredArticle dataclas
     return ArticleDTO(
         id=a.id,
         source=a.source,
+        feed_id=a.feed_id,
         feed_title=a.feed_title,
         feed_group=a.feed_group,
         url=a.url,
@@ -170,6 +184,7 @@ def _article_to_dto(a) -> ArticleDTO:  # noqa: ANN001 — StoredArticle dataclas
         author=a.author,
         published_at=a.published_at,
         tags=a.tags,
+        is_read=a.is_read,
     )
 
 
@@ -232,6 +247,69 @@ def get_trend_detail(
         count=len(articles),
         articles=[_article_to_dto(a) for a in articles],
     )
+
+
+# ── News tab (per-feed article browsing) ──────────────────────────
+
+
+@router.get("/feeds", response_model=list[FeedSummaryDTO])
+def get_feeds(
+    period: str = Query("7d"),
+    from_: str | None = Query(None, alias="from"),
+    to: str | None = Query(None),
+    _user: str = Depends(current_user),
+    conn: sqlite3.Connection = Depends(get_db),
+) -> list[FeedSummaryDTO]:
+    """Feed sidebar for the News tab: every feed that has at least one
+    article in the period, with total + unread counts."""
+    f, t = _resolve_period_iso(period, from_, to)
+    return [
+        FeedSummaryDTO(
+            feed_id=s.feed_id,
+            feed_title=s.feed_title,
+            feed_group=s.feed_group,
+            total=s.total,
+            unread=s.unread,
+        )
+        for s in list_feeds_with_counts(conn, from_iso=f, to_iso=t)
+    ]
+
+
+@router.get("/articles", response_model=list[ArticleDTO])
+def get_articles(
+    period: str = Query("7d"),
+    from_: str | None = Query(None, alias="from"),
+    to: str | None = Query(None),
+    feed_id: str | None = Query(None),
+    unread_only: bool = Query(False),
+    _user: str = Depends(current_user),
+    conn: sqlite3.Connection = Depends(get_db),
+) -> list[ArticleDTO]:
+    """Article list for the News tab. Newest-first, optionally filtered
+    to one feed and/or unread items only."""
+    f, t = _resolve_period_iso(period, from_, to)
+    arts = list_articles(
+        conn,
+        from_iso=f,
+        to_iso=t,
+        feed_id=feed_id,
+        unread_only=unread_only,
+    )
+    return [_article_to_dto(a) for a in arts]
+
+
+@router.get("/articles/{article_id}", response_model=ArticleDTO)
+def get_article_detail(
+    article_id: str,
+    _user: str = Depends(current_user),
+    conn: sqlite3.Connection = Depends(get_db),
+) -> ArticleDTO:
+    """Single article — full description + tags. Used when the user
+    clicks an item in the News list."""
+    a = get_article(conn, article_id)
+    if a is None:
+        raise HTTPException(status_code=404, detail="article not found")
+    return _article_to_dto(a)
 
 
 def _resolve_period_ts(
