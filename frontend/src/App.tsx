@@ -8,6 +8,7 @@ import ChatView from "@/components/chat/ChatView";
 import WikiView, { type WikiTarget } from "@/components/wiki/WikiView";
 import OrganizeView from "@/components/organize/OrganizeView";
 import NewsView from "@/components/news/NewsView";
+import AnkiView from "@/components/anki/AnkiView";
 
 export default function App() {
   const { t } = useTranslation();
@@ -43,6 +44,8 @@ export default function App() {
         <OrganizeView onOpenWiki={openWiki} />
       ) : view === "news" ? (
         <NewsView onOpenChat={() => setView("chat")} />
+      ) : view === "anki" ? (
+        <AnkiView />
       ) : (
         <WikiView target={wikiTarget} />
       )}

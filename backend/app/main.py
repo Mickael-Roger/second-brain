@@ -16,6 +16,7 @@ from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from app.api import anki as anki_api
 from app.api import auth as auth_api
 from app.api import chat as chat_api
 from app.api import news as news_api
@@ -66,6 +67,17 @@ async def lifespan(_: FastAPI):
         conn.close()
     start_scheduler()
 
+    # Bootstrap the Anki collection.anki2 if anki is enabled. Idempotent
+    # (a no-op when the file already has Anki's `col` table).
+    settings_for_anki = get_settings()
+    if settings_for_anki.anki.enabled:
+        try:
+            from app.anki import ensure_collection
+
+            ensure_collection()
+        except Exception:
+            log.exception("anki: ensure_collection failed at startup (non-fatal)")
+
     # Kick off an immediate news backfill in the background so the
     # app starts populating articles right away — including all
     # unread items, regardless of age — without waiting for the
@@ -114,6 +126,7 @@ def create_app() -> FastAPI:
     app.include_router(vault_api.router)
     app.include_router(organize_api.router)
     app.include_router(news_api.router)
+    app.include_router(anki_api.router)
 
     @app.get("/api/health")
     def health() -> dict[str, str]:

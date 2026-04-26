@@ -162,6 +162,29 @@ class NewsSection(BaseModel):
     sources: NewsSourcesSection = NewsSourcesSection()
 
 
+class AnkiWebConfig(BaseModel):
+    """AnkiWeb account credentials.
+
+    Stored in plaintext in `config.yml` — same operator-trust posture as
+    every other secret in this file (LLM keys, SMTP password, etc.).
+    """
+
+    username: str
+    password: str
+    base_url: str = "https://sync.ankiweb.net/"
+
+
+class AnkiSection(BaseModel):
+    enabled: bool = False
+    ankiweb: AnkiWebConfig | None = None
+
+    @model_validator(mode="after")
+    def _check(self) -> "AnkiSection":
+        if self.enabled and self.ankiweb is None:
+            raise ValueError("anki.enabled = true but anki.ankiweb is missing")
+        return self
+
+
 class SMTPSection(BaseModel):
     enabled: bool = False
     host: str | None = None
@@ -214,6 +237,7 @@ class Settings(BaseModel):
     obsidian: ObsidianSection = ObsidianSection()
     organize: OrganizeSection = OrganizeSection()
     news: NewsSection = NewsSection()
+    anki: AnkiSection = AnkiSection()
     smtp: SMTPSection = SMTPSection()
     logging: LoggingSection = LoggingSection()
 

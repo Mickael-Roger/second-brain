@@ -134,6 +134,23 @@ news:
       excluded_group_ids: []   # e.g. ["4", "12"]
 
 # ---------------------------------------------------------------------------
+# Anki — flashcards with AnkiWeb sync. Local collection lives at
+# <data_dir>/anki/collection.anki2 (Anki schema-18 SQLite). Sync is a
+# pure-Python full upload/download: you click "Sync" and pick the
+# direction. There is no incremental merge — pick the side that is
+# newer and overwrite the other side.
+#
+# Built-in note types: `basic` (Front → Back) and `basic_reverse`
+# (Front → Back AND Back → Front). No media (images/audio) yet.
+# ---------------------------------------------------------------------------
+anki:
+  enabled: false                     # flip to true once `ankiweb` is filled in
+  ankiweb:
+    username: you@example.com
+    password: REPLACE_ME
+    base_url: https://sync.ankiweb.net/
+
+# ---------------------------------------------------------------------------
 # SMTP — outbound only. Used for the nightly Organize report.
 # When `enabled: false`, the report is logged to stdout instead of emailed
 # (handy during initial setup so you can verify cron without an SMTP server).

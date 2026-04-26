@@ -17,6 +17,7 @@ dependencies = [
     "python-ulid>=3.0",
     "click>=8.1",
     "apscheduler>=3.10",
+    "zstandard>=0.23",
 ]
 
 [project.scripts]

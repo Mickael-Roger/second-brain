@@ -7,6 +7,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import {
   BookOpen,
   Brain,
+  Layers,
   LogOut,
   MessageSquare,
   Moon,
@@ -19,7 +20,7 @@ import { logout } from "@/lib/auth";
 import { setLanguage, currentLanguage } from "@/lib/i18n";
 import { currentTheme, setTheme, type Theme } from "@/lib/theme";
 
-export type ViewId = "chat" | "wiki" | "organize" | "news";
+export type ViewId = "chat" | "wiki" | "organize" | "news" | "anki";
 
 interface Props {
   active: ViewId;
@@ -48,6 +49,7 @@ export default function AppShell({ active, onSelect, children }: Props) {
     { id: "wiki", icon: BookOpen, label: t("nav.wiki") },
     { id: "organize", icon: Sparkles, label: t("nav.organize") },
     { id: "news", icon: Newspaper, label: t("nav.news") },
+    { id: "anki", icon: Layers, label: t("nav.anki") },
   ];
 
   return (
