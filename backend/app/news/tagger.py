@@ -102,6 +102,21 @@ Tag rules:
   A version qualifier is justified ONLY when the version itself is
   the topic of the article (e.g. tag "gpt-5.5" if the article is
   specifically announcing that release).
+- CRITICAL — no within-article family fan-out. Within a single
+  article's tag list, NEVER emit multiple slugs that share a family
+  root. Pick the single most-encompassing one and drop the rest:
+    BAD (one article):
+      ["quantum-teleportation", "quantum-computing",
+       "quantum-entanglement", "quantum-network",
+       "quantum-key-distribution"]
+    GOOD (one article):
+      ["quantum"]
+    BAD (one article):
+      ["artificial-intelligence", "enterprise-ai", "agentic-ai"]
+    GOOD (one article):
+      ["ai"]
+  This is the single biggest source of one-article-only tags that
+  never trend across the dashboard.
 - Tags should name specific ENTITIES: people, companies, products,
   recurring events, places when central, specific policies.
 - NEVER tag a news source / aggregator / publication. Forbidden

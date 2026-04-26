@@ -195,14 +195,18 @@ def get_trends(
     period: str = Query("7d", description="today | 7d | 30d | custom"),
     from_: str | None = Query(None, alias="from"),
     to: str | None = Query(None),
-    min_count: int = Query(2, ge=1, le=100),
+    min_count: int = Query(1, ge=1, le=100),
     _user: str = Depends(current_user),
     conn: sqlite3.Connection = Depends(get_db),
 ) -> list[TrendDTO]:
-    """Hot-topics dashboard: the most-tagged hashtags across articles
-    in the period. A tag is only included if at least `min_count`
-    distinct articles carry it (default 2 — singletons are not
-    trends)."""
+    """Hot-topics dashboard: every tag attached to articles in the
+    period, ranked by how many distinct articles carry it.
+
+    The bubble-size scaling (sqrt(count)) is the visual filter — a
+    1-article tag renders as a tiny bubble, a 10-article tag is huge.
+    Pass `min_count=2` (or higher) to force a strict-trend filter
+    that drops singletons; the default 1 keeps the dashboard
+    populated even on small corpora."""
     f, t = _resolve_period_iso(period, from_, to)
     pairs = aggregate_tags(conn, from_iso=f, to_iso=t, min_count=min_count)
     return [TrendDTO(tag=tag, count=n) for tag, n in pairs]
