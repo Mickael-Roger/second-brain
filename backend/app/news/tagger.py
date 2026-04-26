@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from dataclasses import dataclass
 
 from app.config import get_settings
@@ -45,32 +46,47 @@ MAX_CONCURRENT_LLM = 6
 
 
 _DEFAULT_SYSTEM_PROMPT = """\
-You extract topic HASHTAGS from a news article so it can be grouped
-with other articles covering the same things.
+You extract trending HASHTAGS from a news article so articles covering
+the same things can be grouped together on a hot-topics dashboard.
 
-Return ONE JSON object and nothing else (no preamble, no code fences):
+OUTPUT FORMAT — read carefully:
+Return ONE JSON object and ABSOLUTELY NOTHING ELSE. No prose, no
+markdown, no headers, no '#' prefixes, no code fences, no
+explanation, no refusal text. The first character of your response
+must be '{' and the last must be '}'.
 
-{
-  "tags": ["<tag>", "<tag>", ...]
-}
+{"tags": ["<tag>", "<tag>", ...]}
 
-Rules:
-- Return between 1 and 20 tags. Long articles routinely cover many
-  distinct topics — return ALL of them, not just the headline one.
-  6+ tags is normal for in-depth pieces; 15–20 is fine for very
-  topic-dense articles. Don't pad: only return tags the article
-  actually substantively discusses.
-- Each tag is a short noun phrase, ideally 1–3 words. No leading '#',
-  no spaces in multi-word tags (use hyphens or PascalCase). Examples:
-  "GPT-5", "OpenAI", "France", "PensionReform", "AppleEarnings".
-- Use canonical names. Prefer "OpenAI" over "openai", "GPT-5" over
-  "GPT5", "France" over "FR". Be consistent with yourself across runs.
-- Tag the SUBJECT of the article (companies, people, places, events,
-  products, policies). Do NOT tag the publication source (skip
-  "TechCrunch", "Le Monde", etc.).
-- Avoid generic tags ("news", "tech", "world") — they don't help group.
-- If an article is genuinely about nothing taggable (a stub, a
-  paywalled redirect, a corrupted feed entry), return an empty list.
+Tag style — these are the exact shapes we want:
+  "gpt-5.5"
+  "ubuntu-26.04"
+  "sam-altman"
+  "openai"
+  "france-pension-reform"
+  "apple-q1-earnings"
+  "ukraine-peace-talks"
+
+Tag rules:
+- ALL lowercase. Use hyphens to separate words: "sam-altman", not
+  "SamAltman" and not "Sam Altman".
+- Keep version numbers, dates, and dotted notation as-is inside the
+  slug: "gpt-5.5", "ubuntu-26.04", "ios-19".
+- 1 to 20 tags per article. Long articles routinely cover many
+  distinct topics — return ALL of them. 6+ tags is normal for
+  in-depth pieces; 15–20 is fine for very topic-dense articles.
+  Don't pad: only return tags the article actually substantively
+  discusses.
+- Tags should name specific ENTITIES the article is about: people
+  (sam-altman), companies (openai), products (gpt-5.5), versions
+  (ubuntu-26.04), events (apple-q1-earnings), places when central
+  (france), specific policies (pension-reform). NOT generic concepts
+  ("news", "tech", "ai", "world", "today").
+- Do NOT tag the publication source (skip "techcrunch", "le-monde",
+  etc.).
+- Be consistent across runs: the same entity should always get the
+  same slug.
+- If the article is a stub, paywalled redirect, or has nothing
+  taggable, return {"tags": []} — still as a JSON object.
 """
 
 
@@ -127,14 +143,42 @@ def _build_user_prompt(article: StoredArticle) -> str:
     )
 
 
-def _parse_tags(raw: str) -> list[str]:
-    """Pull the tags array out of the LLM's JSON response.
+_HASHTAG_RE = re.compile(r"#([A-Za-z0-9][\w.\-]*)")
 
-    Tolerates code fences, leading prose, and a few alias keys
-    (`tags` / `topics` / `hashtags`). Also accepts a bare JSON array
-    when the LLM ignored the object envelope. Anything that still
-    can't be parsed yields an empty list — the caller logs a sample
-    of the raw response so we can see what the LLM actually said."""
+
+def _slugify_tag(tag: str) -> str:
+    """Normalise a raw tag string to the canonical lowercase-kebab
+    style (e.g. 'GPT-5.5' → 'gpt-5.5', 'Sam Altman' → 'sam-altman',
+    'PensionReform' → 'pension-reform'). Keeps dots, digits, and
+    existing hyphens; converts internal whitespace and CamelCase
+    boundaries to hyphens."""
+    s = tag.strip().lstrip("#").strip()
+    if not s:
+        return ""
+    # Insert a hyphen at lower→upper transitions so "PensionReform"
+    # becomes "Pension-Reform" before the lowercase pass.
+    s = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "-", s)
+    s = s.lower()
+    # Collapse any run of disallowed characters (whitespace, _,
+    # punctuation that isn't '.' or '-') into a single hyphen.
+    s = re.sub(r"[^a-z0-9.\-]+", "-", s)
+    # Collapse multiple consecutive hyphens, trim edges.
+    s = re.sub(r"-{2,}", "-", s).strip("-")
+    return s
+
+
+def _parse_tags(raw: str) -> list[str]:
+    """Pull the tags array out of the LLM's response.
+
+    Multiple LLM output shapes are tolerated, in order of preference:
+      1. JSON object with a tags-shaped key ("tags" / "topics" /
+         "hashtags" / "labels").
+      2. Bare JSON array.
+      3. Markdown hashtag list ("#Science #Astronomy #MilkyWay") —
+         we extract anything matching `#word`.
+    Anything that still can't be parsed yields an empty list — the
+    caller logs a sample of the raw response so format mismatches are
+    visible."""
     s = raw.strip()
     if s.startswith("```"):
         s = s.split("\n", 1)[1] if "\n" in s else s
@@ -142,7 +186,7 @@ def _parse_tags(raw: str) -> list[str]:
             s = s[:-3]
     s = s.strip()
 
-    parsed: object | None = None
+    parsed: list | None = None
 
     # Form 1: full object with a tags-shaped key.
     obj_start = s.find("{")
@@ -170,19 +214,27 @@ def _parse_tags(raw: str) -> list[str]:
             if isinstance(arr, list):
                 parsed = arr
 
+    # Form 3: markdown hashtag list. Only fall through to this if the
+    # JSON parses above turned up nothing AND the raw text contains at
+    # least one '#' — gives us "#Science #Astronomy #MilkyWay" and
+    # similar prose-with-tags responses.
+    if parsed is None and "#" in s:
+        matches = _HASHTAG_RE.findall(s)
+        if matches:
+            parsed = matches
+
     if not isinstance(parsed, list):
         return []
 
     out: list[str] = []
     seen: set[str] = set()
     for t in parsed:
-        tag = str(t).strip().lstrip("#")
+        tag = _slugify_tag(str(t))
         if not tag:
             continue
-        key = tag.lower()
-        if key in seen:
+        if tag in seen:
             continue
-        seen.add(key)
+        seen.add(tag)
         out.append(tag)
     return out
 
