@@ -166,6 +166,62 @@ def discard_one(
         raise HTTPException(status_code=404, detail="no pending proposal at that path")
 
 
+class ApplyOneResponse(BaseModel):
+    state: str
+    operations: list[str]
+    error: str | None
+
+
+@router.post("/runs/{run_id}/proposals/apply", response_model=ApplyOneResponse)
+async def apply_one(
+    run_id: str,
+    path: str = Query(...),
+    _user: str = Depends(current_user),
+) -> ApplyOneResponse:
+    """Apply just one pending proposal — used by the per-card Apply button."""
+    from app.jobs.organize import apply_one_proposal
+
+    try:
+        result = await apply_one_proposal(run_id, path)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return ApplyOneResponse(**result)
+
+
+class ReviseRequest(BaseModel):
+    instruction: str
+
+
+@router.post("/runs/{run_id}/proposals/revise", response_model=ProposalDTO)
+async def revise_one(
+    run_id: str,
+    payload: ReviseRequest,
+    path: str = Query(...),
+    _user: str = Depends(current_user),
+    conn: sqlite3.Connection = Depends(get_db),
+) -> ProposalDTO:
+    """Re-prompt the LLM with the user's revision instruction. Replaces
+    the stored proposal in place; the front-end card re-renders with the
+    new content."""
+    from app.jobs.organize import revise_proposal
+
+    if not payload.instruction.strip():
+        raise HTTPException(status_code=400, detail="instruction is required")
+    try:
+        await revise_proposal(run_id, path, payload.instruction)
+    except (LookupError, FileNotFoundError) as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=f"LLM error: {exc}") from exc
+
+    run = get_run(conn, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="run vanished")
+    return _run_to_dto(run).proposals[
+        next(i for i, p in enumerate(run.proposals) if p.path == path)
+    ]
+
+
 class ApplyResponse(BaseModel):
     applied: int
     failed: int

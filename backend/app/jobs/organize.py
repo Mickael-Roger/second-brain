@@ -510,6 +510,183 @@ async def run_organize(*, run_id: str | None = None) -> OrganizeResult:
     )
 
 
+def _proposal_from_stored(sp: Any) -> "Proposal":
+    """Rebuild an in-memory Proposal from a StoredProposal row."""
+    return Proposal(
+        path=sp.path,
+        move_to=sp.move_to,
+        tags=sp.tags,
+        wikilinks=[
+            WikilinkSuggestion(target=w["target"], context=w.get("context", ""))
+            for w in sp.wikilinks
+        ],
+        refactor=sp.refactor,
+        notes=sp.notes,
+        raw_response=sp.raw_response,
+    )
+
+
+async def apply_one_proposal(run_id: str, path: str) -> dict[str, Any]:
+    """Apply just one pending proposal (the user clicked Apply on its card)."""
+    from app.organize import (
+        fetch_pending_proposals,
+        set_proposal_state as store_set_proposal_state,
+    )
+
+    conn = open_connection()
+    try:
+        target = next(
+            (p for p in fetch_pending_proposals(conn, run_id) if p.path == path),
+            None,
+        )
+    finally:
+        conn.close()
+    if target is None:
+        raise LookupError(f"no pending proposal at {path}")
+
+    proposal = _proposal_from_stored(target)
+    try:
+        result = await _apply_proposal(proposal)
+        state = "failed" if result.error else "applied"
+        conn = open_connection()
+        try:
+            store_set_proposal_state(
+                conn,
+                run_id,
+                path,
+                state=state,
+                apply_error=result.error,
+                apply_ops=result.operations,
+            )
+        finally:
+            conn.close()
+        return {"state": state, "operations": result.operations, "error": result.error}
+    except Exception as exc:
+        log.exception("apply_one_proposal: failed for %s", path)
+        conn = open_connection()
+        try:
+            store_set_proposal_state(
+                conn,
+                run_id,
+                path,
+                state="failed",
+                apply_error=str(exc),
+            )
+        finally:
+            conn.close()
+        return {"state": "failed", "operations": [], "error": str(exc)}
+
+
+def _build_revision_prompt(
+    note_path: str,
+    note_content: str,
+    previous: Any,
+    instruction: str,
+    context_files: list[Any],
+    paths: list[str],
+) -> str:
+    """User-message text for asking the LLM to revise an earlier proposal."""
+    body = note_content
+    if len(body) > MAX_NOTE_CHARS:
+        body = body[:MAX_NOTE_CHARS] + "\n\n[…content truncated for review]"
+
+    prev_payload = {
+        "move_to": previous.move_to,
+        "tags": previous.tags,
+        "wikilinks": [
+            {"target": w["target"] if isinstance(w, dict) else w.target,
+             "context": w.get("context") if isinstance(w, dict) else w.context}
+            for w in (previous.wikilinks or [])
+        ],
+        "refactor": previous.refactor,
+        "notes": previous.notes,
+    }
+
+    parts: list[str] = [
+        f"## Note path\n{note_path}",
+        "## You proposed earlier (the user wants you to revise this)",
+        "```json\n" + json.dumps(prev_payload, indent=2, ensure_ascii=False) + "\n```",
+        f"## User's revision instruction\n> {instruction.strip()}",
+    ]
+    for cf in context_files:
+        parts.append(f"## {cf.label}\n```\n{cf.content.strip() or '(empty)'}\n```")
+    parts.append("## Vault paths (sample)\n" + "\n".join(f"- {p}" for p in paths))
+    parts.append(f"## Note content\n```markdown\n{body}\n```")
+    parts.append(
+        "Now return a NEW proposal in the same JSON schema (the one defined "
+        "in the system prompt), respecting the user's instruction. If the "
+        "user asks you NOT to do something, set that field to null."
+    )
+    return "\n\n".join(parts)
+
+
+async def revise_proposal(run_id: str, path: str, instruction: str) -> Proposal:
+    """Re-prompt the LLM with the user's revision request, replace the
+    stored proposal in place. The card stays at the same row; the state
+    flips back to 'pending'."""
+    from app.organize import (
+        get_run,
+        insert_proposal as store_insert_proposal,
+    )
+    from app.vault import read_context_files
+
+    conn = open_connection()
+    try:
+        run = get_run(conn, run_id)
+    finally:
+        conn.close()
+    if run is None:
+        raise LookupError(f"run {run_id} not found")
+
+    previous = next((p for p in run.proposals if p.path == path), None)
+    if previous is None:
+        raise LookupError(f"no proposal at {path} in run {run_id}")
+
+    note_abs = vault_root() / path
+    if not note_abs.is_file():
+        raise FileNotFoundError(f"source note not found on disk: {path}")
+    note_content = note_abs.read_text(encoding="utf-8")
+
+    context_files = read_context_files()
+    paths = _vault_paths_sample()
+    system_prompt = _load_system_prompt()
+    user_text = _build_revision_prompt(
+        path, note_content, previous, instruction, context_files, paths
+    )
+    raw = await complete(
+        system_prompt,
+        [Message(role="user", content=[TextBlock(text=user_text)])],
+    )
+    new_proposal = parse_proposal(path, raw)
+
+    # Replace the stored row in place — same path, fresh state=pending,
+    # revision history is not kept (the user can keep iterating until happy).
+    conn = open_connection()
+    try:
+        conn.execute(
+            "DELETE FROM organize_proposals WHERE run_id = ? AND path = ?",
+            (run_id, path),
+        )
+        store_insert_proposal(
+            conn,
+            run_id,
+            path=new_proposal.path,
+            move_to=new_proposal.move_to,
+            tags=new_proposal.tags,
+            wikilinks=[
+                {"target": w.target, "context": w.context}
+                for w in new_proposal.wikilinks
+            ],
+            refactor=new_proposal.refactor,
+            notes=new_proposal.notes,
+            parse_error=new_proposal.parse_error,
+            raw_response=new_proposal.raw_response,
+        )
+    finally:
+        conn.close()
+    return new_proposal
+
+
 async def apply_pending_proposals(run_id: str) -> dict[str, Any]:
     """Apply every still-pending proposal of a stored run, updating each
     proposal's state in the DB. Returns a small summary the API surfaces.

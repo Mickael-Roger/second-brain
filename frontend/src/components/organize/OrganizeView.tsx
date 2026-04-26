@@ -10,7 +10,7 @@ import { useTranslation } from "react-i18next";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, Play, Sparkles } from "lucide-react";
 
-import { api, type OrganizeRun } from "@/lib/api";
+import { api, type OrganizeProposal, type OrganizeRun } from "@/lib/api";
 import ProposalCard from "./ProposalCard";
 
 interface Props {
@@ -46,6 +46,31 @@ export default function OrganizeView({ onOpenWiki }: Props) {
     mutationFn: (runId: string) =>
       api.post<{ applied: number; failed: number }>(
         `/api/organize/runs/${runId}/apply`,
+      ),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["organize-current"] }),
+  });
+
+  const applyOne = useMutation({
+    mutationFn: ({ runId, path }: { runId: string; path: string }) =>
+      api.post<{ state: string; operations: string[]; error: string | null }>(
+        `/api/organize/runs/${runId}/proposals/apply?path=${encodeURIComponent(path)}`,
+      ),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["organize-current"] }),
+  });
+
+  const revise = useMutation({
+    mutationFn: ({
+      runId,
+      path,
+      instruction,
+    }: {
+      runId: string;
+      path: string;
+      instruction: string;
+    }) =>
+      api.post<OrganizeProposal>(
+        `/api/organize/runs/${runId}/proposals/revise?path=${encodeURIComponent(path)}`,
+        { instruction },
       ),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["organize-current"] }),
   });
@@ -158,8 +183,17 @@ export default function OrganizeView({ onOpenWiki }: Props) {
                 key={p.path}
                 proposal={p}
                 onDiscard={(path) => discard.mutate({ runId: r.id, path })}
+                onApply={(path) => applyOne.mutate({ runId: r.id, path })}
+                onRevise={async (path, instruction) => {
+                  await revise.mutateAsync({ runId: r.id, path, instruction });
+                }}
                 onOpenWiki={onOpenWiki}
-                busy={discard.isPending || apply.isPending}
+                busy={
+                  discard.isPending ||
+                  apply.isPending ||
+                  applyOne.isPending ||
+                  revise.isPending
+                }
               />
             ))}
           </div>

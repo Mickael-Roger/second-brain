@@ -1,16 +1,27 @@
 // One card per LLM-proposed change. Lets the user see what would happen
-// (move_to, tags, wikilinks, refactor diff) and discard the ones they
-// don't want before applying the rest.
+// (move_to, tags, wikilinks, refactor diff), discard it, apply it
+// individually, or send a revision instruction back to the LLM.
 
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { ArrowRight, Check, Circle, FileText, Tag, X } from "lucide-react";
+import {
+  ArrowRight,
+  Check,
+  Circle,
+  FileText,
+  MessageSquare,
+  Send,
+  Tag,
+  X,
+} from "lucide-react";
 
 import type { OrganizeProposal } from "@/lib/api";
 
 interface Props {
   proposal: OrganizeProposal;
   onDiscard: (path: string) => void;
+  onApply: (path: string) => void;
+  onRevise: (path: string, instruction: string) => Promise<void>;
   onOpenWiki: (path: string | null) => void;
   busy?: boolean;
 }
@@ -31,9 +42,20 @@ function StateBadge({ state }: { state: OrganizeProposal["state"] }) {
   );
 }
 
-export default function ProposalCard({ proposal, onDiscard, onOpenWiki, busy }: Props) {
+export default function ProposalCard({
+  proposal,
+  onDiscard,
+  onApply,
+  onRevise,
+  onOpenWiki,
+  busy,
+}: Props) {
   const { t } = useTranslation();
   const [showRefactor, setShowRefactor] = useState(false);
+  const [reviseOpen, setReviseOpen] = useState(false);
+  const [instruction, setInstruction] = useState("");
+  const [revising, setRevising] = useState(false);
+  const [reviseError, setReviseError] = useState<string | null>(null);
 
   const noChanges =
     !proposal.move_to &&
@@ -41,6 +63,25 @@ export default function ProposalCard({ proposal, onDiscard, onOpenWiki, busy }: 
     !proposal.refactor &&
     proposal.wikilinks.length === 0 &&
     !proposal.notes;
+
+  const isPending = proposal.state === "pending";
+  const canApply = isPending && !noChanges && !proposal.parse_error;
+
+  async function handleRevise(e: React.FormEvent) {
+    e.preventDefault();
+    if (!instruction.trim() || revising) return;
+    setRevising(true);
+    setReviseError(null);
+    try {
+      await onRevise(proposal.path, instruction.trim());
+      setInstruction("");
+      setReviseOpen(false);
+    } catch (err) {
+      setReviseError((err as Error).message);
+    } finally {
+      setRevising(false);
+    }
+  }
 
   return (
     <article
@@ -63,17 +104,42 @@ export default function ProposalCard({ proposal, onDiscard, onOpenWiki, busy }: 
         </div>
         <div className="flex items-center gap-2">
           <StateBadge state={proposal.state} />
-          {proposal.state === "pending" && (
-            <button
-              type="button"
-              onClick={() => onDiscard(proposal.path)}
-              disabled={busy}
-              title={t("organize.discardThis")}
-              aria-label={t("organize.discardThis")}
-              className="rounded border border-border p-1 text-muted hover:border-red-400 hover:text-red-300"
-            >
-              <X className="h-3.5 w-3.5" />
-            </button>
+          {isPending && (
+            <>
+              <button
+                type="button"
+                onClick={() => setReviseOpen((v) => !v)}
+                disabled={busy || revising}
+                title={t("organize.reviseThis")}
+                aria-label={t("organize.reviseThis")}
+                className={`rounded border p-1 hover:border-accent hover:text-text ${
+                  reviseOpen ? "border-accent text-accent" : "border-border text-muted"
+                }`}
+              >
+                <MessageSquare className="h-3.5 w-3.5" />
+              </button>
+              <button
+                type="button"
+                onClick={() => onDiscard(proposal.path)}
+                disabled={busy || revising}
+                title={t("organize.discardThis")}
+                aria-label={t("organize.discardThis")}
+                className="rounded border border-border p-1 text-muted hover:border-red-400 hover:text-red-300"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+              <button
+                type="button"
+                onClick={() => onApply(proposal.path)}
+                disabled={busy || revising || !canApply}
+                title={t("organize.applyThis")}
+                aria-label={t("organize.applyThis")}
+                className="flex items-center gap-1 rounded bg-accent px-2 py-1 text-xs font-medium text-bg disabled:opacity-50"
+              >
+                <Check className="h-3.5 w-3.5" />
+                {t("organize.applyThisLabel")}
+              </button>
+            </>
           )}
         </div>
       </header>
@@ -174,6 +240,51 @@ export default function ProposalCard({ proposal, onDiscard, onOpenWiki, busy }: 
           <p className="text-xs text-red-300">
             {t("organize.applyError")}: {proposal.apply_error}
           </p>
+        )}
+
+        {/* Revise form — collapsible */}
+        {reviseOpen && isPending && (
+          <form
+            onSubmit={handleRevise}
+            className="mt-2 space-y-2 rounded-lg border border-accent/40 bg-bg/40 p-2"
+          >
+            <label className="block text-[11px] uppercase tracking-wide text-muted">
+              {t("organize.reviseInstructionLabel")}
+            </label>
+            <textarea
+              value={instruction}
+              onChange={(e) => setInstruction(e.target.value)}
+              disabled={revising}
+              rows={2}
+              placeholder={t("organize.reviseInstructionPlaceholder")}
+              className="w-full resize-none rounded border border-border bg-bg px-2 py-1.5 text-sm outline-none focus:border-accent"
+            />
+            {reviseError && (
+              <p className="text-xs text-red-300">{reviseError}</p>
+            )}
+            <div className="flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setReviseOpen(false);
+                  setInstruction("");
+                  setReviseError(null);
+                }}
+                disabled={revising}
+                className="text-xs text-muted hover:text-text"
+              >
+                {t("common.cancel")}
+              </button>
+              <button
+                type="submit"
+                disabled={revising || !instruction.trim()}
+                className="flex items-center gap-1 rounded bg-accent px-2 py-1 text-xs font-medium text-bg disabled:opacity-50"
+              >
+                <Send className="h-3.5 w-3.5" />
+                {revising ? t("organize.revising") : t("organize.reviseSend")}
+              </button>
+            </div>
+          </form>
         )}
       </div>
     </article>
