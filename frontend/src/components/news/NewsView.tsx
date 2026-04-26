@@ -1,15 +1,16 @@
-// News & Events view. Shows event bubbles for the selected period, with
-// hover tooltips listing the underlying articles. Manual fetch + cluster
-// triggers sit in the header — the cron schedules drive the regular flow.
+// News & Events view. Shows hot-topic hashtag bubbles for the selected
+// period, with hover tooltips listing the underlying articles. Manual
+// fetch + tagger triggers sit in the header — the cron schedules drive
+// the regular flow.
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Newspaper, Play, RefreshCw } from "lucide-react";
 
-import { api, type NewsEventBubble } from "@/lib/api";
+import { api, type NewsTrend } from "@/lib/api";
 
-import EventBubble from "./EventBubble";
+import TrendBubble from "./EventBubble";
 import { packCircles } from "./pack";
 
 type Period = "today" | "7d" | "30d" | "custom";
@@ -21,25 +22,22 @@ export default function NewsView() {
   const [period, setPeriod] = useState<Period>("7d");
   const [customFrom, setCustomFrom] = useState<string>(() => isoDaysAgo(7));
   const [customTo, setCustomTo] = useState<string>(() => isoDaysAgo(0));
-  const [hoveredId, setHoveredId] = useState<string | null>(null);
+  const [hoveredTag, setHoveredTag] = useState<string | null>(null);
 
   const queryKey = useMemo(() => {
-    if (period === "custom") return ["news-events", "custom", customFrom, customTo];
-    return ["news-events", period];
+    if (period === "custom") return ["news-trends", "custom", customFrom, customTo];
+    return ["news-trends", period];
   }, [period, customFrom, customTo]);
 
-  const events = useQuery<NewsEventBubble[]>({
+  const trends = useQuery<NewsTrend[]>({
     queryKey,
     queryFn: () => {
+      const qs = new URLSearchParams({ period });
       if (period === "custom") {
-        const qs = new URLSearchParams({
-          period: "custom",
-          from: customFrom,
-          to: customTo,
-        });
-        return api.get<NewsEventBubble[]>(`/api/news/events?${qs.toString()}`);
+        qs.set("from", customFrom);
+        qs.set("to", customTo);
       }
-      return api.get<NewsEventBubble[]>(`/api/news/events?period=${period}`);
+      return api.get<NewsTrend[]>(`/api/news/trends?${qs.toString()}`);
     },
   });
 
@@ -57,12 +55,14 @@ export default function NewsView() {
         `/api/news/fetch?${qs.toString()}`,
       );
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["news-events"] }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["news-trends"] }),
   });
 
   const clusterNow = useMutation({
+    // The endpoint is still named /cluster for backwards compatibility,
+    // but it now drives per-article hashtag extraction (the tagger).
     mutationFn: () => api.post<{ started: boolean }>("/api/news/cluster"),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["news-events"] }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["news-trends"] }),
   });
 
   return (
@@ -110,15 +110,18 @@ export default function NewsView() {
       )}
 
       <div className="flex-1 overflow-hidden">
-        {events.isLoading ? (
+        {trends.isLoading ? (
           <p className="px-4 py-4 text-sm text-muted">{t("news.loading")}</p>
-        ) : !events.data || events.data.length === 0 ? (
+        ) : !trends.data || trends.data.length === 0 ? (
           <EmptyState />
         ) : (
           <BubbleCanvas
-            events={events.data}
-            hoveredId={hoveredId}
-            onHover={setHoveredId}
+            trends={trends.data}
+            period={period}
+            customFrom={customFrom}
+            customTo={customTo}
+            hoveredTag={hoveredTag}
+            onHover={setHoveredTag}
           />
         )}
       </div>
@@ -190,16 +193,25 @@ function PeriodSelector({
 }
 
 interface CanvasProps {
-  events: NewsEventBubble[];
-  hoveredId: string | null;
-  onHover: (id: string | null) => void;
+  trends: NewsTrend[];
+  period: Period;
+  customFrom: string;
+  customTo: string;
+  hoveredTag: string | null;
+  onHover: (tag: string | null) => void;
 }
 
-function BubbleCanvas({ events, hoveredId, onHover }: CanvasProps) {
+function BubbleCanvas({
+  trends,
+  period,
+  customFrom,
+  customTo,
+  hoveredTag,
+  onHover,
+}: CanvasProps) {
   const ref = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ w: 800, h: 600 });
 
-  // Track the canvas size so the pack layout fits.
   useEffect(() => {
     if (!ref.current) return;
     const obs = new ResizeObserver((entries) => {
@@ -212,36 +224,39 @@ function BubbleCanvas({ events, hoveredId, onHover }: CanvasProps) {
     return () => obs.disconnect();
   }, []);
 
-  // Map article counts to bubble radii. sqrt scaling keeps the area
-  // proportional to the count rather than the radius itself, which is
-  // what people instinctively read.
+  // sqrt scaling keeps bubble AREA proportional to article count —
+  // that's what readers instinctively decode.
   const packed = useMemo(() => {
-    if (events.length === 0) return [];
-    const maxCount = Math.max(...events.map((e) => e.article_count));
+    if (trends.length === 0) return [];
+    const maxCount = Math.max(...trends.map((trend) => trend.count));
     const minR = 28;
     const maxR = Math.min(size.w, size.h) / 5;
-    const radii = events.map((e) => {
-      const t = Math.sqrt(e.article_count / maxCount);
-      return minR + t * (maxR - minR);
+    const radii = trends.map((trend) => {
+      const ratio = Math.sqrt(trend.count / maxCount);
+      return minR + ratio * (maxR - minR);
     });
     return packCircles(radii, size.w, size.h);
-  }, [events, size]);
+  }, [trends, size]);
 
   return (
     <div ref={ref} className="relative h-full w-full overflow-hidden">
-      {events.map((e, i) => {
+      {trends.map((trend, i) => {
         const c = packed[i];
         if (!c) return null;
         return (
-          <EventBubble
-            key={e.id}
-            bubble={e}
+          <TrendBubble
+            key={trend.tag}
+            tag={trend.tag}
+            count={trend.count}
+            period={period}
+            customFrom={customFrom}
+            customTo={customTo}
             x={c.x}
             y={c.y}
             r={c.r}
-            hovered={hoveredId === e.id}
-            onHoverStart={() => onHover(e.id)}
-            onHoverEnd={() => onHover(hoveredId === e.id ? null : hoveredId)}
+            hovered={hoveredTag === trend.tag}
+            onHoverStart={() => onHover(trend.tag)}
+            onHoverEnd={() => onHover(hoveredTag === trend.tag ? null : hoveredTag)}
           />
         );
       })}

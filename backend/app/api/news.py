@@ -23,8 +23,10 @@ from app.auth import current_user
 from app.db.connection import get_db
 from app.news import (
     StoredEvent,
+    aggregate_tags,
     get_event,
     get_event_articles,
+    list_articles_with_tag,
     list_events,
     list_recent_runs,
 )
@@ -40,11 +42,27 @@ class ArticleDTO(BaseModel):
     id: str
     source: str
     feed_title: str | None
+    feed_group: str | None
     url: str | None
     title: str
     description: str | None
     author: str | None
     published_at: str
+    tags: list[str] | None
+
+
+class TrendDTO(BaseModel):
+    """One bubble in the trends view. Sized by `count` (number of
+    articles tagged with this hashtag in the period)."""
+
+    tag: str
+    count: int
+
+
+class TrendDetailDTO(BaseModel):
+    tag: str
+    count: int
+    articles: list[ArticleDTO]
 
 
 class EventBubbleDTO(BaseModel):
@@ -136,19 +154,79 @@ def get_event_detail(
         summary=e.summary,
         occurred_on=e.occurred_on,
         article_count=e.article_count,
-        articles=[
-            ArticleDTO(
-                id=a.id,
-                source=a.source,
-                feed_title=a.feed_title,
-                url=a.url,
-                title=a.title,
-                description=a.description,
-                author=a.author,
-                published_at=a.published_at,
-            )
-            for a in articles
-        ],
+        articles=[_article_to_dto(a) for a in articles],
+    )
+
+
+def _article_to_dto(a) -> ArticleDTO:  # noqa: ANN001 — StoredArticle dataclass
+    return ArticleDTO(
+        id=a.id,
+        source=a.source,
+        feed_title=a.feed_title,
+        feed_group=a.feed_group,
+        url=a.url,
+        title=a.title,
+        description=a.description,
+        author=a.author,
+        published_at=a.published_at,
+        tags=a.tags,
+    )
+
+
+def _resolve_period_iso(
+    period: str, from_: str | None, to: str | None
+) -> tuple[str, str]:
+    """ISO-date version of the period selector — the trends queries
+    need string boundaries, not unix timestamps."""
+    today = date.today()
+    if period == "custom" and from_ and to:
+        return from_, to
+    if period == "today":
+        d = today.isoformat()
+        return d, d
+    if period == "30d":
+        return (today - timedelta(days=30)).isoformat(), today.isoformat()
+    # default: 7d
+    return (today - timedelta(days=7)).isoformat(), today.isoformat()
+
+
+@router.get("/trends", response_model=list[TrendDTO])
+def get_trends(
+    period: str = Query("7d", description="today | 7d | 30d | custom"),
+    from_: str | None = Query(None, alias="from"),
+    to: str | None = Query(None),
+    min_count: int = Query(2, ge=1, le=100),
+    _user: str = Depends(current_user),
+    conn: sqlite3.Connection = Depends(get_db),
+) -> list[TrendDTO]:
+    """Hot-topics dashboard: the most-tagged hashtags across articles
+    in the period. A tag is only included if at least `min_count`
+    distinct articles carry it (default 2 — singletons are not
+    trends)."""
+    f, t = _resolve_period_iso(period, from_, to)
+    pairs = aggregate_tags(conn, from_iso=f, to_iso=t, min_count=min_count)
+    return [TrendDTO(tag=tag, count=n) for tag, n in pairs]
+
+
+@router.get("/trends/{tag}", response_model=TrendDetailDTO)
+def get_trend_detail(
+    tag: str,
+    period: str = Query("7d"),
+    from_: str | None = Query(None, alias="from"),
+    to: str | None = Query(None),
+    _user: str = Depends(current_user),
+    conn: sqlite3.Connection = Depends(get_db),
+) -> TrendDetailDTO:
+    """Articles tagged with `tag` in the period — what the UI shows
+    when you hover the bubble."""
+    f, t = _resolve_period_iso(period, from_, to)
+    articles = list_articles_with_tag(conn, tag, from_iso=f, to_iso=t)
+    if not articles:
+        raise HTTPException(status_code=404, detail="no articles with that tag in period")
+    return TrendDetailDTO(
+        tag=tag,
+        count=len(articles),
+        articles=[_article_to_dto(a) for a in articles],
     )
 
 
@@ -219,6 +297,18 @@ async def trigger_fetch(
                         "manual news fetch: %s fetched=%d inserted=%d",
                         s.source, s.fetched, s.inserted,
                     )
+            # Chain the tagger so freshly-inserted articles surface in
+            # the trends view immediately, without a separate click.
+            try:
+                from app.news.tagger import run_tagger_pass
+
+                tag_result = await run_tagger_pass()
+                log.info(
+                    "manual news fetch: tagger processed=%d failed=%d total_tags=%d",
+                    tag_result.processed, tag_result.failed, tag_result.total_tags,
+                )
+            except Exception:
+                log.exception("manual news fetch: tagger pass failed (non-fatal)")
         except Exception:
             log.exception("manual news fetch failed")
 
@@ -228,14 +318,23 @@ async def trigger_fetch(
 
 @router.post("/cluster", response_model=TriggerResponse, status_code=202)
 async def trigger_cluster(_user: str = Depends(current_user)) -> TriggerResponse:
-    """Kick off an immediate cluster pass in the background."""
-    from app.news.cluster import run_cluster_pass
+    """Kick off an immediate tagger pass in the background.
+
+    The endpoint is named `/cluster` for backwards compatibility with
+    the original event-clustering design; what it actually drives now
+    is per-article hashtag extraction. The frontend calls this when
+    the user clicks 'Re-cluster'."""
+    from app.news.tagger import run_tagger_pass
 
     async def _go() -> None:
         try:
-            await run_cluster_pass()
+            r = await run_tagger_pass()
+            log.info(
+                "manual news tagger: processed=%d failed=%d total_tags=%d",
+                r.processed, r.failed, r.total_tags,
+            )
         except Exception:
-            log.exception("manual news cluster failed")
+            log.exception("manual news tagger failed")
 
     asyncio.create_task(_go())
     return TriggerResponse(started=True)

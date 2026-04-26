@@ -30,6 +30,7 @@ class StoredArticle:
     external_id: str
     feed_id: str | None
     feed_title: str | None
+    feed_group: str | None
     url: str | None
     title: str
     description: str | None
@@ -37,6 +38,8 @@ class StoredArticle:
     published_at: str
     fetched_at: str
     event_id: str | None
+    tags: list[str] | None
+    tags_extracted_at: str | None
 
 
 @dataclass(slots=True)
@@ -112,6 +115,7 @@ def insert_article(
     external_id: str,
     feed_id: str | None,
     feed_title: str | None,
+    feed_group: str | None,
     url: str | None,
     title: str,
     description: str | None,
@@ -119,19 +123,24 @@ def insert_article(
     published_at: str,
 ) -> bool:
     """Insert a new article. Returns True if a row was inserted, False on
-    duplicate (the article was already stored on a previous fetch)."""
+    duplicate (the article was already stored on a previous fetch).
+
+    `feed_group` is the FreshRSS folder/category the source feed lives
+    in — captured for trend filtering ("only show me trends from the
+    Tech folder")."""
     article_id = f"{source}:{external_id}"
     cur = conn.execute(
         "INSERT OR IGNORE INTO news_articles "
-        "(id, source, external_id, feed_id, feed_title, url, title, "
-        " description, author, published_at, fetched_at, event_id) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)",
+        "(id, source, external_id, feed_id, feed_title, feed_group, url, "
+        " title, description, author, published_at, fetched_at, event_id) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)",
         (
             article_id,
             source,
             external_id,
             feed_id,
             feed_title,
+            feed_group,
             url,
             title,
             description,
@@ -141,6 +150,90 @@ def insert_article(
         ),
     )
     return cur.rowcount > 0
+
+
+# ── Tag extraction ────────────────────────────────────────────────
+
+
+def list_pending_tag_articles(
+    conn: sqlite3.Connection, *, limit: int = 50
+) -> list[StoredArticle]:
+    """Newest-first batch of articles whose tags haven't been extracted
+    yet. Walks the partial index `idx_news_articles_pending_tags`."""
+    rows = conn.execute(
+        "SELECT * FROM news_articles "
+        "WHERE tags_extracted_at IS NULL "
+        "ORDER BY published_at DESC LIMIT ?",
+        (limit,),
+    ).fetchall()
+    return [_row_to_article(r) for r in rows]
+
+
+def set_article_tags(
+    conn: sqlite3.Connection,
+    article_id: str,
+    *,
+    tags: list[str],
+) -> None:
+    """Persist the tagger's result for one article. Always sets
+    `tags_extracted_at` so the article isn't re-prompted, even if the
+    LLM returned an empty array — that's still information ('this
+    article doesn't trigger any topic')."""
+    import json as _json
+    conn.execute(
+        "UPDATE news_articles SET tags_json = ?, tags_extracted_at = ? "
+        "WHERE id = ?",
+        (_json.dumps(tags), _utcnow_iso(), article_id),
+    )
+
+
+def aggregate_tags(
+    conn: sqlite3.Connection,
+    *,
+    from_iso: str,
+    to_iso: str,
+    min_count: int = 2,
+) -> list[tuple[str, int]]:
+    """Hot-topics aggregation: tag → number of distinct articles in the
+    [from, to] window. Tags appearing on fewer than `min_count`
+    articles are dropped (they're not 'trends', they're singletons).
+
+    Case-insensitive grouping so 'GPT-5' and 'gpt-5' aren't treated as
+    different tags. We keep one canonical casing per group — whichever
+    spelling we saw first in the result set, since SQLite's GROUP BY
+    on a case-insensitive key is non-deterministic about the picked
+    representative; the LLM is prompted to be consistent so this
+    rarely matters in practice."""
+    rows = conn.execute(
+        "SELECT MIN(je.value) AS tag, COUNT(DISTINCT a.id) AS n "
+        "FROM news_articles a, json_each(a.tags_json) je "
+        "WHERE a.tags_extracted_at IS NOT NULL "
+        "  AND a.published_at >= ? AND a.published_at <= ? "
+        "GROUP BY LOWER(je.value) "
+        "HAVING n >= ? "
+        "ORDER BY n DESC, tag ASC",
+        (from_iso, to_iso, min_count),
+    ).fetchall()
+    return [(r["tag"], int(r["n"])) for r in rows]
+
+
+def list_articles_with_tag(
+    conn: sqlite3.Connection,
+    tag: str,
+    *,
+    from_iso: str,
+    to_iso: str,
+) -> list[StoredArticle]:
+    """All articles in the window whose tag list contains `tag`
+    (case-insensitive, exact match — no substring or stemming)."""
+    rows = conn.execute(
+        "SELECT a.* FROM news_articles a, json_each(a.tags_json) je "
+        "WHERE LOWER(je.value) = LOWER(?) "
+        "  AND a.published_at >= ? AND a.published_at <= ? "
+        "ORDER BY a.published_at DESC",
+        (tag, from_iso, to_iso),
+    ).fetchall()
+    return [_row_to_article(r) for r in rows]
 
 
 def list_unclustered_articles(
@@ -302,12 +395,24 @@ def list_recent_runs(
 
 
 def _row_to_article(row: sqlite3.Row) -> StoredArticle:
+    import json as _json
+
+    raw_tags = row["tags_json"] if "tags_json" in row.keys() else None
+    tags: list[str] | None = None
+    if raw_tags:
+        try:
+            parsed = _json.loads(raw_tags)
+            if isinstance(parsed, list):
+                tags = [str(t) for t in parsed]
+        except (TypeError, ValueError):
+            tags = None
     return StoredArticle(
         id=row["id"],
         source=row["source"],
         external_id=row["external_id"],
         feed_id=row["feed_id"],
         feed_title=row["feed_title"],
+        feed_group=row["feed_group"] if "feed_group" in row.keys() else None,
         url=row["url"],
         title=row["title"],
         description=row["description"],
@@ -315,6 +420,10 @@ def _row_to_article(row: sqlite3.Row) -> StoredArticle:
         published_at=row["published_at"],
         fetched_at=row["fetched_at"],
         event_id=row["event_id"],
+        tags=tags,
+        tags_extracted_at=(
+            row["tags_extracted_at"] if "tags_extracted_at" in row.keys() else None
+        ),
     )
 
 

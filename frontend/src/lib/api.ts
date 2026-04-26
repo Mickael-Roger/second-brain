@@ -155,14 +155,27 @@ export interface NewsArticle {
   id: string;
   source: string;
   feed_title: string | null;
+  feed_group: string | null;
   url: string | null;
   title: string;
   description: string | null;
   author: string | null;
   published_at: string;
+  tags: string[] | null;
 }
 
 export interface NewsEventDetail extends NewsEventBubble {
+  articles: NewsArticle[];
+}
+
+export interface NewsTrend {
+  tag: string;
+  count: number;
+}
+
+export interface NewsTrendDetail {
+  tag: string;
+  count: number;
   articles: NewsArticle[];
 }
 

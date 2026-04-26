@@ -42,6 +42,7 @@ class FeverFeed:
     id: str
     title: str
     site_url: str | None
+    group_name: str | None  # the FreshRSS folder/category this feed sits in
 
 
 class FeverClient:
@@ -87,15 +88,44 @@ class FeverClient:
         return body
 
     async def feeds(self) -> dict[str, FeverFeed]:
-        """Return feed_id → FeverFeed for the configured user."""
+        """Return feed_id → FeverFeed (with group/folder name resolved).
+
+        Fever's `feeds` action returns the feed list AND a separate
+        `feed_groups` mapping (feed_id → list of group_ids). To get
+        human-readable folder names we additionally call `groups` and
+        join: feed → group_id → group_title."""
         body = await self._post(params={"feeds": ""})
+        # Fever can return groups in the same response via `?api&feeds&groups`,
+        # but our URL builder doesn't support multi-flag actions cleanly;
+        # FreshRSS handles a second small request quickly enough.
+        groups_body = await self._post(params={"groups": ""})
+
+        # group_id → title
+        group_titles: dict[str, str] = {}
+        for raw in groups_body.get("groups", []) or []:
+            gid = str(raw.get("id"))
+            group_titles[gid] = str(raw.get("title", "")).strip() or gid
+
+        # feed_id → first group_id (a feed CAN belong to multiple groups in
+        # FreshRSS; we keep the first as the canonical folder name. The
+        # bubble UI just needs one label per article).
+        feed_to_group: dict[str, str] = {}
+        for raw in body.get("feeds_groups", []) or []:
+            gid = str(raw.get("group_id"))
+            for fid in str(raw.get("feed_ids", "")).split(","):
+                fid = fid.strip()
+                if fid and fid not in feed_to_group:
+                    feed_to_group[fid] = gid
+
         out: dict[str, FeverFeed] = {}
         for raw in body.get("feeds", []) or []:
             fid = str(raw.get("id"))
+            gid = feed_to_group.get(fid)
             out[fid] = FeverFeed(
                 id=fid,
                 title=str(raw.get("title", "")) or fid,
                 site_url=raw.get("site_url") or None,
+                group_name=group_titles.get(gid) if gid else None,
             )
         return out
 

@@ -1,14 +1,22 @@
-// One bubble in the News view. Sized by article_count, hover reveals
-// the underlying articles via an absolute-positioned tooltip card.
+// One trend bubble. Sized by article count, hover reveals the
+// underlying articles via an absolute-positioned tooltip card.
+//
+// (File still named EventBubble for git-history continuity — the
+// bubbles previously rendered LLM-clustered events, now they render
+// hashtag trends. Same UI shape either way.)
 
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { ExternalLink } from "lucide-react";
 
-import { api, type NewsEventBubble, type NewsEventDetail } from "@/lib/api";
+import { api, type NewsTrendDetail } from "@/lib/api";
 
 interface Props {
-  bubble: NewsEventBubble;
+  tag: string;
+  count: number;
+  period: string;
+  customFrom: string;
+  customTo: string;
   x: number;
   y: number;
   r: number;
@@ -17,8 +25,12 @@ interface Props {
   onHoverEnd: () => void;
 }
 
-export default function EventBubble({
-  bubble,
+export default function TrendBubble({
+  tag,
+  count,
+  period,
+  customFrom,
+  customTo,
   x,
   y,
   r,
@@ -28,16 +40,22 @@ export default function EventBubble({
 }: Props) {
   const { t } = useTranslation();
 
-  // Lazy: only fetch the article list once the user hovers. React Query
-  // caches by id so re-hovers don't re-fetch.
-  const detail = useQuery<NewsEventDetail>({
-    queryKey: ["news-event", bubble.id],
-    queryFn: () => api.get<NewsEventDetail>(`/api/news/events/${bubble.id}`),
+  const detail = useQuery<NewsTrendDetail>({
+    queryKey: ["news-trend", tag, period, customFrom, customTo],
+    queryFn: () => {
+      const qs = new URLSearchParams({ period });
+      if (period === "custom") {
+        qs.set("from", customFrom);
+        qs.set("to", customTo);
+      }
+      return api.get<NewsTrendDetail>(
+        `/api/news/trends/${encodeURIComponent(tag)}?${qs.toString()}`,
+      );
+    },
     enabled: hovered,
     staleTime: 60_000,
   });
 
-  // Title font scales with bubble size, but stays readable at the small end.
   const fontSize = Math.max(10, Math.min(16, r / 5));
 
   return (
@@ -60,37 +78,22 @@ export default function EventBubble({
         }`}
         style={{ fontSize, padding: r > 30 ? 12 : 6 }}
       >
-        <span className="line-clamp-3 px-2 leading-tight">
-          {bubble.title}
-        </span>
+        <span className="line-clamp-3 px-2 leading-tight">#{tag}</span>
       </div>
 
-      {/* Bubble badge — count */}
-      <div
-        className="absolute -bottom-1 left-1/2 -translate-x-1/2 rounded-full bg-bg px-2 py-0.5 text-[10px] font-medium text-muted ring-1 ring-border"
-      >
-        {bubble.article_count}
+      <div className="absolute -bottom-1 left-1/2 -translate-x-1/2 rounded-full bg-bg px-2 py-0.5 text-[10px] font-medium text-muted ring-1 ring-border">
+        {count}
       </div>
 
       {hovered && (
         <div
           className="pointer-events-auto absolute z-20 w-80 rounded-lg border border-border bg-surface p-3 text-left shadow-xl"
-          style={{
-            // Anchor the tooltip just below the bubble, but flip above
-            // when there isn't enough room (rough heuristic — viewport-
-            // aware positioning would need a portal).
-            left: r,
-            top: r * 2 + 8,
-          }}
+          style={{ left: r, top: r * 2 + 8 }}
         >
-          <h3 className="text-sm font-semibold text-text">{bubble.title}</h3>
+          <h3 className="text-sm font-semibold text-text">#{tag}</h3>
           <p className="mt-1 text-xs text-muted">
-            {t("news.occurredOn")} {bubble.occurred_on} ·{" "}
-            {t("news.articleCount", { count: bubble.article_count })}
+            {t("news.articleCount", { count })}
           </p>
-          {bubble.summary && (
-            <p className="mt-2 text-xs text-text/80">{bubble.summary}</p>
-          )}
           <div className="mt-3 max-h-60 space-y-2 overflow-y-auto pr-1">
             {detail.isLoading && (
               <p className="text-xs text-muted">{t("common.loading")}</p>
@@ -112,7 +115,10 @@ export default function EventBubble({
                   )}
                 </div>
                 <div className="mt-0.5 text-[10px] text-muted">
-                  {a.feed_title ?? a.source} · {a.published_at.slice(0, 10)}
+                  {(a.feed_group ? `${a.feed_group} · ` : "") +
+                    (a.feed_title ?? a.source) +
+                    " · " +
+                    a.published_at.slice(0, 10)}
                 </div>
               </a>
             ))}

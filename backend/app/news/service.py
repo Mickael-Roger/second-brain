@@ -130,15 +130,14 @@ async def fetch_freshrss(
                 conn = open_connection()
                 try:
                     for it in items:
-                        feed_title = (
-                            feeds[it.feed_id].title if it.feed_id in feeds else None
-                        )
+                        f = feeds.get(it.feed_id)
                         if insert_article(
                             conn,
                             source=source,
                             external_id=it.id,
                             feed_id=it.feed_id or None,
-                            feed_title=feed_title,
+                            feed_title=f.title if f else None,
+                            feed_group=f.group_name if f else None,
                             url=it.url,
                             title=it.title,
                             description=html_to_plain_text(it.html),
