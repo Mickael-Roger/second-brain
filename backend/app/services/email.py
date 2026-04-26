@@ -8,60 +8,96 @@ Three security modes (config: `smtp.security`):
   - none     — plain SMTP, no TLS.
   - starttls — plain SMTP then STARTTLS upgrade (port 587 typical).
   - ssl      — SSL/TLS from the start (port 465 typical).
+
+The HTML alternative (used by the nightly Organize report) is rendered
+by the configured LLM rather than a markdown library — see
+`render_markdown_to_html_via_llm`.
 """
 
 from __future__ import annotations
 
 import logging
+import re
 import smtplib
 import ssl
 from email.message import EmailMessage
 
-import markdown as md_lib
-
 from app.config import get_settings
+from app.llm import Message, TextBlock, complete
 
 log = logging.getLogger(__name__)
 
 
-_HTML_CSS = """
-body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-       line-height: 1.55; color: #1f2937; max-width: 760px; margin: 1.2rem auto;
-       padding: 0 1rem; }
-h1 { font-size: 1.6em; border-bottom: 1px solid #e5e7eb; padding-bottom: 0.3em;
-     margin-top: 1.6em; }
-h1:first-child { margin-top: 0; }
-h2 { font-size: 1.25em; margin-top: 1.5em; }
-h3 { font-size: 1.05em; margin-top: 1.2em; }
-code { background: #f3f4f6; padding: 0.1em 0.35em; border-radius: 3px;
-       font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.9em; }
-pre { background: #f3f4f6; padding: 0.75em 1em; border-radius: 6px; overflow-x: auto; }
-pre code { background: none; padding: 0; }
-ul, ol { padding-left: 1.5em; }
-li { margin: 0.2em 0; }
-blockquote { border-left: 3px solid #9ca3af; padding-left: 1em; color: #6b7280;
-             margin: 0.6em 0; }
-hr { border: 0; border-top: 1px solid #e5e7eb; margin: 1.4em 0; }
-table { border-collapse: collapse; }
-th, td { border: 1px solid #d1d5db; padding: 0.4em 0.7em; }
-.note-error { color: #b91c1c; }
-.note-ok { color: #047857; }
-""".strip()
+_HTML_RENDER_SYSTEM_PROMPT = """\
+You convert a markdown document into a self-contained HTML email document.
+
+OUTPUT CONTRACT (strict):
+- Output ONLY the HTML. No preamble, no commentary, no markdown code fences
+  wrapping the result.
+- Begin with `<!doctype html>` and end with `</html>`.
+- Embed all CSS in a single <style> block inside <head>. No external
+  resources (no <link>, no <script>, no images, no @import). Email clients
+  often strip those.
+- Use only widely-supported HTML and CSS (no JS, no SVG, no CSS variables).
+- Keep the body width ~720px max so it looks good on both desktop and
+  mobile email clients.
+
+CONTENT FIDELITY (strict):
+- Preserve EVERY heading, paragraph, list item, code fence, blockquote,
+  and table from the input. Do not summarize, drop, reorder, or invent.
+- Render code fences (```bash, ```json, etc.) as <pre><code> with a tinted
+  background and a monospace font; no syntax highlighting needed.
+- Status markers like ✅ / ❌ / ⚠ get subtle inline color (green / red /
+  amber). Keep it tasteful.
+- Wikilinks `[[Note]]` should render as inline <code>[[Note]]</code> (no
+  link — this is an email and the user reads it outside the app).
+
+STYLE:
+- Clean, scannable, professional. Sans-serif body, h1/h2/h3 hierarchy
+  visually distinct. Generous spacing. Limited palette (3–4 colors max
+  including the body text and link colors). Do NOT add decorative
+  emoji, illustrations, or stock content.
+"""
 
 
-def render_markdown_to_html_doc(markdown_text: str) -> str:
-    """Render an organize-report-style markdown string into a standalone
-    HTML document with light styling — for sending as the multipart/html
-    alternative of an outgoing email."""
-    body = md_lib.markdown(
-        markdown_text,
-        extensions=["fenced_code", "tables", "sane_lists", "nl2br"],
-        output_format="html",
-    )
-    return (
-        '<!doctype html><html><head><meta charset="utf-8">'
-        f"<style>{_HTML_CSS}</style></head><body>{body}</body></html>"
-    )
+def _strip_code_fence(text: str) -> str:
+    """LLMs sometimes wrap their answer in ```html ... ``` despite the
+    instructions. Strip a single leading/trailing fence if present."""
+    s = text.strip()
+    m = re.match(r"^```(?:html)?\s*\n", s)
+    if m:
+        s = s[m.end():]
+        if s.endswith("```"):
+            s = s[: -3].rstrip()
+    return s
+
+
+async def render_markdown_to_html_via_llm(markdown_text: str) -> str | None:
+    """Ask the configured LLM to render the markdown as a styled HTML
+    document. Returns None if the LLM is unreachable or the output looks
+    unusable — caller should fall back to the plain-text body.
+    """
+    try:
+        raw = await complete(
+            _HTML_RENDER_SYSTEM_PROMPT,
+            [Message(role="user", content=[TextBlock(text=markdown_text)])],
+        )
+    except Exception as exc:
+        log.warning("LLM markdown→HTML render failed: %s", exc)
+        return None
+
+    html = _strip_code_fence(raw)
+    if not html:
+        log.warning("LLM markdown→HTML returned an empty response")
+        return None
+    if "<html" not in html.lower():
+        log.warning(
+            "LLM markdown→HTML output doesn't look like an HTML document "
+            "(no <html> tag): %r…",
+            html[:200],
+        )
+        return None
+    return html
 
 
 def send_email(subject: str, body: str, *, html: str | None = None) -> None:
@@ -86,7 +122,6 @@ def send_email(subject: str, body: str, *, html: str | None = None) -> None:
         msg.set_content(body)
         msg.add_alternative(html, subtype="html")
     elif s.format == "html":
-        # Caller didn't pre-render; treat the body as raw HTML.
         msg.add_alternative(body, subtype="html")
     else:
         msg.set_content(body)
@@ -97,7 +132,6 @@ def send_email(subject: str, body: str, *, html: str | None = None) -> None:
     )
     try:
         if s.security == "ssl":
-            # SSL/TLS handshake happens immediately on connect.
             ctx = ssl.create_default_context()
             smtp = smtplib.SMTP_SSL(s.host, s.port, timeout=30, context=ctx)
         else:
