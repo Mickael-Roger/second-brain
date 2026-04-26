@@ -8,7 +8,7 @@
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, Play, Sparkles } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, Play, Sparkles } from "lucide-react";
 
 import { api, type OrganizeProposal, type OrganizeRun } from "@/lib/api";
 import ProposalCard from "./ProposalCard";
@@ -29,8 +29,19 @@ export default function OrganizeView({ onOpenWiki }: Props) {
       q.state.data && q.state.data.status === "running" ? 2_000 : false,
   });
 
+  // Run-options state. Manual runs default to "all" (whole vault) since
+  // the user explicitly asked for a sweep; the cron keeps using config
+  // defaults via the backend.
+  const [extraInstruction, setExtraInstruction] = useState("");
+  const [scope, setScope] = useState<"all" | "since_last_run">("all");
+  const [optionsOpen, setOptionsOpen] = useState(false);
+
   const start = useMutation({
-    mutationFn: () => api.post<{ run_id: string }>("/api/organize/runs"),
+    mutationFn: () =>
+      api.post<{ run_id: string }>("/api/organize/runs", {
+        extra_instruction: extraInstruction.trim() || null,
+        scope,
+      }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["organize-current"] }),
   });
 
@@ -94,6 +105,24 @@ export default function OrganizeView({ onOpenWiki }: Props) {
 
         <button
           type="button"
+          onClick={() => setOptionsOpen((v) => !v)}
+          disabled={isRunning}
+          className={`flex items-center gap-1 rounded-lg border px-2 py-1.5 text-xs disabled:opacity-50 ${
+            optionsOpen
+              ? "border-accent text-accent"
+              : "border-border text-muted hover:border-accent hover:text-text"
+          }`}
+        >
+          {optionsOpen ? (
+            <ChevronDown className="h-3.5 w-3.5" />
+          ) : (
+            <ChevronRight className="h-3.5 w-3.5" />
+          )}
+          {t("organize.options")}
+        </button>
+
+        <button
+          type="button"
           onClick={() => start.mutate()}
           disabled={start.isPending || isRunning}
           className="flex items-center gap-1 rounded-lg border border-border bg-bg px-3 py-1.5 text-sm hover:border-accent disabled:opacity-50"
@@ -116,6 +145,52 @@ export default function OrganizeView({ onOpenWiki }: Props) {
           </button>
         )}
       </header>
+
+      {/* Run-options panel (collapsible) */}
+      {optionsOpen && (
+        <div className="border-b border-border bg-surface/60 px-4 py-3">
+          <div className="mx-auto max-w-3xl space-y-3">
+            <label className="block">
+              <span className="mb-1 block text-xs uppercase tracking-wide text-muted">
+                {t("organize.extraInstructionLabel")}
+              </span>
+              <textarea
+                value={extraInstruction}
+                onChange={(e) => setExtraInstruction(e.target.value)}
+                rows={2}
+                placeholder={t("organize.extraInstructionPlaceholder")}
+                className="w-full resize-none rounded-lg border border-border bg-bg px-3 py-2 text-sm outline-none focus:border-accent"
+              />
+            </label>
+            <fieldset>
+              <legend className="mb-1 text-xs uppercase tracking-wide text-muted">
+                {t("organize.scopeLabel")}
+              </legend>
+              <label className="mr-4 inline-flex items-center gap-1.5 text-sm">
+                <input
+                  type="radio"
+                  name="scope"
+                  checked={scope === "all"}
+                  onChange={() => setScope("all")}
+                />
+                {t("organize.scopeAll")}
+              </label>
+              <label className="inline-flex items-center gap-1.5 text-sm">
+                <input
+                  type="radio"
+                  name="scope"
+                  checked={scope === "since_last_run"}
+                  onChange={() => setScope("since_last_run")}
+                />
+                {t("organize.scopeSince")}
+              </label>
+              <p className="mt-1 text-xs text-muted">
+                {t("organize.scopeHelp")}
+              </p>
+            </fieldset>
+          </div>
+        </div>
+      )}
 
       {/* Status strip */}
       {r && (

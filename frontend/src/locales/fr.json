@@ -38,7 +38,14 @@
     "failed": "Échec",
     "noProposals": "Pas encore de propositions.",
     "emptyTitle": "Rien à examiner",
-    "emptyBody": "Lancez une passe d'organisation — le cerveau passera votre vault en revue et proposera des déplacements, tags, réécritures et wikilinks. Vous décidez quoi appliquer."
+    "emptyBody": "Lancez une passe d'organisation — le cerveau passera votre vault en revue et proposera des déplacements, tags, réécritures et wikilinks. Vous décidez quoi appliquer.",
+    "options": "Options",
+    "extraInstructionLabel": "Consignes supplémentaires pour cette passe (optionnel)",
+    "extraInstructionPlaceholder": "ex : concentre-toi sur les notes Tech, sois agressif sur les wikilinks, laisse le journal tranquille…",
+    "scopeLabel": "Portée",
+    "scopeAll": "Vault entier",
+    "scopeSince": "Modifiées depuis la dernière passe",
+    "scopeHelp": "Les exécutions manuelles scannent l'ensemble du vault par défaut. Passez en incrémental si vous voulez seulement examiner les notes récentes."
   },
   "login": {
     "title": "Connexion",

@@ -125,10 +125,26 @@ def _record_run(conn: sqlite3.Connection, when: datetime) -> None:
     )
 
 
-def _select_candidates(conn: sqlite3.Connection) -> tuple[list[Path], datetime | None]:
+def _select_candidates(
+    conn: sqlite3.Connection,
+    *,
+    scope: str | None = None,
+) -> tuple[list[Path], datetime | None]:
+    """Pick the notes to review.
+
+    `scope` overrides the config-level `organize.modified_since`:
+      - "all" / "always_full" → every note in the vault, ignoring mtime.
+      - "since_last_run" / "last_run" → Inbox/ + notes modified since the
+        last successful run (incremental).
+      - None → defer to the config setting.
+    """
+    settings = get_settings()
+    requested = (scope or settings.organize.modified_since or "last_run").lower()
+    full = requested in ("all", "always_full", "always", "full")
+
     root = vault_root()
     last_run = _last_run_at(conn)
-    cutoff = last_run.timestamp() if last_run else 0.0
+    cutoff = 0.0 if full or last_run is None else last_run.timestamp()
 
     in_inbox: list[Path] = []
     modified: list[Path] = []
@@ -139,7 +155,7 @@ def _select_candidates(conn: sqlite3.Connection) -> tuple[list[Path], datetime |
         rel = p.relative_to(root).as_posix()
         if rel.startswith("Inbox/"):
             in_inbox.append(p)
-        elif p.stat().st_mtime > cutoff:
+        elif full or p.stat().st_mtime > cutoff:
             modified.append(p)
 
     in_inbox.sort(key=lambda x: x.stat().st_mtime)
@@ -282,6 +298,8 @@ def _build_user_prompt(
     content: str,
     context_files: list[Any],
     paths: list[str],
+    *,
+    extra_instruction: str | None = None,
 ) -> str:
     body = content
     if len(body) > MAX_NOTE_CHARS:
@@ -292,6 +310,11 @@ def _build_user_prompt(
         parts.append(f"## {cf.label}\n```\n{cf.content.strip() or '(empty)'}\n```")
     parts.append("## Vault paths (sample)\n" + "\n".join(f"- {p}" for p in paths))
     parts.append(f"## Note content\n```markdown\n{body}\n```")
+    if extra_instruction and extra_instruction.strip():
+        parts.append(
+            "## Extra instructions for THIS run\n"
+            + extra_instruction.strip()
+        )
     return "\n\n".join(parts)
 
 
@@ -301,8 +324,12 @@ async def _propose(
     context_files: list[Any],
     paths: list[str],
     system_prompt: str,
+    *,
+    extra_instruction: str | None = None,
 ) -> Proposal:
-    user = _build_user_prompt(note_path, content, context_files, paths)
+    user = _build_user_prompt(
+        note_path, content, context_files, paths, extra_instruction=extra_instruction
+    )
     msgs = [Message(role="user", content=[TextBlock(text=user)])]
     raw = await complete(system_prompt, msgs)
     return parse_proposal(note_path, raw)
@@ -362,7 +389,12 @@ async def _apply_proposal(proposal: Proposal) -> AppliedNote:
 # ── orchestration ────────────────────────────────────────────────────
 
 
-async def run_organize(*, run_id: str | None = None) -> OrganizeResult:
+async def run_organize(
+    *,
+    run_id: str | None = None,
+    extra_instruction: str | None = None,
+    scope: str | None = None,
+) -> OrganizeResult:
     """Execute one organize pass.
 
     Persists a run + per-note proposals into SQLite (organize_runs /
@@ -372,6 +404,13 @@ async def run_organize(*, run_id: str | None = None) -> OrganizeResult:
     `run_id` may be supplied by the caller (e.g. an already-created
     'running' row from the API endpoint); otherwise a new run is created
     here.
+
+    `extra_instruction`, when given, is appended to every per-note user
+    prompt in this run — used by the manual run from the webapp.
+
+    `scope` overrides `organize.modified_since` for this run only:
+        "all"             → every note (manual runs default to this).
+        "since_last_run"  → Inbox + recently-modified (cron default).
     """
     from app.organize import (
         create_run as store_create_run,
@@ -385,7 +424,7 @@ async def run_organize(*, run_id: str | None = None) -> OrganizeResult:
 
     conn = open_connection()
     try:
-        candidates, last_run = _select_candidates(conn)
+        candidates, last_run = _select_candidates(conn, scope=scope)
         if run_id is None:
             run_id = store_create_run(conn, mode=settings.organize.mode)
     finally:
@@ -410,7 +449,14 @@ async def run_organize(*, run_id: str | None = None) -> OrganizeResult:
                 skipped.append((rel, f"read error: {exc}"))
                 continue
             try:
-                proposal = await _propose(rel, content, context_files, paths, system_prompt)
+                proposal = await _propose(
+                    rel,
+                    content,
+                    context_files,
+                    paths,
+                    system_prompt,
+                    extra_instruction=extra_instruction,
+                )
                 proposals.append(proposal)
                 # Persist as it lands so the webapp shows progress live.
                 conn = open_connection()

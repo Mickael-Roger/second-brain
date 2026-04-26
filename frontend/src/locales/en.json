@@ -38,7 +38,14 @@
     "failed": "Failed",
     "noProposals": "No proposals yet.",
     "emptyTitle": "Nothing to review yet",
-    "emptyBody": "Run an organize pass — the brain will review your vault and propose moves, tags, refactors, and wikilinks. You decide what to apply."
+    "emptyBody": "Run an organize pass — the brain will review your vault and propose moves, tags, refactors, and wikilinks. You decide what to apply.",
+    "options": "Options",
+    "extraInstructionLabel": "Extra instructions for this run (optional)",
+    "extraInstructionPlaceholder": "e.g. focus on Tech notes, be aggressive about wikilinks, leave the journal alone…",
+    "scopeLabel": "Scope",
+    "scopeAll": "Whole vault",
+    "scopeSince": "Modified since last run",
+    "scopeHelp": "Manual runs default to scanning the whole vault. Switch to incremental if you only want fresh notes reviewed."
   },
   "login": {
     "title": "Sign in",

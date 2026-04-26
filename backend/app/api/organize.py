@@ -97,12 +97,23 @@ def _run_to_dto(run: StoredRun) -> RunDTO:
 # ── Endpoints ───────────────────────────────────────────────────────
 
 
+class StartRunRequest(BaseModel):
+    # Free-form text the user types in the Organize tab to bias this run
+    # only — appended to every per-note prompt. Empty = no extra guidance.
+    extra_instruction: str | None = None
+    # Scope override. "all" reviews every note in the vault; "since_last_run"
+    # only reviews Inbox + recently-modified. None defers to config
+    # `organize.modified_since`.
+    scope: str | None = None
+
+
 class StartRunResponse(BaseModel):
     run_id: str
 
 
 @router.post("/runs", response_model=StartRunResponse, status_code=202)
 async def start_run(
+    payload: StartRunRequest | None = None,
     _user: str = Depends(current_user),
     conn: sqlite3.Connection = Depends(get_db),
 ) -> StartRunResponse:
@@ -110,13 +121,20 @@ async def start_run(
     with the run id; the webapp polls /current to see progress."""
     from app.config import get_settings
 
+    extra_instruction = payload.extra_instruction if payload else None
+    scope = payload.scope if payload else None
+
     run_id = create_run(conn, mode=get_settings().organize.mode)
 
     async def _go() -> None:
         from app.jobs.organize import run_organize
 
         try:
-            await run_organize(run_id=run_id)
+            await run_organize(
+                run_id=run_id,
+                extra_instruction=extra_instruction,
+                scope=scope,
+            )
         except Exception as exc:
             log.exception("background organize run failed")
             # Ensure the run row reflects the failure so the UI doesn't
