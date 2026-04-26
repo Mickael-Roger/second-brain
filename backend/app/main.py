@@ -65,6 +65,27 @@ async def lifespan(_: FastAPI):
     finally:
         conn.close()
     start_scheduler()
+
+    # Kick off an immediate news backfill in the background so the
+    # app starts populating articles right away — including all
+    # unread items, regardless of age — without waiting for the
+    # first cron tick (5 minutes by default).
+    settings = get_settings()
+    if settings.news.enabled and settings.news.sources.freshrss is not None:
+        import asyncio
+
+        async def _initial_news_fetch() -> None:
+            from app.news.service import fetch_all_sources, thirty_days_ago_ts
+
+            try:
+                log.info("startup news fetch: starting (range=30d + all unread)")
+                await fetch_all_sources(from_ts=thirty_days_ago_ts())
+                log.info("startup news fetch: done")
+            except Exception:
+                log.exception("startup news fetch failed (non-fatal)")
+
+        asyncio.create_task(_initial_news_fetch())
+
     try:
         yield
     finally:

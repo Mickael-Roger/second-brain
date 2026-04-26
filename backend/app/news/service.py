@@ -256,6 +256,11 @@ async def fetch_freshrss(
                     )
 
             # ── Unread completeness pass ─────────────────────────────
+            # Pull every unread id from FreshRSS, diff against our DB,
+            # and fetch ALL missing items in one shot. No cap — the
+            # user explicitly asked us to never leave old unread items
+            # behind. items_by_ids batches by 50 so even a 10K backlog
+            # is just a series of HTTP calls (no Fever-side limit).
             try:
                 unread_ids = await client.unread_item_ids()
             except Exception:
@@ -269,13 +274,12 @@ async def fetch_freshrss(
                     conn.close()
                 missing = [i for i in unread_ids if i not in already]
                 if missing:
-                    cap = cfg.max_items_per_run
                     log.info(
                         "news fetch: %d unread item(s) missing locally; "
-                        "backfilling up to %d",
-                        len(missing), cap,
+                        "backfilling all of them",
+                        len(missing),
                     )
-                    extra = await client.items_by_ids(missing[:cap])
+                    extra = await client.items_by_ids(missing)
                     fetched += len(extra)
                     if extra:
                         ins, _ = _store_items(
@@ -285,18 +289,10 @@ async def fetch_freshrss(
                             source=source,
                         )
                         inserted += ins
-                        leftover = max(0, len(missing) - cap)
-                        if leftover:
-                            log.info(
-                                "news fetch: backfilled %d unread; %d still "
-                                "pending — next cron picks them up",
-                                ins, leftover,
-                            )
-                        else:
-                            log.info(
-                                "news fetch: backfilled %d unread (caught up)",
-                                ins,
-                            )
+                        log.info(
+                            "news fetch: backfilled %d unread (caught up)",
+                            ins,
+                        )
     except Exception as exc:
         error = str(exc)
         log.exception("news fetch: freshrss failed")
