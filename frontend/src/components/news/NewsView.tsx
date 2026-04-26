@@ -15,6 +15,7 @@ import {
   ChevronDown,
   ChevronRight,
   ExternalLink,
+  Mail,
   MailOpen,
   MessageSquare,
   Newspaper,
@@ -84,12 +85,20 @@ export default function NewsView({ onOpenChat }: Props) {
     },
   });
 
-  const markRead = useMutation({
-    mutationFn: (articleId: string) =>
+  const toggleRead = useMutation({
+    mutationFn: ({
+      articleId,
+      isRead,
+    }: {
+      articleId: string;
+      isRead: boolean;
+    }) =>
       api.post<{ article_id: string; is_read: boolean }>(
-        `/api/news/articles/${encodeURIComponent(articleId)}/read`,
+        `/api/news/articles/${encodeURIComponent(articleId)}/${
+          isRead ? "read" : "unread"
+        }`,
       ),
-    onSuccess: (_data, articleId) => {
+    onSuccess: (_data, { articleId }) => {
       // Optimistically refresh feed counts + the active article list +
       // the open detail view.
       qc.invalidateQueries({ queryKey: ["news-feeds"] });
@@ -169,8 +178,10 @@ export default function NewsView({ onOpenChat }: Props) {
           articleId={selectedId}
           article={selected.data}
           loading={selected.isLoading}
-          markRead={(id) => markRead.mutate(id)}
-          markPending={markRead.isPending}
+          toggleRead={(id, target) =>
+            toggleRead.mutate({ articleId: id, isRead: target })
+          }
+          togglePending={toggleRead.isPending}
           onChat={startChatAbout}
         />
       </div>
@@ -430,8 +441,8 @@ interface DetailPaneProps {
   articleId: string | null;
   article: NewsArticleDetail | undefined;
   loading: boolean;
-  markRead: (id: string) => void;
-  markPending: boolean;
+  toggleRead: (id: string, target: boolean) => void;
+  togglePending: boolean;
   onChat: (a: NewsArticleDetail) => void;
 }
 
@@ -439,8 +450,8 @@ function DetailPane({
   articleId,
   article,
   loading,
-  markRead,
-  markPending,
+  toggleRead,
+  togglePending,
   onChat,
 }: DetailPaneProps) {
   const { t } = useTranslation();
@@ -501,15 +512,19 @@ function DetailPane({
             )}
             <button
               type="button"
-              onClick={() => markRead(article.id)}
-              disabled={article.is_read || markPending}
+              onClick={() => toggleRead(article.id, !article.is_read)}
+              disabled={togglePending}
               className="inline-flex items-center gap-1 rounded-lg border border-border bg-bg px-2 py-1 text-xs hover:border-accent disabled:opacity-50"
             >
-              <MailOpen className="h-3 w-3" />
-              {article.is_read
-                ? t("news.alreadyRead")
-                : markPending
-                  ? t("news.marking")
+              {article.is_read ? (
+                <Mail className="h-3 w-3" />
+              ) : (
+                <MailOpen className="h-3 w-3" />
+              )}
+              {togglePending
+                ? t("news.marking")
+                : article.is_read
+                  ? t("news.markUnread")
                   : t("news.markRead")}
             </button>
             <button

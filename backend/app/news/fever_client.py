@@ -90,10 +90,12 @@ class FeverClient:
         return body
 
     async def mark_item_read(self, item_id: str) -> None:
-        """Push read-state back to FreshRSS via Fever's `mark` action.
-        Fever signature: `?api&mark=item&as=read&id=<external_id>`.
-        We don't read the response — it just echoes the unread count."""
+        """Push read-state to FreshRSS: `?api&mark=item&as=read&id=…`."""
         await self._post(params={"mark": "item", "as": "read", "id": item_id})
+
+    async def mark_item_unread(self, item_id: str) -> None:
+        """Push unread-state to FreshRSS: `?api&mark=item&as=unread&id=…`."""
+        await self._post(params={"mark": "item", "as": "unread", "id": item_id})
 
     async def feeds(self) -> dict[str, FeverFeed]:
         """Return feed_id → FeverFeed (with group/folder name resolved).

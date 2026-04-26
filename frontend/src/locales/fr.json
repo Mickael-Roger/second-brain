@@ -22,8 +22,8 @@
     "summaryHeader": "Résumé",
     "noDescription": "Pas de description.",
     "markRead": "Marquer comme lu",
+    "markUnread": "Marquer comme non lu",
     "marking": "Marquage…",
-    "alreadyRead": "Déjà lu",
     "chatAbout": "Discuter de cet article",
     "uncategorized": "Sans catégorie"
   },

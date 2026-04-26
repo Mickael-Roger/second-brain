@@ -214,29 +214,54 @@ class MarkReadResponse(BaseModel):
     is_read: bool
 
 
+def _toggle_read(
+    article_id: str, conn: sqlite3.Connection, *, is_read: bool
+) -> MarkReadResponse:
+    """Shared body for the /read and /unread endpoints. Updates local
+    state synchronously, then fires a background task to push the
+    change upstream to FreshRSS."""
+    a = get_article(conn, article_id)
+    if a is None:
+        raise HTTPException(status_code=404, detail="article not found")
+    mark_article_read(conn, article_id, is_read=is_read)
+
+    async def _push() -> None:
+        from app.news.service import push_read_state
+
+        try:
+            await push_read_state(
+                article_id,
+                source=a.source,
+                external_id=a.external_id,
+                is_read=is_read,
+            )
+        except Exception:
+            log.exception(
+                "push_read_state background failed for %s (is_read=%s)",
+                article_id, is_read,
+            )
+
+    asyncio.create_task(_push())
+    return MarkReadResponse(article_id=article_id, is_read=is_read)
+
+
 @router.post("/articles/{article_id}/read", response_model=MarkReadResponse)
 async def mark_read(
     article_id: str,
     _user: str = Depends(current_user),
     conn: sqlite3.Connection = Depends(get_db),
 ) -> MarkReadResponse:
-    a = get_article(conn, article_id)
-    if a is None:
-        raise HTTPException(status_code=404, detail="article not found")
-    mark_article_read(conn, article_id, is_read=True)
+    return _toggle_read(article_id, conn, is_read=True)
 
-    async def _push() -> None:
-        from app.news.service import push_mark_read
 
-        try:
-            await push_mark_read(
-                article_id, source=a.source, external_id=a.external_id
-            )
-        except Exception:
-            log.exception("push_mark_read background failed for %s", article_id)
-
-    asyncio.create_task(_push())
-    return MarkReadResponse(article_id=article_id, is_read=True)
+@router.post("/articles/{article_id}/unread", response_model=MarkReadResponse)
+async def mark_unread(
+    article_id: str,
+    _user: str = Depends(current_user),
+    conn: sqlite3.Connection = Depends(get_db),
+) -> MarkReadResponse:
+    """Flip a read article back to unread, locally and on FreshRSS."""
+    return _toggle_read(article_id, conn, is_read=False)
 
 
 @router.post("/fetch", response_model=TriggerResponse, status_code=202)

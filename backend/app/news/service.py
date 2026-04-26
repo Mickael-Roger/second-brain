@@ -351,20 +351,35 @@ def thirty_days_ago_ts() -> int:
     )
 
 
-async def push_mark_read(article_id: str, *, source: str, external_id: str) -> None:
-    """Push a read-state change to the upstream source."""
+async def push_read_state(
+    article_id: str,
+    *,
+    source: str,
+    external_id: str,
+    is_read: bool,
+) -> None:
+    """Push a read-state change to the upstream source. `is_read=True`
+    sends Fever's `mark=item&as=read`, False sends `as=unread`."""
     settings = get_settings()
     if source != "freshrss":
-        log.warning("push_mark_read: unsupported source %s", source)
+        log.warning("push_read_state: unsupported source %s", source)
         return
     cfg = settings.news.sources.freshrss
     if cfg is None:
         return
     try:
         async with FeverClient(base_url=cfg.base_url, api_key=cfg.api_key) as client:
-            await client.mark_item_read(external_id)
+            if is_read:
+                await client.mark_item_read(external_id)
+            else:
+                await client.mark_item_unread(external_id)
     except Exception:
-        log.exception("push_mark_read: failed for %s", article_id)
+        log.exception("push_read_state: failed for %s (is_read=%s)", article_id, is_read)
+
+
+# Backwards-compat alias kept for callers that still use the old name.
+async def push_mark_read(article_id: str, *, source: str, external_id: str) -> None:
+    await push_read_state(article_id, source=source, external_id=external_id, is_read=True)
 
 
 __all__ = [
@@ -372,5 +387,6 @@ __all__ = [
     "fetch_all_sources",
     "fetch_freshrss",
     "push_mark_read",
+    "push_read_state",
     "thirty_days_ago_ts",
 ]

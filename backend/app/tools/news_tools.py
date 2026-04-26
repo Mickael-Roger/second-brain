@@ -150,7 +150,7 @@ async def _read_news(args: dict[str, Any]):
     return text_result("\n".join(parts))
 
 
-async def _mark_read(args: dict[str, Any]):
+async def _flip_read(args: dict[str, Any], *, is_read: bool):
     article_id = str(args["article_id"])
     conn = open_connection()
     try:
@@ -159,26 +159,44 @@ async def _mark_read(args: dict[str, Any]):
         conn.close()
     if a is None:
         return text_result(f"article {article_id!r} not found", is_error=True)
-    if a.is_read:
-        return text_result(f"already read: {article_id}")
+    if a.is_read == is_read:
+        return text_result(
+            f"already {'read' if is_read else 'unread'}: {article_id}"
+        )
     conn = open_connection()
     try:
-        mark_article_read(conn, article_id, is_read=True)
+        mark_article_read(conn, article_id, is_read=is_read)
     finally:
         conn.close()
 
     async def _push() -> None:
-        from app.news.service import push_mark_read
+        from app.news.service import push_read_state
 
         try:
-            await push_mark_read(
-                article_id, source=a.source, external_id=a.external_id
+            await push_read_state(
+                article_id,
+                source=a.source,
+                external_id=a.external_id,
+                is_read=is_read,
             )
         except Exception:
-            log.exception("news.mark_read: upstream push failed for %s", article_id)
+            log.exception(
+                "news.mark_%s: upstream push failed for %s",
+                "read" if is_read else "unread", article_id,
+            )
 
     asyncio.create_task(_push())
-    return text_result(f"marked read: {article_id}")
+    return text_result(
+        f"marked {'read' if is_read else 'unread'}: {article_id}"
+    )
+
+
+async def _mark_read(args: dict[str, Any]):
+    return await _flip_read(args, is_read=True)
+
+
+async def _mark_unread(args: dict[str, Any]):
+    return await _flip_read(args, is_read=False)
 
 
 def register_all(reg: ToolRegistry) -> None:
@@ -257,4 +275,17 @@ def register_all(reg: ToolRegistry) -> None:
             "required": ["article_id"],
         },
         _mark_read,
+    )
+    reg.register(
+        "news.mark_unread",
+        "Flip a previously-read article back to unread locally and on "
+        "FreshRSS. No-ops if the article is already unread.",
+        {
+            "type": "object",
+            "properties": {
+                "article_id": {"type": "string"},
+            },
+            "required": ["article_id"],
+        },
+        _mark_unread,
     )

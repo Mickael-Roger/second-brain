@@ -22,8 +22,8 @@
     "summaryHeader": "Summary",
     "noDescription": "No description.",
     "markRead": "Mark as read",
+    "markUnread": "Mark as unread",
     "marking": "Marking…",
-    "alreadyRead": "Already read",
     "chatAbout": "Chat about this",
     "uncategorized": "Uncategorized"
   },
