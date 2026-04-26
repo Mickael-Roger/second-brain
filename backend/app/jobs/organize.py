@@ -132,19 +132,29 @@ def _select_candidates(
 ) -> tuple[list[Path], datetime | None]:
     """Pick the notes to review.
 
-    `scope` overrides the config-level `organize.modified_since`:
-      - "all" / "always_full" → every note in the vault, ignoring mtime.
-      - "since_last_run" / "last_run" → Inbox/ + notes modified since the
-        last successful run (incremental).
-      - None → defer to the config setting.
+    Default ("incremental") scope uses per-note `last_reviewed_at`:
+        a note is a candidate when it has never been reviewed OR its mtime
+        is newer than the last time it was reviewed. Inbox/ notes are
+        always candidates regardless. This is much sharper than the old
+        global `last_run_at` cutoff — a note you edited yesterday is
+        reviewed even if you've run the organizer once since you wrote
+        an unrelated note last week.
+
+    Other scopes:
+      - "all" / "always_full" → every note in the vault.
+      - "since_last_run" → legacy global cutoff (kept for cron back-compat).
     """
+    from app.organize import get_note_review_map
+
     settings = get_settings()
-    requested = (scope or settings.organize.modified_since or "last_run").lower()
+    requested = (scope or settings.organize.modified_since or "incremental").lower()
     full = requested in ("all", "always_full", "always", "full")
+    legacy_global = requested in ("since_last_run", "since-last-run", "global")
 
     root = vault_root()
     last_run = _last_run_at(conn)
-    cutoff = 0.0 if full or last_run is None else last_run.timestamp()
+    review_map = get_note_review_map(conn)
+    legacy_cutoff = 0.0 if last_run is None else last_run.timestamp()
 
     in_inbox: list[Path] = []
     modified: list[Path] = []
@@ -155,7 +165,17 @@ def _select_candidates(
         rel = p.relative_to(root).as_posix()
         if rel.startswith("Inbox/"):
             in_inbox.append(p)
-        elif full or p.stat().st_mtime > cutoff:
+            continue
+        if full:
+            modified.append(p)
+            continue
+        if legacy_global:
+            if p.stat().st_mtime > legacy_cutoff:
+                modified.append(p)
+            continue
+        # Default: per-note last_reviewed_at.
+        last_reviewed = review_map.get(rel, 0.0)
+        if p.stat().st_mtime > last_reviewed:
             modified.append(p)
 
     in_inbox.sort(key=lambda x: x.stat().st_mtime)
@@ -459,6 +479,8 @@ async def run_organize(
                 )
                 proposals.append(proposal)
                 # Persist as it lands so the webapp shows progress live.
+                # Mark the note reviewed regardless of proposal state — the
+                # LLM did look at it, even if the proposal is a no-op.
                 conn = open_connection()
                 try:
                     store_insert_proposal(
@@ -476,6 +498,8 @@ async def run_organize(
                         parse_error=proposal.parse_error,
                         raw_response=proposal.raw_response,
                     )
+                    from app.organize import mark_note_reviewed
+                    mark_note_reviewed(conn, rel)
                 finally:
                     conn.close()
             except Exception as exc:
@@ -572,6 +596,26 @@ def _proposal_from_stored(sp: Any) -> "Proposal":
     )
 
 
+def _migrate_review_for_move(conn: sqlite3.Connection, ops: list[str]) -> None:
+    """If `_apply_proposal` performed a `move→<dst>` op, carry the
+    last_reviewed_at record across so the renamed file is still considered
+    fresh. Otherwise the moved file would get re-reviewed on the next run."""
+    for op in ops:
+        if op.startswith("move→"):
+            new_path = op[len("move→"):]
+            row = conn.execute(
+                "SELECT last_reviewed_at FROM note_reviews WHERE path NOT IN "
+                "(SELECT path FROM note_reviews WHERE path = ?) "
+                "ORDER BY rowid DESC LIMIT 1",
+                (new_path,),
+            ).fetchone()
+            # Simpler: just upsert "now" for the destination — the LLM has
+            # just looked at this content, the destination is freshly reviewed.
+            from app.organize import mark_note_reviewed
+            mark_note_reviewed(conn, new_path)
+            _ = row  # unused; kept for future smarter migration logic
+
+
 async def apply_one_proposal(run_id: str, path: str) -> dict[str, Any]:
     """Apply just one pending proposal (the user clicked Apply on its card)."""
     from app.organize import (
@@ -604,6 +648,8 @@ async def apply_one_proposal(run_id: str, path: str) -> dict[str, Any]:
                 apply_error=result.error,
                 apply_ops=result.operations,
             )
+            if not result.error:
+                _migrate_review_for_move(conn, result.operations)
         finally:
             conn.close()
         return {"state": state, "operations": result.operations, "error": result.error}
@@ -783,6 +829,8 @@ async def apply_pending_proposals(run_id: str) -> dict[str, Any]:
                     apply_error=result.error,
                     apply_ops=result.operations,
                 )
+                if not result.error:
+                    _migrate_review_for_move(conn, result.operations)
             finally:
                 conn.close()
             if result.error:

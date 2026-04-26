@@ -269,6 +269,33 @@ def fetch_pending_proposals(conn: sqlite3.Connection, run_id: str) -> list[Store
 
 
 # Re-export for callers that want a stable typing surface.
+def mark_note_reviewed(
+    conn: sqlite3.Connection, path: str, *, when: datetime | None = None
+) -> None:
+    """Record that a note has been reviewed by the LLM. Called once per
+    Proposal generation (regardless of whether it gets applied). Per-note
+    reviews drive the default scope: a note is re-reviewed only when its
+    mtime exceeds its last_reviewed_at."""
+    iso = (when or datetime.now(timezone.utc)).isoformat()
+    conn.execute(
+        "INSERT INTO note_reviews (path, last_reviewed_at) VALUES (?, ?) "
+        "ON CONFLICT(path) DO UPDATE SET last_reviewed_at = excluded.last_reviewed_at",
+        (path, iso),
+    )
+
+
+def get_note_review_map(conn: sqlite3.Connection) -> dict[str, float]:
+    """Path → last_reviewed_at as a unix timestamp. Used by the candidate
+    selector to decide which notes are due for review."""
+    rows = conn.execute("SELECT path, last_reviewed_at FROM note_reviews").fetchall()
+    out: dict[str, float] = {}
+    for r in rows:
+        dt = _parse_dt(r["last_reviewed_at"])
+        if dt is not None:
+            out[r["path"]] = dt.timestamp()
+    return out
+
+
 __all__ = [
     "ProposalState",
     "RunStatus",
@@ -279,9 +306,11 @@ __all__ = [
     "fetch_pending_proposals",
     "finish_run",
     "get_current_run",
+    "get_note_review_map",
     "get_run",
     "insert_proposal",
     "list_runs",
+    "mark_note_reviewed",
     "proposal_summary",
     "set_proposal_state",
     "set_run_status",
