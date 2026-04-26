@@ -63,6 +63,7 @@ class ArticleDetailDTO(ArticleSummaryDTO):
     author: str | None
     image_url: str | None
     summary: str | None
+    raw_html: str | None
 
 
 class FeedSummaryDTO(BaseModel):
@@ -206,6 +207,7 @@ def get_article_detail(
         author=record.author if record else None,
         image_url=record.image_url if record else None,
         summary=record.summary if record else None,
+        raw_html=record.raw_html if record else None,
     )
 
 

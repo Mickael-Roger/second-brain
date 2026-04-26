@@ -542,12 +542,47 @@ function DetailPane({
           <h3 className="mb-1 text-xs font-medium uppercase tracking-wide text-muted">
             {t("news.summaryHeader")}
           </h3>
-          <p className="whitespace-pre-wrap text-sm leading-relaxed text-text/90">
-            {article.summary ?? t("news.noDescription")}
-          </p>
+          <ArticleBody html={article.raw_html} fallback={article.summary} />
         </section>
       </article>
     </section>
+  );
+}
+
+// Strip the highest-risk parts of feed-supplied HTML (inline scripts
+// and on*= event handlers) before injecting it. The user controls
+// which feeds get added so the bar is "don't be obviously hostile",
+// not "withstand a malicious feed". If a feed returns garbage we
+// fall back to the plain-text summary.
+function _sanitiseHtml(raw: string): string {
+  return raw
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, "")
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, "")
+    .replace(/\son[a-z]+\s*=\s*"[^"]*"/gi, "")
+    .replace(/\son[a-z]+\s*=\s*'[^']*'/gi, "");
+}
+
+function ArticleBody({
+  html,
+  fallback,
+}: {
+  html: string | null;
+  fallback: string | null;
+}) {
+  const { t } = useTranslation();
+  if (html && html.trim()) {
+    return (
+      <div
+        className="prose prose-invert max-w-none text-sm leading-relaxed text-text/90 [&_a]:text-accent [&_a]:underline [&_img]:max-w-full [&_img]:rounded [&_p]:my-2 [&_h2]:mt-4 [&_h2]:mb-2 [&_h2]:text-base [&_h3]:mt-3 [&_h3]:mb-1.5 [&_h3]:text-sm [&_ul]:my-2 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:my-2 [&_ol]:list-decimal [&_ol]:pl-5 [&_blockquote]:border-l-2 [&_blockquote]:border-border [&_blockquote]:pl-3 [&_blockquote]:text-muted"
+        // eslint-disable-next-line react/no-danger
+        dangerouslySetInnerHTML={{ __html: _sanitiseHtml(html) }}
+      />
+    );
+  }
+  return (
+    <p className="whitespace-pre-wrap text-sm leading-relaxed text-text/90">
+      {fallback ?? t("news.noDescription")}
+    </p>
   );
 }
 

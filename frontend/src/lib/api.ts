@@ -160,6 +160,7 @@ export interface NewsArticleDetail extends NewsArticleSummary {
   author: string | null;
   image_url: string | null;
   summary: string | null;
+  raw_html: string | null;
 }
 
 export interface NewsFeedSummary {
