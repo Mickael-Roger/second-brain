@@ -1,4 +1,5 @@
 from .store import (
+    RETENTION_DAYS,
     StoredArticle,
     StoredEvent,
     StoredFetchRun,
@@ -11,11 +12,13 @@ from .store import (
     list_events,
     list_recent_runs,
     list_unclustered_articles,
+    purge_old_articles,
     set_fetch_run_status,
     upsert_event,
 )
 
 __all__ = [
+    "RETENTION_DAYS",
     "StoredArticle",
     "StoredEvent",
     "StoredFetchRun",
@@ -28,6 +31,7 @@ __all__ = [
     "list_events",
     "list_recent_runs",
     "list_unclustered_articles",
+    "purge_old_articles",
     "set_fetch_run_status",
     "upsert_event",
 ]

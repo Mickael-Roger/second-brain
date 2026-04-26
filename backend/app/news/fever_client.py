@@ -153,7 +153,13 @@ class FeverClient:
         # called without a filter (since_id / max_id / with_ids). Seed
         # the cursor with a value larger than any plausible item id so
         # the first page returns the absolute newest items.
-        cursor: int = 2**31 - 1
+        #
+        # NB: FreshRSS uses microsecond-timestamp item ids (~1.78e15 for
+        # 2026 articles), not sequential integers, so a 32-bit ceiling
+        # (~2.1e9) is far too small — FreshRSS would return "no items
+        # older than ~1970" and we'd silently get nothing. 2^63 - 1 sits
+        # above any plausible timestamp-derived id for centuries.
+        cursor: int = 2**63 - 1
         # Same page cap as items_since — Fever pages are 50 items.
         max_pages = max(1, (max_items + 49) // 50)
         for _ in range(max_pages):

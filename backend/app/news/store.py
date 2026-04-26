@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import sqlite3
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Literal
 
 from ulid import ULID
@@ -65,6 +65,44 @@ class StoredFetchRun:
 
 
 # ── Articles ───────────────────────────────────────────────────────
+
+
+# News articles age out fast — once a story is older than this we don't
+# show it in the UI any more (the period selector only goes to 30d), so
+# it's just dead weight in the DB and noise for the cluster prompt.
+RETENTION_DAYS = 30
+
+
+def purge_old_articles(conn: sqlite3.Connection, *, days: int = RETENTION_DAYS) -> int:
+    """Delete articles older than `days` days and drop any events whose
+    last article just got pruned. Returns the number of articles deleted.
+
+    Called at the start of every fetch pass so the DB stays bounded
+    without needing a separate housekeeping job."""
+    cutoff = (
+        datetime.now(timezone.utc) - timedelta(days=days)
+    ).isoformat()
+    cur = conn.execute(
+        "DELETE FROM news_articles WHERE published_at < ?", (cutoff,)
+    )
+    deleted_articles = cur.rowcount
+    # Orphaned events: every article was just deleted.
+    conn.execute(
+        "DELETE FROM news_events WHERE id NOT IN ("
+        "  SELECT DISTINCT event_id FROM news_articles "
+        "  WHERE event_id IS NOT NULL"
+        ")"
+    )
+    # Refresh article_count on events that lost some but not all articles
+    # — the bubble UI sizes off this number, so a stale count would
+    # mis-render the bubble vs. the actual hover list.
+    conn.execute(
+        "UPDATE news_events SET article_count = ("
+        "  SELECT COUNT(*) FROM news_articles "
+        "  WHERE news_articles.event_id = news_events.id"
+        ")"
+    )
+    return deleted_articles
 
 
 def insert_article(

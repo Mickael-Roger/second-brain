@@ -26,7 +26,13 @@ from app.config import get_settings
 from app.db.connection import open_connection
 
 from .fever_client import FeverClient, html_to_plain_text, published_iso
-from .store import create_fetch_run, finish_fetch_run, insert_article
+from .store import (
+    RETENTION_DAYS,
+    create_fetch_run,
+    finish_fetch_run,
+    insert_article,
+    purge_old_articles,
+)
 
 log = logging.getLogger(__name__)
 
@@ -75,6 +81,12 @@ async def fetch_freshrss(
     conn = open_connection()
     try:
         run_id = create_fetch_run(conn, kind="fetch", source=source)
+        purged = purge_old_articles(conn)
+        if purged:
+            log.info(
+                "news fetch: purged %d article(s) older than %d days",
+                purged, RETENTION_DAYS,
+            )
         since = _last_external_id(conn, source) if from_ts is None else 0
     finally:
         conn.close()
