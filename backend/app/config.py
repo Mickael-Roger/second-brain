@@ -152,11 +152,15 @@ class SMTPSection(BaseModel):
 
     @model_validator(mode="after")
     def _resolve_and_check(self) -> "SMTPSection":
-        # Backfill `security` from the legacy boolean when not explicitly set.
+        # Backfill `security` when not explicitly set:
+        #   - port 465 is canonically implicit-TLS → ssl,
+        #   - otherwise honor the legacy `starttls` boolean.
         if self.security is None:
-            object.__setattr__(
-                self, "security", "starttls" if self.starttls else "none"
-            )
+            if self.port == 465:
+                resolved = "ssl"
+            else:
+                resolved = "starttls" if self.starttls else "none"
+            object.__setattr__(self, "security", resolved)
         if self.enabled:
             missing = [
                 f for f in ("host", "from_address", "to_address") if not getattr(self, f)

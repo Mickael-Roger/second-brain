@@ -45,16 +45,29 @@ def send_email(subject: str, body: str, *, html: str | None = None) -> None:
     else:
         msg.set_content(body)
 
-    log.info("sending email %r → %s (security=%s)", subject, s.to_address, s.security)
-    if s.security == "ssl":
-        # SSL/TLS handshake happens immediately on connect.
-        ctx = ssl.create_default_context()
-        smtp = smtplib.SMTP_SSL(s.host, s.port, timeout=30, context=ctx)
-    else:
-        smtp = smtplib.SMTP(s.host, s.port, timeout=30)
-    with smtp:
-        if s.security == "starttls":
-            smtp.starttls(context=ssl.create_default_context())
-        if s.username and s.password:
-            smtp.login(s.username, s.password)
-        smtp.send_message(msg)
+    log.info(
+        "sending email %r → %s (host=%s port=%s security=%s)",
+        subject, s.to_address, s.host, s.port, s.security,
+    )
+    try:
+        if s.security == "ssl":
+            # SSL/TLS handshake happens immediately on connect.
+            ctx = ssl.create_default_context()
+            smtp = smtplib.SMTP_SSL(s.host, s.port, timeout=30, context=ctx)
+        else:
+            smtp = smtplib.SMTP(s.host, s.port, timeout=30)
+        with smtp:
+            if s.security == "starttls":
+                smtp.starttls(context=ssl.create_default_context())
+            if s.username and s.password:
+                smtp.login(s.username, s.password)
+            smtp.send_message(msg)
+    except (smtplib.SMTPServerDisconnected, TimeoutError) as exc:
+        if s.security != "ssl":
+            raise RuntimeError(
+                f"SMTP timed out connecting to {s.host}:{s.port} with "
+                f"security={s.security}. If your provider requires TLS from "
+                f"the start (port 465 / 'SSL/TLS' in their docs), set "
+                f"`smtp.security: ssl` in config.yml. Original error: {exc}"
+            ) from exc
+        raise
