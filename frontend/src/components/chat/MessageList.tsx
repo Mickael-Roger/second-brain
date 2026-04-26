@@ -1,8 +1,9 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { Wrench } from "lucide-react";
 
-import type { ChatMessage, ContentBlock } from "@/lib/api";
+import type { ChatMessage, ContentBlock, TreeEntry } from "@/lib/api";
 import { renderMarkdown } from "@/lib/markdown";
+import { linkifyVaultReferences } from "@/lib/linkify";
 
 interface Props {
   messages: ChatMessage[];
@@ -19,6 +20,9 @@ interface Props {
   // referenced page without leaving the app. External URLs (http/https)
   // open in a new browser tab via target=_blank.
   onOpenWiki?: (path: string | null) => void;
+  // Vault tree, used to auto-linkify plain-text note mentions in assistant
+  // replies (e.g. "see S3NS cheatsheet.md" → clickable link).
+  vaultEntries?: TreeEntry[];
 }
 
 function ThinkingDots() {
@@ -34,11 +38,23 @@ function ThinkingDots() {
 function MarkdownText({
   text,
   onOpenWiki,
+  vaultEntries,
 }: {
   text: string;
   onOpenWiki?: (path: string | null) => void;
+  vaultEntries?: TreeEntry[];
 }) {
   const ref = useRef<HTMLDivElement>(null);
+
+  // Render markdown, then auto-linkify plain-text mentions of vault notes.
+  // This makes "see Tech/RAG.md" or "from S3NS cheatsheet.md" clickable
+  // even when the LLM didn't bother with [[wikilink]] syntax.
+  const html = useMemo(() => {
+    const raw = renderMarkdown(text);
+    return vaultEntries && vaultEntries.length > 0
+      ? linkifyVaultReferences(raw, vaultEntries)
+      : raw;
+  }, [text, vaultEntries]);
 
   // Make external links open in a new tab; intercept wikilinks and
   // relative .md paths so they jump into the wiki tab in this app.
@@ -58,7 +74,7 @@ function MarkdownText({
       if (!a) return;
       const href = a.getAttribute("href") ?? "";
 
-      // Wikilink (`[[Note]]` rewritten by lib/markdown).
+      // Wikilink (`[[Note]]` rewritten by lib/markdown OR linkified by lib/linkify).
       if (href.startsWith("sb:wikilink:")) {
         e.preventDefault();
         if (onOpenWiki) {
@@ -79,13 +95,13 @@ function MarkdownText({
     };
     node.addEventListener("click", handler);
     return () => node.removeEventListener("click", handler);
-  }, [text, onOpenWiki]);
+  }, [html, onOpenWiki]);
 
   return (
     <div
       ref={ref}
       className="prose-sb prose-sb-chat"
-      dangerouslySetInnerHTML={{ __html: renderMarkdown(text) }}
+      dangerouslySetInnerHTML={{ __html: html }}
     />
   );
 }
@@ -95,10 +111,18 @@ function renderAssistantBlock(
   idx: number,
   showToolDetails: boolean,
   onOpenWiki?: (path: string | null) => void,
+  vaultEntries?: TreeEntry[],
 ) {
   switch (block.type) {
     case "text":
-      return <MarkdownText key={idx} text={block.text} onOpenWiki={onOpenWiki} />;
+      return (
+        <MarkdownText
+          key={idx}
+          text={block.text}
+          onOpenWiki={onOpenWiki}
+          vaultEntries={vaultEntries}
+        />
+      );
     case "image":
       return (
         <img
@@ -197,6 +221,7 @@ export default function MessageList({
   busy,
   showToolDetails = false,
   onOpenWiki,
+  vaultEntries,
 }: Props) {
   const ref = useRef<HTMLDivElement>(null);
 
@@ -234,7 +259,13 @@ export default function MessageList({
                 {visible.map((b, j) =>
                   isUser
                     ? renderUserBlock(b, j, showToolDetails)
-                    : renderAssistantBlock(b, j, showToolDetails, onOpenWiki),
+                    : renderAssistantBlock(
+                        b,
+                        j,
+                        showToolDetails,
+                        onOpenWiki,
+                        vaultEntries,
+                      ),
                 )}
               </div>
             </div>
@@ -244,7 +275,11 @@ export default function MessageList({
         {streamingText !== undefined && streamingText !== "" && (
           <div className="flex justify-start">
             <div className="max-w-[85%] rounded-2xl border border-border bg-surface px-4 py-3">
-              <MarkdownText text={streamingText} onOpenWiki={onOpenWiki} />
+              <MarkdownText
+                text={streamingText}
+                onOpenWiki={onOpenWiki}
+                vaultEntries={vaultEntries}
+              />
             </div>
           </div>
         )}
