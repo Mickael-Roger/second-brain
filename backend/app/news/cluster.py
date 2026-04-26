@@ -1,9 +1,14 @@
-"""LLM-driven event clustering.
+"""LLM-driven topic clustering.
 
 Given a window of unclustered articles, ask the LLM to group them by
-topic ("OpenAI releases GPT-5.5", "Apple Q1 earnings", …). Each cluster
-becomes a `news_events` row; member articles get linked via
-`news_articles.event_id`.
+topic and return a SHORT topic label per cluster (e.g. "GPT-5.5
+release", "Apple Q1 earnings"). The bubbles are sized by how many
+articles talk about each topic — this is a "hot topics" view, not a
+news-headline list.
+
+Singletons (topics with only one article) are still recorded in the DB
+so the article doesn't get re-prompted on every pass, but they are
+hidden from the UI by `list_events`.
 
 We keep this LLM-only for v1 to match the codebase's existing pattern
 (see `app.jobs.organize`). A future phase can add embedding-based
@@ -37,21 +42,36 @@ log = logging.getLogger(__name__)
 MAX_ARTICLES_PER_PASS = 200
 
 
-_SYSTEM_PROMPT = """\
-You group news articles into events.
+_DEFAULT_SYSTEM_PROMPT = """\
+You group news articles into HOT TOPICS.
 
 You will receive a list of articles, each with: an id, a title, an
 optional short description, the source feed, and the publication date.
-Multiple articles often cover the same event (e.g. ten outlets all
-reporting an OpenAI product launch on the same day).
+Multiple articles often cover the same underlying topic (e.g. ten
+outlets all reporting on the same product launch on the same day).
+
+Your job is to surface the topics being talked about, NOT to write
+news headlines. Each topic label should be a very short noun phrase
+naming the thing being discussed — the kind of label you'd see on
+a tag cloud or hot-topics dashboard. Examples of GOOD labels:
+
+  "GPT-5.5 release"
+  "Apple Q1 earnings"
+  "France pension reform"
+  "Ukraine peace talks"
+
+Examples of BAD labels (too verbose, too headline-y):
+
+  "OpenAI announces GPT-5.5 with improved reasoning capabilities"
+  "Apple reports stronger-than-expected Q1 revenue driven by services"
 
 Return ONE JSON object and nothing else (no preamble, no code fences):
 
 {
   "events": [
     {
-      "title": "<short headline naming the event>",
-      "summary": "<one or two sentences summarising what happened>",
+      "title": "<very short topic label, ideally 2–6 words>",
+      "summary": "<one short sentence describing the topic>",
       "occurred_on": "YYYY-MM-DD",
       "article_ids": ["<id>", "<id>", ...]
     }
@@ -59,13 +79,48 @@ Return ONE JSON object and nothing else (no preamble, no code fences):
 }
 
 Rules:
-- Only group articles that are clearly about the SAME underlying event.
-  When in doubt, leave an article as its own one-article event.
+- Only group articles that are clearly about the SAME underlying topic.
+  When in doubt, leave an article as its own one-article entry — those
+  will be filtered out of the dashboard automatically.
 - Pick `occurred_on` from the earliest publication date in the cluster.
 - Every article id you receive MUST appear in exactly one event.
-- The `title` is the user-facing label of the bubble — keep it short
-  and concrete (under 80 characters).
+- The `title` is the user-facing label of the bubble. Aim for 2–6
+  words, no trailing punctuation, no source name, no date.
+- Topics with only one article are recorded but hidden from the UI —
+  prefer grouping over splitting whenever the connection is real.
 """
+
+
+def _load_synthesis_prompt() -> str:
+    """Load the cluster system prompt from the vault.
+
+    Reads `<vault>/<obsidian.news_synthesis_file>` (default
+    `NEWS_SYNTHESIS.md`), strips an optional YAML frontmatter block.
+    Falls back to the built-in default when the file is missing, empty,
+    or the vault is unconfigured. Loaded fresh on every pass so the
+    user can edit the file and the next cron run picks it up — no
+    restart needed."""
+    from app.vault import vault_root
+
+    s = get_settings()
+    if s.obsidian.vault_path is None:
+        return _DEFAULT_SYSTEM_PROMPT
+    try:
+        path = vault_root() / s.obsidian.news_synthesis_file
+    except RuntimeError:
+        return _DEFAULT_SYSTEM_PROMPT
+    if not path.is_file():
+        return _DEFAULT_SYSTEM_PROMPT
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        log.warning("could not read news synthesis prompt %s: %s", path, exc)
+        return _DEFAULT_SYSTEM_PROMPT
+    if text.startswith("---\n"):
+        end = text.find("\n---", 4)
+        if end >= 0:
+            text = text[end + 4 :].lstrip("\n")
+    return text.strip() or _DEFAULT_SYSTEM_PROMPT
 
 
 @dataclass(slots=True)
@@ -158,7 +213,7 @@ async def run_cluster_pass() -> ClusterResult:
 
     try:
         raw = await complete(
-            _SYSTEM_PROMPT,
+            _load_synthesis_prompt(),
             [Message(role="user", content=[TextBlock(text=user_prompt)])],
             provider_name=settings.news.cluster_llm_provider,
         )

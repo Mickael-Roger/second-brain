@@ -121,6 +121,9 @@ class ObsidianSection(BaseModel):
     # System prompt for the nightly Organize task. Optional — missing file
     # falls back to the built-in default in app.jobs.organize.
     organize_prompt_file: str = "ORGANIZE.md"
+    # System prompt for the News & Events synthesis (clustering). Optional
+    # — missing file falls back to the built-in default in app.news.cluster.
+    news_synthesis_file: str = "NEWS_SYNTHESIS.md"
     journal: ObsidianJournalSection = ObsidianJournalSection()
     git: ObsidianGitSection = ObsidianGitSection()
 

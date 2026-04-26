@@ -212,17 +212,26 @@ def upsert_event(
     return event_id
 
 
+# Hot-topics threshold: an "event" only shows up in the dashboard if at
+# least this many articles cover it. Singletons stay in the DB so we
+# don't re-prompt the LLM about them on every cluster pass, but they're
+# noise on a hot-topics view.
+MIN_EVENT_ARTICLES = 2
+
+
 def list_events(
     conn: sqlite3.Connection, *, from_iso: str, to_iso: str
 ) -> list[StoredEvent]:
-    """Events whose `occurred_on` falls in the [from, to] range. Both
-    bounds are inclusive ISO dates (YYYY-MM-DD) — the period selector
-    in the UI maps to these directly."""
+    """Events whose `occurred_on` falls in the [from, to] range AND
+    that have at least `MIN_EVENT_ARTICLES` articles. Both bounds are
+    inclusive ISO dates (YYYY-MM-DD) — the period selector in the UI
+    maps to these directly."""
     rows = conn.execute(
         "SELECT * FROM news_events "
         "WHERE occurred_on >= ? AND occurred_on <= ? "
+        "  AND article_count >= ? "
         "ORDER BY article_count DESC, occurred_on DESC",
-        (from_iso, to_iso),
+        (from_iso, to_iso, MIN_EVENT_ARTICLES),
     ).fetchall()
     return [_row_to_event(r) for r in rows]
 

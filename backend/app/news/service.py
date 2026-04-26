@@ -117,6 +117,16 @@ async def fetch_freshrss(
                 )
             fetched = len(items)
             if items:
+                # Fever's `items` endpoint returns BOTH read and unread
+                # items in the range. We persist both — read state isn't
+                # part of our model. The breakdown below confirms this in
+                # the logs so the user can see we're not losing already-
+                # read articles.
+                read_count = sum(1 for it in items if it.is_read)
+                log.info(
+                    "news fetch: freshrss got %d items (read=%d, unread=%d)",
+                    fetched, read_count, fetched - read_count,
+                )
                 conn = open_connection()
                 try:
                     for it in items:
