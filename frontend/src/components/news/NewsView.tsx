@@ -43,7 +43,10 @@ export default function NewsView({ onOpenChat }: Props) {
   const { t } = useTranslation();
   const qc = useQueryClient();
 
-  const [unreadOnly, setUnreadOnly] = useState(false);
+  // Default to "unread only" — when the user lands on the News tab
+  // they almost always want what they haven't seen yet, not the full
+  // 30-day archive. Untoggle to see read articles.
+  const [unreadOnly, setUnreadOnly] = useState(true);
   const [selection, setSelection] = useState<Selection>({ kind: "all" });
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
