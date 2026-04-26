@@ -29,8 +29,6 @@ import {
   type NewsFeedSummary,
 } from "@/lib/api";
 
-type Period = "today" | "7d" | "30d" | "custom";
-
 type Selection =
   | { kind: "all" }
   | { kind: "category"; group: string }
@@ -44,45 +42,28 @@ export default function NewsView({ onOpenChat }: Props) {
   const { t } = useTranslation();
   const qc = useQueryClient();
 
-  const [period, setPeriod] = useState<Period>("7d");
-  const [customFrom, setCustomFrom] = useState<string>(() => isoDaysAgo(7));
-  const [customTo, setCustomTo] = useState<string>(() => isoDaysAgo(0));
   const [unreadOnly, setUnreadOnly] = useState(false);
   const [selection, setSelection] = useState<Selection>({ kind: "all" });
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
-  const periodQS = useMemo(() => {
-    const qs = new URLSearchParams({ period });
-    if (period === "custom") {
-      qs.set("from", customFrom);
-      qs.set("to", customTo);
-    }
-    return qs;
-  }, [period, customFrom, customTo]);
-
+  // No more period selector — list endpoints default to 30d (the
+  // article retention window), which means the UI shows everything
+  // currently in the DB. Manual fetch goes incremental (same as the
+  // every-5-min cron) for speed.
   const feeds = useQuery<NewsFeedSummary[]>({
-    queryKey: ["news-feeds", period, customFrom, customTo],
-    queryFn: () =>
-      api.get<NewsFeedSummary[]>(`/api/news/feeds?${periodQS.toString()}`),
+    queryKey: ["news-feeds"],
+    queryFn: () => api.get<NewsFeedSummary[]>("/api/news/feeds"),
   });
 
   const articles = useQuery<NewsArticleSummary[]>({
-    queryKey: [
-      "news-articles",
-      period,
-      customFrom,
-      customTo,
-      selection,
-      unreadOnly,
-    ],
+    queryKey: ["news-articles", selection, unreadOnly],
     queryFn: () => {
-      const qs = new URLSearchParams(periodQS);
+      const qs = new URLSearchParams();
       if (selection.kind === "feed") qs.set("feed_id", selection.feedId);
       if (selection.kind === "category") qs.set("feed_group", selection.group);
       if (unreadOnly) qs.set("unread_only", "true");
-      return api.get<NewsArticleSummary[]>(
-        `/api/news/articles?${qs.toString()}`,
-      );
+      const suffix = qs.toString() ? `?${qs.toString()}` : "";
+      return api.get<NewsArticleSummary[]>(`/api/news/articles${suffix}`);
     },
   });
 
@@ -96,16 +77,7 @@ export default function NewsView({ onOpenChat }: Props) {
   });
 
   const fetchNow = useMutation({
-    mutationFn: () => {
-      const qs = new URLSearchParams({ period });
-      if (period === "custom") {
-        qs.set("from", customFrom);
-        qs.set("to", customTo);
-      }
-      return api.post<{ started: boolean }>(
-        `/api/news/fetch?${qs.toString()}`,
-      );
-    },
+    mutationFn: () => api.post<{ started: boolean }>("/api/news/fetch"),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["news-feeds"] });
       qc.invalidateQueries({ queryKey: ["news-articles"] });
@@ -154,15 +126,6 @@ export default function NewsView({ onOpenChat }: Props) {
       <header className="flex flex-wrap items-center gap-3 border-b border-border bg-surface px-4 py-3">
         <Newspaper className="h-5 w-5 text-accent" />
         <h1 className="flex-1 text-lg font-semibold">{t("news.title")}</h1>
-
-        <PeriodSelector
-          period={period}
-          customFrom={customFrom}
-          customTo={customTo}
-          onPeriod={setPeriod}
-          onFrom={setCustomFrom}
-          onTo={setCustomTo}
-        />
 
         <button
           type="button"
@@ -567,73 +530,3 @@ function DetailPane({
   );
 }
 
-// ─── Period selector ────────────────────────────────────────────────
-
-interface PeriodProps {
-  period: Period;
-  customFrom: string;
-  customTo: string;
-  onPeriod: (p: Period) => void;
-  onFrom: (s: string) => void;
-  onTo: (s: string) => void;
-}
-
-function PeriodSelector({
-  period,
-  customFrom,
-  customTo,
-  onPeriod,
-  onFrom,
-  onTo,
-}: PeriodProps) {
-  const { t } = useTranslation();
-  const opts: { id: Period; label: string }[] = [
-    { id: "today", label: t("news.periodToday") },
-    { id: "7d", label: t("news.period7d") },
-    { id: "30d", label: t("news.period30d") },
-    { id: "custom", label: t("news.periodCustom") },
-  ];
-  return (
-    <div className="flex flex-wrap items-center gap-2 text-xs">
-      <span className="text-muted">{t("news.periodLabel")}:</span>
-      <div className="flex overflow-hidden rounded-lg border border-border">
-        {opts.map((o) => (
-          <button
-            key={o.id}
-            onClick={() => onPeriod(o.id)}
-            className={`px-2 py-1 ${
-              period === o.id
-                ? "bg-accent text-bg"
-                : "bg-bg text-muted hover:text-text"
-            }`}
-          >
-            {o.label}
-          </button>
-        ))}
-      </div>
-      {period === "custom" && (
-        <>
-          <input
-            type="date"
-            value={customFrom}
-            onChange={(e) => onFrom(e.target.value)}
-            className="rounded-lg border border-border bg-bg px-2 py-1 text-text"
-          />
-          <span className="text-muted">→</span>
-          <input
-            type="date"
-            value={customTo}
-            onChange={(e) => onTo(e.target.value)}
-            className="rounded-lg border border-border bg-bg px-2 py-1 text-text"
-          />
-        </>
-      )}
-    </div>
-  );
-}
-
-function isoDaysAgo(days: number): string {
-  const d = new Date();
-  d.setDate(d.getDate() - days);
-  return d.toISOString().slice(0, 10);
-}

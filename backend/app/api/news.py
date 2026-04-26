@@ -143,7 +143,7 @@ def _resolve_period_ts(
 
 @router.get("/feeds", response_model=list[FeedSummaryDTO])
 def get_feeds(
-    period: str = Query("7d"),
+    period: str = Query("30d"),
     from_: str | None = Query(None, alias="from"),
     to: str | None = Query(None),
     _user: str = Depends(current_user),
@@ -151,7 +151,8 @@ def get_feeds(
 ) -> list[FeedSummaryDTO]:
     """Feed sidebar for the News tab. The frontend groups by
     `feed_group` (the FreshRSS folder) to reproduce the FreshRSS
-    sidebar layout."""
+    sidebar layout. Default period is 30d, matching the article
+    retention window — that means everything in the DB is visible."""
     f, t = _resolve_period_iso(period, from_, to)
     return [
         FeedSummaryDTO(
@@ -167,7 +168,7 @@ def get_feeds(
 
 @router.get("/articles", response_model=list[ArticleSummaryDTO])
 def get_articles(
-    period: str = Query("7d"),
+    period: str = Query("30d"),
     from_: str | None = Query(None, alias="from"),
     to: str | None = Query(None),
     feed_id: str | None = Query(None),
@@ -177,7 +178,8 @@ def get_articles(
     conn: sqlite3.Connection = Depends(get_db),
 ) -> list[ArticleSummaryDTO]:
     """Article list for the News tab — newest-first, optionally
-    filtered to one feed, one category (folder), or unread-only."""
+    filtered to one feed, one category (folder), or unread-only.
+    Default period 30d matches the retention window."""
     f, t = _resolve_period_iso(period, from_, to)
     arts = list_articles(
         conn,
@@ -242,15 +244,24 @@ async def mark_read(
 
 @router.post("/fetch", response_model=TriggerResponse, status_code=202)
 async def trigger_fetch(
-    period: str = Query(
-        "7d", description="today | 7d | 30d | custom — scopes the manual fetch"
+    period: str | None = Query(
+        None,
+        description=(
+            "Optional period scope (today | 7d | 30d | custom). When "
+            "omitted, the manual fetch runs in the same incremental "
+            "since_id mode the cron uses — fastest path, pulls only new "
+            "items."
+        ),
     ),
     from_: str | None = Query(None, alias="from"),
     to: str | None = Query(None),
     _user: str = Depends(current_user),
 ) -> TriggerResponse:
-    """Kick off an immediate fetch pass in the background, scoped to
-    the selected period."""
+    """Kick off an immediate fetch pass in the background.
+
+    Default behaviour (no period given): incremental — same as the
+    every-5-minute cron. When `period` is supplied we walk Fever
+    backwards via `max_id` and keep only items in that window."""
     from app.config import get_settings
     from app.news.service import fetch_all_sources
 
@@ -260,11 +271,16 @@ async def trigger_fetch(
             detail="news.sources.freshrss is not configured",
         )
 
-    from_ts, to_ts = _resolve_period_ts(period, from_, to)
-    log.info(
-        "manual news fetch requested (period=%s, from_ts=%d, to_ts=%d)",
-        period, from_ts, to_ts,
-    )
+    if period:
+        from_ts, to_ts = _resolve_period_ts(period, from_, to)
+        log.info(
+            "manual news fetch requested (period=%s, from_ts=%d, to_ts=%d)",
+            period, from_ts, to_ts,
+        )
+    else:
+        from_ts = None
+        to_ts = None
+        log.info("manual news fetch requested (incremental, no period)")
 
     async def _go() -> None:
         try:
