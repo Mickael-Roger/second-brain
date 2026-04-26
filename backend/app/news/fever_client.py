@@ -149,14 +149,17 @@ class FeverClient:
         `to_ts=None` means "no upper bound" (i.e. up to now). Returned
         items are newest-first."""
         out: list[FeverItem] = []
-        cursor: int | None = None
+        # FreshRSS's Fever endpoint returns no items when `items` is
+        # called without a filter (since_id / max_id / with_ids). Seed
+        # the cursor with a value larger than any plausible item id so
+        # the first page returns the absolute newest items.
+        cursor: int = 2**31 - 1
         # Same page cap as items_since — Fever pages are 50 items.
         max_pages = max(1, (max_items + 49) // 50)
         for _ in range(max_pages):
-            params = {"items": ""}
-            if cursor is not None:
-                params["max_id"] = str(cursor)
-            body = await self._post(params=params)
+            body = await self._post(
+                params={"items": "", "max_id": str(cursor)}
+            )
             items = body.get("items") or []
             if not items:
                 break
@@ -168,7 +171,7 @@ class FeverClient:
                 # whether this item is in-range — we need to keep walking
                 # backwards through items to find the boundary.
                 rid = int(raw.get("id", 0))
-                if cursor is None or rid < cursor:
+                if rid < cursor:
                     cursor = rid
                 if ts and ts < from_ts:
                     below_floor = True

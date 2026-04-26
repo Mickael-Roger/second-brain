@@ -121,9 +121,10 @@ async def run_cluster_pass() -> ClusterResult:
     fetch run row provides observability — same shape as fetch runs so
     the UI can list them together."""
     settings = get_settings()
-    if not settings.news.enabled:
-        log.info("news cluster: disabled, skipping")
-        return ClusterResult(fetched=0, events_created=0, articles_clustered=0)
+    # NB: we intentionally do NOT gate on `news.enabled` here. That flag
+    # controls whether the scheduler registers the cron jobs; manual
+    # triggers from the UI must always be able to run, otherwise the
+    # operator can't test their setup before flipping the schedule on.
 
     cutoff = (
         datetime.now(timezone.utc) - timedelta(days=settings.news.cluster_window_days)
@@ -136,7 +137,13 @@ async def run_cluster_pass() -> ClusterResult:
     finally:
         conn.close()
 
+    log.info(
+        "news cluster: starting (window=%dd, unclustered=%d)",
+        settings.news.cluster_window_days, len(articles),
+    )
+
     if not articles:
+        log.info("news cluster: nothing to do (no unclustered articles in window)")
         conn = open_connection()
         try:
             finish_fetch_run(conn, run_id, status="ok", fetched=0)
