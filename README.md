@@ -49,6 +49,15 @@ uv run second-brain serve --reload                      # dev mode with hot-relo
 uv run second-brain hash-password                       # prompt for a password, print bcrypt hash
 uv run second-brain migrate                             # apply pending SQL migrations
 uv run second-brain chatgpt-login <provider-name>       # OAuth device-flow login for kind=chatgpt
+uv run second-brain organize                            # run the nightly Organize job right now
+uv run second-brain organize --mode apply --no-email    # apply mode + suppress the SMTP send
+```
+
+In Docker, hit the running container:
+
+```bash
+docker exec -it second-brain second-brain organize
+docker exec -it second-brain second-brain organize --mode apply --no-email
 ```
 
 All commands accept `--config <path>` (or `-c`) before the subcommand to point

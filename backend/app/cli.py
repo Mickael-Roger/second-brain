@@ -91,6 +91,53 @@ def serve_cmd(
     )
 
 
+@cli.command("organize")
+@click.option(
+    "--mode",
+    type=click.Choice(["dry-run", "apply"]),
+    default=None,
+    help="Override organize.mode for this run (default: whatever config.yml says).",
+)
+@click.option(
+    "--no-email",
+    is_flag=True,
+    default=False,
+    help="Skip the SMTP send. Report still prints to stdout.",
+)
+def organize_cmd(mode: str | None, no_email: bool) -> None:
+    """Run the nightly Organize job (journal archive + LLM organize pass) right now.
+
+    Same code path as the scheduled cron run. Useful to iterate on
+    ORGANIZE.md, INDEX.md, or PREFERENCES.md without waiting until 03:00.
+    """
+    import asyncio
+
+    settings = get_settings()
+    if mode is not None:
+        settings.organize.mode = mode  # type: ignore[assignment]
+    if no_email:
+        settings.smtp.enabled = False
+
+    # Ensure the SQLite schema exists (the job records last_run_at in
+    # module_state). The HTTP server normally does this in its lifespan;
+    # the CLI does it here so a fresh data dir works without a separate
+    # `second-brain migrate` step.
+    conn = open_connection()
+    try:
+        run_migrations(conn)
+    finally:
+        conn.close()
+
+    click.echo(
+        f"Running organize (mode={settings.organize.mode}, email={settings.smtp.enabled})…",
+        err=True,
+    )
+    from app.jobs import run_nightly
+
+    report = asyncio.run(run_nightly())
+    click.echo(report)
+
+
 @cli.command("chatgpt-login")
 @click.argument("provider", required=False)
 @click.option(
