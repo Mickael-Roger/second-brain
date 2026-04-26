@@ -3,21 +3,23 @@
 Synchronous (stdlib `smtplib`); we send rarely and a sync call inside a
 scheduler job is fine. Falls back to logging the message when SMTP is
 disabled — handy during initial setup.
+
+Three security modes (config: `smtp.security`):
+  - none     — plain SMTP, no TLS.
+  - starttls — plain SMTP then STARTTLS upgrade (port 587 typical).
+  - ssl      — SSL/TLS from the start (port 465 typical).
 """
 
 from __future__ import annotations
 
 import logging
 import smtplib
+import ssl
 from email.message import EmailMessage
 
 from app.config import get_settings
 
 log = logging.getLogger(__name__)
-
-
-class SMTPDisabled(RuntimeError):
-    pass
 
 
 def send_email(subject: str, body: str, *, html: str | None = None) -> None:
@@ -43,10 +45,16 @@ def send_email(subject: str, body: str, *, html: str | None = None) -> None:
     else:
         msg.set_content(body)
 
-    log.info("sending email %r → %s", subject, s.to_address)
-    with smtplib.SMTP(s.host, s.port, timeout=30) as smtp:
-        if s.starttls:
-            smtp.starttls()
+    log.info("sending email %r → %s (security=%s)", subject, s.to_address, s.security)
+    if s.security == "ssl":
+        # SSL/TLS handshake happens immediately on connect.
+        ctx = ssl.create_default_context()
+        smtp = smtplib.SMTP_SSL(s.host, s.port, timeout=30, context=ctx)
+    else:
+        smtp = smtplib.SMTP(s.host, s.port, timeout=30)
+    with smtp:
+        if s.security == "starttls":
+            smtp.starttls(context=ssl.create_default_context())
         if s.username and s.password:
             smtp.login(s.username, s.password)
         smtp.send_message(msg)

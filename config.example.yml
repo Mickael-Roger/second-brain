@@ -116,12 +116,17 @@ organize:
 # SMTP — outbound only. Used for the nightly Organize report.
 # When `enabled: false`, the report is logged to stdout instead of emailed
 # (handy during initial setup so you can verify cron without an SMTP server).
+#
+# Pick `security` to match your provider:
+#   - starttls (default) — port 587, plain → STARTTLS upgrade.
+#   - ssl                 — port 465, SSL/TLS from the start.
+#   - none                — plain SMTP, no TLS (only on a trusted network).
 # ---------------------------------------------------------------------------
 smtp:
   enabled: false
   host: smtp.example.com
   port: 587
-  starttls: true
+  security: starttls         # starttls | ssl | none
   username: brain@example.com
   password: REPLACE_ME
   from_address: "Second Brain <brain@example.com>"

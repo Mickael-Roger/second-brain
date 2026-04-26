@@ -136,7 +136,14 @@ class SMTPSection(BaseModel):
     enabled: bool = False
     host: str | None = None
     port: int = 587
-    starttls: bool = True
+    # Connection security:
+    #   none      — plain SMTP, no TLS.
+    #   starttls  — plain SMTP then STARTTLS upgrade (port 587 typical).
+    #   ssl       — SSL/TLS from the start (port 465 typical).
+    # When unset, falls back to the legacy `starttls` boolean for backwards
+    # compatibility (true → starttls, false → none).
+    security: Literal["none", "starttls", "ssl"] | None = None
+    starttls: bool = True  # deprecated; prefer `security`.
     username: str | None = None
     password: str | None = None
     from_address: str | None = None
@@ -144,7 +151,12 @@ class SMTPSection(BaseModel):
     format: Literal["text", "html"] = "text"
 
     @model_validator(mode="after")
-    def _required_when_enabled(self) -> "SMTPSection":
+    def _resolve_and_check(self) -> "SMTPSection":
+        # Backfill `security` from the legacy boolean when not explicitly set.
+        if self.security is None:
+            object.__setattr__(
+                self, "security", "starttls" if self.starttls else "none"
+            )
         if self.enabled:
             missing = [
                 f for f in ("host", "from_address", "to_address") if not getattr(self, f)
