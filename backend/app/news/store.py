@@ -72,19 +72,16 @@ RETENTION_DAYS = 30
 
 
 def purge_old_articles(conn: sqlite3.Connection, *, days: int = RETENTION_DAYS) -> int:
-    """Delete articles older than `days`. Returns the number of
-    articles deleted. The caller is responsible for also removing the
-    corresponding summary files on disk; we return the deleted ids
-    so they can do that.
-
-    NB: this signature changed from earlier — it used to return just
-    a count. Callers should switch to `purge_old_articles_with_ids`
-    if they need both."""
+    """Delete READ articles older than `days`. Returns the count.
+    See `purge_old_articles_with_ids` for the unread-preservation
+    rationale."""
     cutoff = (
         datetime.now(timezone.utc) - timedelta(days=days)
     ).isoformat()
     cur = conn.execute(
-        "DELETE FROM news_articles WHERE published_at < ?", (cutoff,)
+        "DELETE FROM news_articles "
+        "WHERE published_at < ? AND is_read = 1",
+        (cutoff,),
     )
     return cur.rowcount
 
@@ -92,19 +89,27 @@ def purge_old_articles(conn: sqlite3.Connection, *, days: int = RETENTION_DAYS) 
 def purge_old_articles_with_ids(
     conn: sqlite3.Connection, *, days: int = RETENTION_DAYS
 ) -> list[str]:
-    """Same as purge_old_articles but returns the ids that were
-    deleted, so the caller can clean up summary files on disk."""
+    """Delete READ articles older than `days` and return their ids
+    so the caller can clean up summary files on disk.
+
+    Unread articles are NEVER auto-purged — the user explicitly
+    asked us to keep all unread items regardless of age. They age
+    out only once the user reads them and the next purge runs."""
     cutoff = (
         datetime.now(timezone.utc) - timedelta(days=days)
     ).isoformat()
     rows = conn.execute(
-        "SELECT id FROM news_articles WHERE published_at < ?", (cutoff,)
+        "SELECT id FROM news_articles "
+        "WHERE published_at < ? AND is_read = 1",
+        (cutoff,),
     ).fetchall()
     if not rows:
         return []
     ids = [r["id"] for r in rows]
     conn.execute(
-        "DELETE FROM news_articles WHERE published_at < ?", (cutoff,)
+        "DELETE FROM news_articles "
+        "WHERE published_at < ? AND is_read = 1",
+        (cutoff,),
     )
     return ids
 

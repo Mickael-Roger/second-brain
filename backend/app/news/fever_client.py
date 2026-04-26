@@ -185,6 +185,38 @@ class FeverClient:
                 break
         return out
 
+    async def unread_item_ids(self) -> list[str]:
+        """Fever's `unread_item_ids` action returns a comma-separated
+        list of every UNREAD item id for the user. Used by the
+        completeness pass to find items that exist in FreshRSS but
+        have never landed in our DB (typically: very old unread
+        articles that are below our since_id walk's reach)."""
+        body = await self._post(params={"unread_item_ids": ""})
+        raw = body.get("unread_item_ids", "")
+        if isinstance(raw, list):
+            return [str(x) for x in raw if str(x).strip()]
+        if isinstance(raw, str):
+            return [s.strip() for s in raw.split(",") if s.strip()]
+        return []
+
+    async def items_by_ids(
+        self, ids: list[str], *, batch_size: int = 50
+    ) -> list[FeverItem]:
+        """Fetch items whose Fever id is in `ids`, batched by
+        `batch_size` (Fever caps `with_ids` at 50). Used to backfill
+        unread items that aren't in our DB yet."""
+        out: list[FeverItem] = []
+        for i in range(0, len(ids), batch_size):
+            batch = ids[i : i + batch_size]
+            if not batch:
+                continue
+            body = await self._post(
+                params={"items": "", "with_ids": ",".join(batch)}
+            )
+            for raw in body.get("items", []) or []:
+                out.append(_parse_item(raw))
+        return out
+
     async def items_in_range(
         self,
         *,

@@ -56,6 +56,65 @@ class FetchSummary:
 _FAVICON_MAX_BYTES = 8192  # ~8 KB, plenty for a 16-32px PNG/ICO
 
 
+def _store_items(
+    items: list,
+    *,
+    feeds: dict,
+    excluded_group_ids: set[str],
+    source: str,
+) -> tuple[int, int]:
+    """Persist a list of FeverItem to the DB + disk. Returns
+    (inserted, skipped_excluded). Used by both the regular fetch
+    and the unread-completeness pass so the storage path stays
+    identical."""
+    inserted = 0
+    skipped_excluded = 0
+    conn = open_connection()
+    try:
+        for it in items:
+            f = feeds.get(it.feed_id)
+            if f and f.group_id and f.group_id in excluded_group_ids:
+                skipped_excluded += 1
+                continue
+            article_id = f"{source}:{it.id}"
+            is_new = insert_article(
+                conn,
+                source=source,
+                external_id=it.id,
+                feed_id=it.feed_id or None,
+                feed_title=f.title if f else None,
+                feed_group=f.group_name if f else None,
+                url=it.url,
+                title=it.title,
+                author=it.author,
+                published_at=published_iso(it),
+                is_read=it.is_read,
+                image_url=extract_first_image(it.html),
+            )
+            if is_new:
+                summaries.write_summary(
+                    article_id, html_to_plain_text(it.html)
+                )
+                inserted += 1
+    finally:
+        conn.close()
+    return inserted, skipped_excluded
+
+
+def _existing_external_ids(source: str) -> set[str]:
+    """Set of external_ids already stored for `source`. Used by the
+    unread-completeness pass to subtract from FreshRSS's unread list."""
+    conn = open_connection()
+    try:
+        rows = conn.execute(
+            "SELECT external_id FROM news_articles WHERE source = ?",
+            (source,),
+        ).fetchall()
+    finally:
+        conn.close()
+    return {str(r["external_id"]) for r in rows}
+
+
 def _normalise_favicon(raw: str | None) -> str | None:
     """Coerce Fever's favicon payload to a `data:` URI we can plug
     straight into an <img src>. FreshRSS returns either a bare base64
@@ -180,52 +239,66 @@ async def fetch_freshrss(
                     max_items=cfg.max_items_per_run,
                 )
             fetched = len(items)
+            excluded = set(cfg.excluded_group_ids or [])
             if items:
                 read_count = sum(1 for it in items if it.is_read)
                 log.info(
                     "news fetch: freshrss got %d items (read=%d, unread=%d)",
                     fetched, read_count, fetched - read_count,
                 )
-                excluded = set(cfg.excluded_group_ids or [])
-                skipped_excluded = 0
-                conn = open_connection()
-                try:
-                    for it in items:
-                        f = feeds.get(it.feed_id)
-                        if f and f.group_id and f.group_id in excluded:
-                            skipped_excluded += 1
-                            continue
-                        article_id = f"{source}:{it.id}"
-                        is_new = insert_article(
-                            conn,
-                            source=source,
-                            external_id=it.id,
-                            feed_id=it.feed_id or None,
-                            feed_title=f.title if f else None,
-                            feed_group=f.group_name if f else None,
-                            url=it.url,
-                            title=it.title,
-                            author=it.author,
-                            published_at=published_iso(it),
-                            is_read=it.is_read,
-                            image_url=extract_first_image(it.html),
-                        )
-                        if is_new:
-                            # Persist the full body to disk only on
-                            # first sight. On a duplicate the row
-                            # already has the body file from before
-                            # and the content is unchanged.
-                            summaries.write_summary(
-                                article_id, html_to_plain_text(it.html)
-                            )
-                            inserted += 1
-                finally:
-                    conn.close()
+                ins, skipped_excluded = _store_items(
+                    items,
+                    feeds=feeds,
+                    excluded_group_ids=excluded,
+                    source=source,
+                )
+                inserted += ins
                 if skipped_excluded:
                     log.info(
                         "news fetch: skipped %d items from excluded folders %s",
                         skipped_excluded, sorted(excluded),
                     )
+
+            # ── Unread completeness pass ─────────────────────────────
+            # Pull every unread item id FreshRSS knows about, and back-
+            # fill anything we don't have yet. Catches old unread items
+            # that fell below our since_id walk's reach (or that the
+            # ranged walk's date filter excluded). Capped at
+            # max_items_per_run per pass — leftovers ride the next
+            # cron tick.
+            try:
+                unread_ids = await client.unread_item_ids()
+            except Exception:
+                log.exception(
+                    "news fetch: unread_item_ids failed (non-fatal)"
+                )
+                unread_ids = []
+            if unread_ids:
+                already = _existing_external_ids(source)
+                missing = [i for i in unread_ids if i not in already]
+                if missing:
+                    cap = cfg.max_items_per_run
+                    log.info(
+                        "news fetch: %d unread item(s) missing locally; "
+                        "backfilling up to %d",
+                        len(missing), cap,
+                    )
+                    extra_items = await client.items_by_ids(missing[:cap])
+                    fetched += len(extra_items)
+                    if extra_items:
+                        ins, _ = _store_items(
+                            extra_items,
+                            feeds=feeds,
+                            excluded_group_ids=excluded,
+                            source=source,
+                        )
+                        inserted += ins
+                        log.info(
+                            "news fetch: backfilled %d unread item(s) "
+                            "(of %d still missing — next cron picks up "
+                            "the rest)",
+                            ins, max(0, len(missing) - cap),
+                        )
     except Exception as exc:
         error = str(exc)
         log.exception("news fetch: freshrss failed")
