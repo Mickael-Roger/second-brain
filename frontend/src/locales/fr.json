@@ -4,7 +4,34 @@
   },
   "nav": {
     "chat": "Discussion",
-    "wiki": "Wiki"
+    "wiki": "Wiki",
+    "organize": "Organisation"
+  },
+  "organize": {
+    "title": "Organisation nocturne",
+    "runNew": "Lancer une organisation",
+    "running": "En cours…",
+    "runningMsg": "Le cerveau analyse votre vault. Les propositions apparaîtront ici au fur et à mesure.",
+    "applying": "Application…",
+    "applyN": "Appliquer {{n}} en attente",
+    "moveTo": "Déplacer vers",
+    "tags": "Tags",
+    "wikilinks": "Wikilinks suggérés",
+    "refactorPreview": "Aperçu de la réécriture",
+    "noChanges": "Aucun changement proposé.",
+    "parseError": "Erreur d'analyse",
+    "applyError": "Erreur d'application",
+    "discardThis": "Ignorer cette proposition",
+    "showDiscarded": "Afficher les ignorées",
+    "status": "Statut",
+    "notesTotal": "Notes considérées",
+    "pending": "En attente",
+    "applied": "Appliquées",
+    "discarded": "Ignorées",
+    "failed": "Échec",
+    "noProposals": "Pas encore de propositions.",
+    "emptyTitle": "Rien à examiner",
+    "emptyBody": "Lancez une passe d'organisation — le cerveau passera votre vault en revue et proposera des déplacements, tags, réécritures et wikilinks. Vous décidez quoi appliquer."
   },
   "login": {
     "title": "Connexion",

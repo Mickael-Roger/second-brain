@@ -4,7 +4,34 @@
   },
   "nav": {
     "chat": "Chat",
-    "wiki": "Wiki"
+    "wiki": "Wiki",
+    "organize": "Organize"
+  },
+  "organize": {
+    "title": "Nightly Organize",
+    "runNew": "Run a new organize",
+    "running": "Running…",
+    "runningMsg": "The brain is reviewing your vault. Proposals will appear here as they land.",
+    "applying": "Applying…",
+    "applyN": "Apply {{n}} pending",
+    "moveTo": "Move to",
+    "tags": "Tags",
+    "wikilinks": "Suggested wikilinks",
+    "refactorPreview": "Refactor preview",
+    "noChanges": "No changes proposed.",
+    "parseError": "Parse error",
+    "applyError": "Apply error",
+    "discardThis": "Discard this proposal",
+    "showDiscarded": "Show discarded",
+    "status": "Status",
+    "notesTotal": "Notes considered",
+    "pending": "Pending",
+    "applied": "Applied",
+    "discarded": "Discarded",
+    "failed": "Failed",
+    "noProposals": "No proposals yet.",
+    "emptyTitle": "Nothing to review yet",
+    "emptyBody": "Run an organize pass — the brain will review your vault and propose moves, tags, refactors, and wikilinks. You decide what to apply."
   },
   "login": {
     "title": "Sign in",

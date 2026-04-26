@@ -362,13 +362,32 @@ async def _apply_proposal(proposal: Proposal) -> AppliedNote:
 # ── orchestration ────────────────────────────────────────────────────
 
 
-async def run_organize() -> OrganizeResult:
+async def run_organize(*, run_id: str | None = None) -> OrganizeResult:
+    """Execute one organize pass.
+
+    Persists a run + per-note proposals into SQLite (organize_runs /
+    organize_proposals) so the webapp can review and apply them later.
+    Returns the legacy in-memory result so the email path keeps working.
+
+    `run_id` may be supplied by the caller (e.g. an already-created
+    'running' row from the API endpoint); otherwise a new run is created
+    here.
+    """
+    from app.organize import (
+        create_run as store_create_run,
+        finish_run as store_finish_run,
+        insert_proposal as store_insert_proposal,
+        set_proposal_state as store_set_proposal_state,
+    )
+
     settings = get_settings()
     started = datetime.now(timezone.utc)
 
     conn = open_connection()
     try:
         candidates, last_run = _select_candidates(conn)
+        if run_id is None:
+            run_id = store_create_run(conn, mode=settings.organize.mode)
     finally:
         conn.close()
 
@@ -391,9 +410,28 @@ async def run_organize() -> OrganizeResult:
                 skipped.append((rel, f"read error: {exc}"))
                 continue
             try:
-                proposals.append(
-                    await _propose(rel, content, context_files, paths, system_prompt)
-                )
+                proposal = await _propose(rel, content, context_files, paths, system_prompt)
+                proposals.append(proposal)
+                # Persist as it lands so the webapp shows progress live.
+                conn = open_connection()
+                try:
+                    store_insert_proposal(
+                        conn,
+                        run_id,
+                        path=proposal.path,
+                        move_to=proposal.move_to,
+                        tags=proposal.tags,
+                        wikilinks=[
+                            {"target": w.target, "context": w.context}
+                            for w in proposal.wikilinks
+                        ],
+                        refactor=proposal.refactor,
+                        notes=proposal.notes,
+                        parse_error=proposal.parse_error,
+                        raw_response=proposal.raw_response,
+                    )
+                finally:
+                    conn.close()
             except Exception as exc:
                 log.exception("organize: proposal failed for %s", rel)
                 skipped.append((rel, f"LLM error: {exc}"))
@@ -404,15 +442,56 @@ async def run_organize() -> OrganizeResult:
             if proposal.parse_error or proposal.is_no_op:
                 continue
             try:
-                applied.append(await _apply_proposal(proposal))
+                a = await _apply_proposal(proposal)
+                applied.append(a)
+                conn = open_connection()
+                try:
+                    store_set_proposal_state(
+                        conn,
+                        run_id,
+                        proposal.path,
+                        state="failed" if a.error else "applied",
+                        apply_error=a.error,
+                        apply_ops=a.operations,
+                    )
+                finally:
+                    conn.close()
             except Exception as exc:
                 log.exception("apply failed for %s", proposal.path)
                 applied.append(AppliedNote(path=proposal.path, error=f"apply: {exc}"))
+                conn = open_connection()
+                try:
+                    store_set_proposal_state(
+                        conn,
+                        run_id,
+                        proposal.path,
+                        state="failed",
+                        apply_error=f"apply: {exc}",
+                    )
+                finally:
+                    conn.close()
 
     finished = datetime.now(timezone.utc)
     conn = open_connection()
     try:
         _record_run(conn, finished)
+        # Final run state. If we were in "apply" mode and at least one
+        # proposal was applied, mark the run "applied"; otherwise "completed".
+        run_status = (
+            "applied"
+            if settings.organize.mode == "apply" and any(not a.error for a in applied)
+            else "completed"
+        )
+        store_finish_run(
+            conn,
+            run_id,
+            status=run_status,
+            notes_total=len(candidates),
+            summary=(
+                f"{len(proposals)} proposals, "
+                f"{len(applied)} applied, {len(skipped)} skipped"
+            ),
+        )
     finally:
         conn.close()
 
@@ -429,6 +508,93 @@ async def run_organize() -> OrganizeResult:
         applied=applied,
         report=report,
     )
+
+
+async def apply_pending_proposals(run_id: str) -> dict[str, Any]:
+    """Apply every still-pending proposal of a stored run, updating each
+    proposal's state in the DB. Returns a small summary the API surfaces.
+
+    Used by `POST /api/organize/runs/{id}/apply` when the user reviews
+    the dry-run cards in the webapp and validates them.
+    """
+    from app.organize import (
+        fetch_pending_proposals,
+        finish_run as store_finish_run,
+        set_proposal_state as store_set_proposal_state,
+    )
+
+    conn = open_connection()
+    try:
+        pending = fetch_pending_proposals(conn, run_id)
+    finally:
+        conn.close()
+
+    applied = 0
+    failed = 0
+    for sp in pending:
+        # Reconstruct a Proposal-shaped object for _apply_proposal.
+        from app.jobs.organize import (
+            Proposal as _Proposal,
+            WikilinkSuggestion as _Wiki,
+        )
+
+        proposal = _Proposal(
+            path=sp.path,
+            move_to=sp.move_to,
+            tags=sp.tags,
+            wikilinks=[_Wiki(target=w["target"], context=w.get("context", "")) for w in sp.wikilinks],
+            refactor=sp.refactor,
+            notes=sp.notes,
+            raw_response=sp.raw_response,
+        )
+        try:
+            result = await _apply_proposal(proposal)
+            new_state = "failed" if result.error else "applied"
+            conn = open_connection()
+            try:
+                store_set_proposal_state(
+                    conn,
+                    run_id,
+                    sp.path,
+                    state=new_state,
+                    apply_error=result.error,
+                    apply_ops=result.operations,
+                )
+            finally:
+                conn.close()
+            if result.error:
+                failed += 1
+            else:
+                applied += 1
+        except Exception as exc:
+            log.exception("apply_pending: failed for %s", sp.path)
+            conn = open_connection()
+            try:
+                store_set_proposal_state(
+                    conn,
+                    run_id,
+                    sp.path,
+                    state="failed",
+                    apply_error=str(exc),
+                )
+            finally:
+                conn.close()
+            failed += 1
+
+    # If at least one proposal was applied, flip the run's status.
+    conn = open_connection()
+    try:
+        store_finish_run(
+            conn,
+            run_id,
+            status="applied" if applied > 0 else "completed",
+            notes_total=len(pending),
+            summary=f"applied {applied}, failed {failed}",
+        )
+    finally:
+        conn.close()
+
+    return {"applied": applied, "failed": failed}
 
 
 # ── markdown rendering ───────────────────────────────────────────────
