@@ -1,4 +1,4 @@
-import { KeyboardEvent, useRef, useState } from "react";
+import { KeyboardEvent, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Image as ImageIcon, Send, Square, X } from "lucide-react";
 
@@ -34,6 +34,14 @@ export default function Composer({ onSend, onStop, busy }: Props) {
   const [text, setText] = useState("");
   const [images, setImages] = useState<PendingImage[]>([]);
   const fileInput = useRef<HTMLInputElement>(null);
+  const textArea = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    const el = textArea.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight}px`;
+  }, [text]);
 
   function handleKey(e: KeyboardEvent<HTMLTextAreaElement>) {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -110,13 +118,14 @@ export default function Composer({ onSend, onStop, busy }: Props) {
             onChange={(e) => onPickImages(e.target.files)}
           />
           <textarea
+            ref={textArea}
             value={text}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={handleKey}
             rows={1}
             placeholder={t("chat.placeholder")}
             disabled={busy}
-            className="flex-1 max-h-40 min-h-[1.5rem] py-1 outline-none"
+            className="flex-1 max-h-[10rem] min-h-[1.5rem] resize-none overflow-y-auto py-1 outline-none"
           />
           {busy ? (
             <button
