@@ -165,6 +165,7 @@ class OpenAICompatProvider:
         system: str | None = None,
         model: str | None = None,
         temperature: float | None = None,
+        output_schema: dict[str, Any] | None = None,
     ) -> AsyncIterator[StreamEvent]:
         body: dict[str, Any] = {
             "model": model or self.model,
@@ -176,6 +177,17 @@ class OpenAICompatProvider:
             body["tool_choice"] = "auto"
         if temperature is not None:
             body["temperature"] = temperature
+        if output_schema is not None:
+            # OpenAI's chat/completions structured-output shape — the model
+            # is constrained to emit JSON conforming to the supplied schema.
+            body["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "structured_output",
+                    "schema": output_schema,
+                    "strict": True,
+                },
+            }
 
         headers = {
             "Authorization": f"Bearer {self._api_key}",

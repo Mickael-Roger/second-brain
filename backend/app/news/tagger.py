@@ -45,17 +45,32 @@ MAX_ARTICLES_PER_PASS = 50
 MAX_CONCURRENT_LLM = 6
 
 
+# JSON schema enforced via the provider's structured-output mode. The
+# server-side validator guarantees we get exactly this shape — no more
+# parsing prose / markdown / refusals from the LLM.
+_TAGS_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "tags": {
+            "type": "array",
+            "minItems": 0,
+            "maxItems": 20,
+            "items": {"type": "string"},
+        },
+    },
+    "required": ["tags"],
+}
+
+
 _DEFAULT_SYSTEM_PROMPT = """\
-You extract trending HASHTAGS from a news article so articles covering
-the same things can be grouped together on a hot-topics dashboard.
+You extract trending hashtag-style topic slugs from a news article so
+articles covering the same things can be grouped on a hot-topics
+dashboard.
 
-OUTPUT FORMAT — read carefully:
-Return ONE JSON object and ABSOLUTELY NOTHING ELSE. No prose, no
-markdown, no headers, no '#' prefixes, no code fences, no
-explanation, no refusal text. The first character of your response
-must be '{' and the last must be '}'.
-
-{"tags": ["<tag>", "<tag>", ...]}
+The response is constrained by a JSON schema — the server will reject
+anything that isn't `{"tags": [...]}` with up to 20 string entries.
+Your job is just to populate that array with the right strings.
 
 Tag style — these are the exact shapes we want:
   "gpt-5.5"
@@ -64,7 +79,6 @@ Tag style — these are the exact shapes we want:
   "openai"
   "france-pension-reform"
   "apple-q1-earnings"
-  "ukraine-peace-talks"
 
 Tag rules:
 - ALL lowercase. Use hyphens to separate words: "sam-altman", not
@@ -76,17 +90,17 @@ Tag rules:
   in-depth pieces; 15–20 is fine for very topic-dense articles.
   Don't pad: only return tags the article actually substantively
   discusses.
-- Tags should name specific ENTITIES the article is about: people
-  (sam-altman), companies (openai), products (gpt-5.5), versions
-  (ubuntu-26.04), events (apple-q1-earnings), places when central
-  (france), specific policies (pension-reform). NOT generic concepts
-  ("news", "tech", "ai", "world", "today").
+- Tags should name specific ENTITIES: people (sam-altman), companies
+  (openai), products (gpt-5.5), versions (ubuntu-26.04), events
+  (apple-q1-earnings), places when central (france), specific
+  policies (pension-reform). NOT generic concepts ("news", "tech",
+  "ai", "world", "today").
 - Do NOT tag the publication source (skip "techcrunch", "le-monde",
   etc.).
 - Be consistent across runs: the same entity should always get the
   same slug.
 - If the article is a stub, paywalled redirect, or has nothing
-  taggable, return {"tags": []} — still as a JSON object.
+  taggable, return an empty array.
 """
 
 
@@ -128,11 +142,9 @@ class TaggerResult:
 
 
 def _build_user_prompt(article: StoredArticle) -> str:
-    """User-side prompt. We REPEAT the format requirement here because
-    the chatgpt-codex provider has been observed to ignore the system
-    prompt and default to a 'summarize this article' behaviour. Putting
-    the strict-JSON instruction last (right before the model generates)
-    is the most reliable way to force the desired output shape."""
+    """User prompt. With structured-output enforcement on the wire, we
+    no longer need to repeat format requirements — the schema does
+    that. This prompt is content-only."""
     folder = article.feed_group or "(no folder)"
     feed = article.feed_title or article.source
     desc = (article.description or "").strip()
@@ -141,28 +153,10 @@ def _build_user_prompt(article: StoredArticle) -> str:
     if len(desc) > 6000:
         desc = desc[:5999] + "…"
     return (
-        "TASK: Extract trending hashtags from the article below and "
-        "return them as a JSON object.\n\n"
-        "DO NOT summarise the article. DO NOT explain. DO NOT use "
-        "markdown. DO NOT prefix tags with '#'.\n\n"
-        'Output exactly this shape (the first character of your '
-        'response must be "{" and the last must be "}"):\n'
-        '{"tags": ["<slug>", "<slug>", ...]}\n\n'
-        "Slugs are lowercase, hyphen-separated, and name specific "
-        "entities. Good examples:\n"
-        '  "gpt-5.5", "ubuntu-26.04", "sam-altman", "openai", '
-        '"france-pension-reform", "apple-q1-earnings"\n\n'
-        "Bad (do NOT do this): summary text, '#'-prefixed words, "
-        'CamelCase, the publication source, generic words like '
-        '"news"/"tech"/"world".\n\n'
-        "If the article is a stub or unintelligible, return "
-        '{"tags": []}.\n\n'
-        f"--- Article folder ---\n{folder}\n\n"
-        f"--- Article feed ---\n{feed}\n\n"
-        f"--- Article title ---\n{article.title}\n\n"
-        f"--- Article body ---\n{desc or '(no description)'}\n\n"
-        "Now return the JSON object. Remember: first char '{', last "
-        "char '}', nothing else."
+        f"## Folder\n{folder}\n\n"
+        f"## Feed\n{feed}\n\n"
+        f"## Title\n{article.title}\n\n"
+        f"## Body\n{desc or '(no description)'}"
     )
 
 
@@ -280,6 +274,7 @@ async def _tag_one(
             system_prompt,
             [Message(role="user", content=[TextBlock(text=_build_user_prompt(article))])],
             provider_name=provider_name,
+            output_schema=_TAGS_SCHEMA,
         )
     except Exception as exc:
         return article.id, [], "", str(exc)

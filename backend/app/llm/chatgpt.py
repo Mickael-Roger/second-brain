@@ -205,6 +205,7 @@ class ChatGPTProvider:
         system: str | None = None,
         model: str | None = None,
         temperature: float | None = None,
+        output_schema: dict[str, Any] | None = None,
     ) -> AsyncIterator[StreamEvent]:
         try:
             headers = self._headers()
@@ -221,6 +222,19 @@ class ChatGPTProvider:
         }
         if tools:
             payload["tools"] = _tools_to_responses(tools)
+        if output_schema is not None:
+            # Responses API structured-output shape: `text.format` with
+            # type=json_schema. The model is then constrained to emit
+            # JSON matching the schema; the response still arrives as
+            # text on the wire (we json.loads it).
+            payload["text"] = {
+                "format": {
+                    "type": "json_schema",
+                    "name": "structured_output",
+                    "schema": _sanitise_json_schema(output_schema),
+                    "strict": True,
+                },
+            }
 
         async with httpx.AsyncClient(timeout=self._timeout) as client:
             async with client.stream(

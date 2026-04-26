@@ -50,6 +50,7 @@ async def _attempt(
     messages: list[Message],
     provider_name: str | None,
     model: str | None,
+    output_schema: dict | None = None,
 ) -> tuple[str | None, str | None]:
     """One attempt. Returns (text, None) on success, (None, error_msg) on
     a soft error (raise inside-stream errors as messages so the caller
@@ -58,7 +59,11 @@ async def _attempt(
     text_buf: list[str] = []
     try:
         async for ev in provider.stream(
-            messages=messages, tools=[], system=system, model=model
+            messages=messages,
+            tools=[],
+            system=system,
+            model=model,
+            output_schema=output_schema,
         ):
             if ev.type == "error":
                 return None, ev.error or "LLM stream error"
@@ -87,6 +92,7 @@ async def complete(
     model: str | None = None,
     max_attempts: int = 3,
     initial_backoff_sec: float = 1.0,
+    output_schema: dict | None = None,
 ) -> str:
     """Run an LLM turn and return the concatenated assistant text.
 
@@ -94,6 +100,12 @@ async def complete(
     errors (5xx, connection refused/reset, timeouts) with exponential
     backoff (1s, 2s, 4s by default). Non-retryable errors (4xx, malformed
     arguments, etc.) raise immediately.
+
+    `output_schema` (a JSON Schema dict) constrains the model's response
+    to JSON matching the schema — supported by OpenAI-compatible
+    `response_format=json_schema` and the Codex Responses API's
+    `text.format=json_schema`. The wire format is still text; the
+    caller should `json.loads` the result.
     """
     last_error: str = ""
     for attempt in range(1, max_attempts + 1):
@@ -102,6 +114,7 @@ async def complete(
             messages=messages,
             provider_name=provider_name,
             model=model,
+            output_schema=output_schema,
         )
         if error is None and text is not None:
             return text
