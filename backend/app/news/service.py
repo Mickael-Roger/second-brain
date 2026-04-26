@@ -127,10 +127,15 @@ async def fetch_freshrss(
                     "news fetch: freshrss got %d items (read=%d, unread=%d)",
                     fetched, read_count, fetched - read_count,
                 )
+                excluded = set(cfg.excluded_group_ids or [])
+                skipped_excluded = 0
                 conn = open_connection()
                 try:
                     for it in items:
                         f = feeds.get(it.feed_id)
+                        if f and f.group_id and f.group_id in excluded:
+                            skipped_excluded += 1
+                            continue
                         if insert_article(
                             conn,
                             source=source,
@@ -147,6 +152,11 @@ async def fetch_freshrss(
                             inserted += 1
                 finally:
                     conn.close()
+                if skipped_excluded:
+                    log.info(
+                        "news fetch: skipped %d items from excluded folders %s",
+                        skipped_excluded, sorted(excluded),
+                    )
     except Exception as exc:
         error = str(exc)
         log.exception("news fetch: freshrss failed")

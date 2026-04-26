@@ -42,7 +42,8 @@ class FeverFeed:
     id: str
     title: str
     site_url: str | None
-    group_name: str | None  # the FreshRSS folder/category this feed sits in
+    group_id: str | None     # FreshRSS folder/category id (for include/exclude config)
+    group_name: str | None   # human-readable folder name (for the UI)
 
 
 class FeverClient:
@@ -125,6 +126,7 @@ class FeverClient:
                 id=fid,
                 title=str(raw.get("title", "")) or fid,
                 site_url=raw.get("site_url") or None,
+                group_id=gid,
                 group_name=group_titles.get(gid) if gid else None,
             )
         return out

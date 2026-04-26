@@ -128,6 +128,11 @@ class TaggerResult:
 
 
 def _build_user_prompt(article: StoredArticle) -> str:
+    """User-side prompt. We REPEAT the format requirement here because
+    the chatgpt-codex provider has been observed to ignore the system
+    prompt and default to a 'summarize this article' behaviour. Putting
+    the strict-JSON instruction last (right before the model generates)
+    is the most reliable way to force the desired output shape."""
     folder = article.feed_group or "(no folder)"
     feed = article.feed_title or article.source
     desc = (article.description or "").strip()
@@ -136,10 +141,28 @@ def _build_user_prompt(article: StoredArticle) -> str:
     if len(desc) > 6000:
         desc = desc[:5999] + "…"
     return (
-        f"## Folder\n{folder}\n\n"
-        f"## Feed\n{feed}\n\n"
-        f"## Title\n{article.title}\n\n"
-        f"## Body\n{desc or '(no description)'}"
+        "TASK: Extract trending hashtags from the article below and "
+        "return them as a JSON object.\n\n"
+        "DO NOT summarise the article. DO NOT explain. DO NOT use "
+        "markdown. DO NOT prefix tags with '#'.\n\n"
+        'Output exactly this shape (the first character of your '
+        'response must be "{" and the last must be "}"):\n'
+        '{"tags": ["<slug>", "<slug>", ...]}\n\n'
+        "Slugs are lowercase, hyphen-separated, and name specific "
+        "entities. Good examples:\n"
+        '  "gpt-5.5", "ubuntu-26.04", "sam-altman", "openai", '
+        '"france-pension-reform", "apple-q1-earnings"\n\n'
+        "Bad (do NOT do this): summary text, '#'-prefixed words, "
+        'CamelCase, the publication source, generic words like '
+        '"news"/"tech"/"world".\n\n'
+        "If the article is a stub or unintelligible, return "
+        '{"tags": []}.\n\n'
+        f"--- Article folder ---\n{folder}\n\n"
+        f"--- Article feed ---\n{feed}\n\n"
+        f"--- Article title ---\n{article.title}\n\n"
+        f"--- Article body ---\n{desc or '(no description)'}\n\n"
+        "Now return the JSON object. Remember: first char '{', last "
+        "char '}', nothing else."
     )
 
 

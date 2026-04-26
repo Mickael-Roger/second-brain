@@ -134,6 +134,13 @@ news:
       #   echo -n "youruser:yourpassword" | md5sum
       api_key: "REPLACE_WITH_MD5_HASH"
       max_items_per_run: 500
+      # FreshRSS folder/group ids to skip on every fetch. Articles
+      # from feeds in these folders are never stored (so they don't
+      # cost LLM cycles in the tagger and don't pollute the trends
+      # dashboard). Find a folder's id by editing the category in
+      # FreshRSS — it's in the URL. Stringify the ids; leave empty to
+      # ingest everything.
+      excluded_group_ids: []   # e.g. ["4", "12"]
 
 # ---------------------------------------------------------------------------
 # SMTP — outbound only. Used for the nightly Organize report.

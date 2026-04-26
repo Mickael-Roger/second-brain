@@ -147,6 +147,12 @@ class FreshRSSSourceConfig(BaseModel):
     base_url: str                       # e.g. https://freshrss.example.com/api/fever.php
     api_key: str                        # md5(username:password)
     max_items_per_run: int = 500
+    # FreshRSS folder/group ids to skip on every fetch — articles whose
+    # feed lives in these folders are never stored. The Fever group ids
+    # are integers (stringified here) visible in FreshRSS's URL when
+    # editing a category. Useful for muting noisy or off-topic folders
+    # without unsubscribing from the feeds in FreshRSS itself.
+    excluded_group_ids: list[str] = Field(default_factory=list)
 
 
 class NewsSourcesSection(BaseModel):
