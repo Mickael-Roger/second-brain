@@ -37,6 +37,7 @@ class StoredArticle:
     fetched_at: str
     is_read: bool
     image_url: str | None
+    feed_favicon: str | None   # data URI joined from news_feeds
 
 
 @dataclass(slots=True)
@@ -44,6 +45,7 @@ class FeedSummary:
     feed_id: str
     feed_title: str
     feed_group: str | None
+    favicon: str | None   # data URI; None if the feed has no favicon
     total: int
     unread: int
 
@@ -175,6 +177,40 @@ def mark_article_read(
     return cur.rowcount > 0
 
 
+def upsert_feed(
+    conn: sqlite3.Connection,
+    *,
+    feed_id: str,
+    title: str | None,
+    feed_group: str | None,
+    site_url: str | None,
+    favicon_data_uri: str | None,
+) -> None:
+    """Refresh the per-feed metadata row. Called once per feed at the
+    start of a fetch pass (after we've pulled feeds + favicons from
+    Fever). The existing row is fully replaced — title/group/favicon
+    rotations in FreshRSS propagate here without a manual sync."""
+    conn.execute(
+        "INSERT INTO news_feeds "
+        "(id, title, feed_group, site_url, favicon_data_uri, updated_at) "
+        "VALUES (?, ?, ?, ?, ?, ?) "
+        "ON CONFLICT(id) DO UPDATE SET "
+        "  title = excluded.title, "
+        "  feed_group = excluded.feed_group, "
+        "  site_url = excluded.site_url, "
+        "  favicon_data_uri = excluded.favicon_data_uri, "
+        "  updated_at = excluded.updated_at",
+        (
+            feed_id,
+            title,
+            feed_group,
+            site_url,
+            favicon_data_uri,
+            _utcnow_iso(),
+        ),
+    )
+
+
 # ── News tab queries (per-feed listing) ────────────────────────────
 
 
@@ -182,18 +218,20 @@ def list_feeds_with_counts(
     conn: sqlite3.Connection, *, from_iso: str, to_iso: str
 ) -> list[FeedSummary]:
     """For each feed, return total + unread article counts in the
-    [from, to] window. Date-prefix comparison on published_at so
-    today's articles aren't dropped by lexicographic mismatch."""
+    [from, to] window, plus the feed's favicon (if any). Date-prefix
+    comparison on published_at so today's articles aren't dropped by
+    lexicographic mismatch."""
     rows = conn.execute(
-        "SELECT feed_id, "
-        "       COALESCE(MAX(feed_title), '(unknown feed)') AS feed_title, "
-        "       MAX(feed_group) AS feed_group, "
+        "SELECT a.feed_id, "
+        "       COALESCE(MAX(a.feed_title), '(unknown feed)') AS feed_title, "
+        "       MAX(a.feed_group) AS feed_group, "
+        "       MAX(f.favicon_data_uri) AS favicon, "
         "       COUNT(*) AS total, "
-        "       SUM(CASE WHEN is_read = 0 THEN 1 ELSE 0 END) AS unread "
-        "FROM news_articles "
-        "WHERE substr(published_at, 1, 10) >= ? "
-        "  AND substr(published_at, 1, 10) <= ? "
-        "GROUP BY feed_id "
+        "       SUM(CASE WHEN a.is_read = 0 THEN 1 ELSE 0 END) AS unread "
+        "FROM news_articles a LEFT JOIN news_feeds f ON f.id = a.feed_id "
+        "WHERE substr(a.published_at, 1, 10) >= ? "
+        "  AND substr(a.published_at, 1, 10) <= ? "
+        "GROUP BY a.feed_id "
         "ORDER BY feed_title COLLATE NOCASE ASC",
         (from_iso, to_iso),
     ).fetchall()
@@ -202,11 +240,18 @@ def list_feeds_with_counts(
             feed_id=str(r["feed_id"] or ""),
             feed_title=r["feed_title"],
             feed_group=r["feed_group"],
+            favicon=r["favicon"],
             total=int(r["total"] or 0),
             unread=int(r["unread"] or 0),
         )
         for r in rows
     ]
+
+
+_ARTICLE_SELECT = (
+    "SELECT a.*, f.favicon_data_uri AS feed_favicon "
+    "FROM news_articles a LEFT JOIN news_feeds f ON f.id = a.feed_id"
+)
 
 
 def list_articles(
@@ -220,22 +265,23 @@ def list_articles(
     limit: int = 500,
 ) -> list[StoredArticle]:
     """Articles in the window, optionally filtered to one feed, one
-    category (feed_group), and/or unread items. Newest-first."""
+    category (feed_group), and/or unread items. Newest-first.
+    Joins news_feeds to surface the feed favicon."""
     sql = (
-        "SELECT * FROM news_articles "
-        "WHERE substr(published_at, 1, 10) >= ? "
-        "  AND substr(published_at, 1, 10) <= ?"
+        _ARTICLE_SELECT
+        + " WHERE substr(a.published_at, 1, 10) >= ?"
+          " AND substr(a.published_at, 1, 10) <= ?"
     )
     params: list = [from_iso, to_iso]
     if feed_id:
-        sql += " AND feed_id = ?"
+        sql += " AND a.feed_id = ?"
         params.append(feed_id)
     if feed_group:
-        sql += " AND feed_group = ?"
+        sql += " AND a.feed_group = ?"
         params.append(feed_group)
     if unread_only:
-        sql += " AND is_read = 0"
-    sql += " ORDER BY published_at DESC LIMIT ?"
+        sql += " AND a.is_read = 0"
+    sql += " ORDER BY a.published_at DESC LIMIT ?"
     params.append(limit)
     rows = conn.execute(sql, params).fetchall()
     return [_row_to_article(r) for r in rows]
@@ -243,7 +289,7 @@ def list_articles(
 
 def get_article(conn: sqlite3.Connection, article_id: str) -> StoredArticle | None:
     row = conn.execute(
-        "SELECT * FROM news_articles WHERE id = ?", (article_id,)
+        _ARTICLE_SELECT + " WHERE a.id = ?", (article_id,)
     ).fetchone()
     return _row_to_article(row) if row is not None else None
 
@@ -322,6 +368,7 @@ def _row_to_article(row: sqlite3.Row) -> StoredArticle:
         fetched_at=row["fetched_at"],
         is_read=bool(row["is_read"]) if "is_read" in keys else False,
         image_url=row["image_url"] if "image_url" in keys else None,
+        feed_favicon=row["feed_favicon"] if "feed_favicon" in keys else None,
     )
 
 

@@ -47,6 +47,7 @@ class ArticleSummaryDTO(BaseModel):
     feed_id: str | None
     feed_title: str | None
     feed_group: str | None
+    feed_favicon: str | None
     url: str | None
     title: str
     author: str | None
@@ -66,6 +67,7 @@ class FeedSummaryDTO(BaseModel):
     feed_id: str
     feed_title: str
     feed_group: str | None
+    favicon: str | None
     total: int
     unread: int
 
@@ -93,6 +95,7 @@ def _article_summary_dto(a: StoredArticle) -> ArticleSummaryDTO:
         feed_id=a.feed_id,
         feed_title=a.feed_title,
         feed_group=a.feed_group,
+        feed_favicon=a.feed_favicon,
         url=a.url,
         title=a.title,
         author=a.author,
@@ -159,6 +162,7 @@ def get_feeds(
             feed_id=s.feed_id,
             feed_title=s.feed_title,
             feed_group=s.feed_group,
+            favicon=s.favicon,
             total=s.total,
             unread=s.unread,
         )

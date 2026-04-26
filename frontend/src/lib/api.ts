@@ -149,6 +149,7 @@ export interface NewsArticleSummary {
   feed_id: string | null;
   feed_title: string | null;
   feed_group: string | null;
+  feed_favicon: string | null;
   url: string | null;
   title: string;
   author: string | null;
@@ -165,6 +166,7 @@ export interface NewsFeedSummary {
   feed_id: string;
   feed_title: string;
   feed_group: string | null;
+  favicon: string | null;
   total: number;
   unread: number;
 }

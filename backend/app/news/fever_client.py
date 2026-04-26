@@ -44,6 +44,7 @@ class FeverFeed:
     site_url: str | None
     group_id: str | None     # FreshRSS folder/category id (for include/exclude config)
     group_name: str | None   # human-readable folder name (for the UI)
+    favicon_id: str | None   # Fever favicon id; None if the feed has no favicon
 
 
 class FeverClient:
@@ -128,13 +129,28 @@ class FeverClient:
         for raw in body.get("feeds", []) or []:
             fid = str(raw.get("id"))
             gid = feed_to_group.get(fid)
+            fav_raw = raw.get("favicon_id")
             out[fid] = FeverFeed(
                 id=fid,
                 title=str(raw.get("title", "")) or fid,
                 site_url=raw.get("site_url") or None,
                 group_id=gid,
                 group_name=group_titles.get(gid) if gid else None,
+                favicon_id=str(fav_raw) if fav_raw not in (None, "", 0, "0") else None,
             )
+        return out
+
+    async def favicons(self) -> dict[str, str]:
+        """Fever's `favicons` action returns base64-encoded data URIs
+        keyed by favicon_id. Feeds reference these via their
+        `favicon_id` field — we join in the service layer."""
+        body = await self._post(params={"favicons": ""})
+        out: dict[str, str] = {}
+        for raw in body.get("favicons", []) or []:
+            fid = str(raw.get("id"))
+            data = str(raw.get("data", "")).strip()
+            if fid and data:
+                out[fid] = data
         return out
 
     async def items_since(

@@ -15,6 +15,7 @@ from .store import (
     purge_old_articles,
     purge_old_articles_with_ids,
     set_fetch_run_status,
+    upsert_feed,
 )
 
 __all__ = [
@@ -34,4 +35,5 @@ __all__ = [
     "purge_old_articles_with_ids",
     "set_fetch_run_status",
     "summaries",
+    "upsert_feed",
 ]

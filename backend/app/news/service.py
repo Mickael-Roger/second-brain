@@ -39,6 +39,7 @@ from .store import (
     finish_fetch_run,
     insert_article,
     purge_old_articles_with_ids,
+    upsert_feed,
 )
 
 log = logging.getLogger(__name__)
@@ -50,6 +51,30 @@ class FetchSummary:
     fetched: int
     inserted: int
     error: str | None = None
+
+
+_FAVICON_MAX_BYTES = 8192  # ~8 KB, plenty for a 16-32px PNG/ICO
+
+
+def _normalise_favicon(raw: str | None) -> str | None:
+    """Coerce Fever's favicon payload to a `data:` URI we can plug
+    straight into an <img src>. FreshRSS returns either a bare base64
+    string (e.g. 'iVBORw0KGgo…') or already-prefixed
+    'image/png;base64,iVBORw…' — guard both shapes. Drops payloads
+    above the size cap so a runaway favicon can't bloat the DB."""
+    if raw is None:
+        return None
+    s = raw.strip()
+    if not s:
+        return None
+    if len(s) > _FAVICON_MAX_BYTES:
+        return None
+    if s.startswith("data:"):
+        return s
+    if s.startswith("image/") and ";base64," in s:
+        return f"data:{s}"
+    # Bare base64 — assume PNG (the common case in FreshRSS).
+    return f"data:image/png;base64,{s}"
 
 
 def _last_external_id(conn: sqlite3.Connection, source: str) -> int:
@@ -117,6 +142,33 @@ async def fetch_freshrss(
     try:
         async with FeverClient(base_url=cfg.base_url, api_key=cfg.api_key) as client:
             feeds = await client.feeds()
+            try:
+                favicons = await client.favicons()
+            except Exception:
+                # Favicons are nice-to-have — a 5xx on this endpoint
+                # shouldn't kill the fetch.
+                log.exception("news fetch: favicons endpoint failed (non-fatal)")
+                favicons = {}
+            # Refresh per-feed metadata (title, group, favicon) into
+            # news_feeds so the UI's article list can render the icon.
+            conn = open_connection()
+            try:
+                for f in feeds.values():
+                    fav = (
+                        favicons.get(f.favicon_id)
+                        if f.favicon_id
+                        else None
+                    )
+                    upsert_feed(
+                        conn,
+                        feed_id=f.id,
+                        title=f.title,
+                        feed_group=f.group_name,
+                        site_url=f.site_url,
+                        favicon_data_uri=_normalise_favicon(fav),
+                    )
+            finally:
+                conn.close()
             if from_ts is None:
                 items = await client.items_since(
                     since_id=since, max_items=cfg.max_items_per_run

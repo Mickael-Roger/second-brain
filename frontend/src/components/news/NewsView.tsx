@@ -15,11 +15,11 @@ import {
   ChevronDown,
   ChevronRight,
   ExternalLink,
-  Mail,
   MailOpen,
   MessageSquare,
   Newspaper,
   Play,
+  Rss,
 } from "lucide-react";
 
 import {
@@ -311,15 +311,21 @@ function FeedSidebar({
                           onClick={() =>
                             onSelect({ kind: "feed", feedId: f.feed_id })
                           }
-                          className={`flex w-full items-center justify-between rounded px-2 py-1 text-left text-xs transition ${
+                          className={`flex w-full items-center gap-1.5 rounded px-2 py-1 text-left text-xs transition ${
                             active
                               ? "bg-accent/15 text-accent"
                               : "text-text/85 hover:bg-bg"
                           }`}
                           title={f.feed_title}
                         >
-                          <span className="truncate">{f.feed_title}</span>
-                          <span className="ml-2 shrink-0 text-[10px] text-muted">
+                          <FeedIcon
+                            favicon={f.favicon}
+                            alt={f.feed_title}
+                            isRead
+                            size={12}
+                          />
+                          <span className="flex-1 truncate">{f.feed_title}</span>
+                          <span className="shrink-0 text-[10px] text-muted">
                             {f.unread > 0 ? (
                               <b className="text-text">{f.unread}</b>
                             ) : (
@@ -394,11 +400,11 @@ function ArticleList({
               }`}
             >
               <div className="flex items-start gap-2">
-                {a.is_read ? (
-                  <MailOpen className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted" />
-                ) : (
-                  <Mail className="mt-0.5 h-3.5 w-3.5 shrink-0 text-accent" />
-                )}
+                <FeedIcon
+                  favicon={a.feed_favicon}
+                  isRead={a.is_read}
+                  alt={a.feed_title ?? a.source}
+                />
                 <span
                   className={`line-clamp-2 flex-1 text-sm ${
                     a.is_read ? "text-muted" : "text-text"
@@ -407,7 +413,7 @@ function ArticleList({
                   {a.title}
                 </span>
               </div>
-              <span className="ml-5 text-[10px] text-muted">
+              <span className="ml-6 text-[10px] text-muted">
                 {(a.feed_title ?? a.source) + " · " + a.published_at.slice(0, 10)}
               </span>
             </button>
@@ -527,6 +533,53 @@ function DetailPane({
         </section>
       </article>
     </section>
+  );
+}
+
+// Feed favicon — falls back to a generic RSS glyph when the feed has
+// no icon. The unread indicator is a coloured dot in the top-right
+// corner so we can keep the feed icon's identity while still showing
+// read state at a glance.
+function FeedIcon({
+  favicon,
+  alt,
+  isRead,
+  size = 14,
+}: {
+  favicon: string | null;
+  alt: string;
+  isRead: boolean;
+  size?: number;
+}) {
+  return (
+    <span
+      className="relative mt-0.5 inline-flex shrink-0 items-center justify-center"
+      style={{ width: size, height: size }}
+    >
+      {favicon ? (
+        <img
+          src={favicon}
+          alt={alt}
+          width={size}
+          height={size}
+          className={`rounded-sm ${isRead ? "opacity-50" : ""}`}
+          referrerPolicy="no-referrer"
+          onError={(e) => {
+            // If the data URI is invalid the broken-image glyph would
+            // render — hide the img so the parent's empty box wins.
+            (e.currentTarget as HTMLImageElement).style.visibility = "hidden";
+          }}
+        />
+      ) : (
+        <Rss
+          className={isRead ? "text-muted/70" : "text-accent"}
+          style={{ width: size, height: size }}
+        />
+      )}
+      {!isRead && (
+        <span className="absolute -right-0.5 -top-0.5 h-1.5 w-1.5 rounded-full bg-accent ring-1 ring-bg" />
+      )}
+    </span>
   );
 }
 
