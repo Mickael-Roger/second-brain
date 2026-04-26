@@ -130,33 +130,55 @@ def _build_user_prompt(article: StoredArticle) -> str:
 def _parse_tags(raw: str) -> list[str]:
     """Pull the tags array out of the LLM's JSON response.
 
-    Tolerates code fences and leading prose. Anything that can't be
-    parsed yields an empty list — the caller still records that the
-    article was processed (we don't want to retry forever on a single
-    bad LLM response)."""
+    Tolerates code fences, leading prose, and a few alias keys
+    (`tags` / `topics` / `hashtags`). Also accepts a bare JSON array
+    when the LLM ignored the object envelope. Anything that still
+    can't be parsed yields an empty list — the caller logs a sample
+    of the raw response so we can see what the LLM actually said."""
     s = raw.strip()
     if s.startswith("```"):
         s = s.split("\n", 1)[1] if "\n" in s else s
         if s.endswith("```"):
             s = s[:-3]
-    start = s.find("{")
-    end = s.rfind("}")
-    if start < 0 or end <= start:
+    s = s.strip()
+
+    parsed: object | None = None
+
+    # Form 1: full object with a tags-shaped key.
+    obj_start = s.find("{")
+    obj_end = s.rfind("}")
+    if obj_start >= 0 and obj_end > obj_start:
+        try:
+            obj = json.loads(s[obj_start : obj_end + 1])
+        except json.JSONDecodeError:
+            obj = None
+        if isinstance(obj, dict):
+            for key in ("tags", "topics", "hashtags", "labels"):
+                if key in obj and isinstance(obj[key], list):
+                    parsed = obj[key]
+                    break
+
+    # Form 2: bare JSON array.
+    if parsed is None:
+        arr_start = s.find("[")
+        arr_end = s.rfind("]")
+        if arr_start >= 0 and arr_end > arr_start:
+            try:
+                arr = json.loads(s[arr_start : arr_end + 1])
+            except json.JSONDecodeError:
+                arr = None
+            if isinstance(arr, list):
+                parsed = arr
+
+    if not isinstance(parsed, list):
         return []
-    try:
-        obj = json.loads(s[start : end + 1])
-    except json.JSONDecodeError:
-        return []
-    raw_tags = obj.get("tags") if isinstance(obj, dict) else None
-    if not isinstance(raw_tags, list):
-        return []
+
     out: list[str] = []
     seen: set[str] = set()
-    for t in raw_tags:
+    for t in parsed:
         tag = str(t).strip().lstrip("#")
         if not tag:
             continue
-        # Cheap dedupe within a single article — case-insensitive.
         key = tag.lower()
         if key in seen:
             continue
@@ -170,11 +192,14 @@ async def _tag_one(
     system_prompt: str,
     *,
     provider_name: str | None,
-) -> tuple[str, list[str], str | None]:
-    """One LLM call. Returns (article_id, tags, error). On failure the
-    tags list is empty and `error` is set; the caller decides whether
-    to persist (we do — extracting-once means we don't loop on bad
-    inputs)."""
+) -> tuple[str, list[str], str, str | None]:
+    """One LLM call. Returns (article_id, tags, raw_response, error).
+
+    `raw_response` is included so the caller can log a sample when the
+    parser yielded zero tags — that's the only way to diagnose
+    format mismatches (the LLM might be wrapping in code fences,
+    using an unexpected key, or returning prose). On exception the
+    tags list is empty, raw is empty, and `error` is set."""
     try:
         raw = await complete(
             system_prompt,
@@ -182,8 +207,8 @@ async def _tag_one(
             provider_name=provider_name,
         )
     except Exception as exc:
-        return article.id, [], str(exc)
-    return article.id, _parse_tags(raw), None
+        return article.id, [], "", str(exc)
+    return article.id, _parse_tags(raw), raw, None
 
 
 async def run_tagger_pass() -> TaggerResult:
@@ -215,7 +240,7 @@ async def run_tagger_pass() -> TaggerResult:
     sem = asyncio.Semaphore(MAX_CONCURRENT_LLM)
     provider_name = settings.news.cluster_llm_provider
 
-    async def _worker(a: StoredArticle) -> tuple[str, list[str], str | None]:
+    async def _worker(a: StoredArticle) -> tuple[str, list[str], str, str | None]:
         async with sem:
             return await _tag_one(a, system_prompt, provider_name=provider_name)
 
@@ -224,21 +249,29 @@ async def run_tagger_pass() -> TaggerResult:
     processed = 0
     failed = 0
     total_tags = 0
+    empty_logged = 0
     conn = open_connection()
     try:
-        for article_id, tags, error in results:
+        for article_id, tags, raw, error in results:
             if error:
-                # Record an empty tag set + extracted_at = now so we
-                # don't re-prompt the same article on every pass. If
-                # the user wants to retry a specific article they can
-                # NULL its tags_extracted_at by hand.
                 log.warning("news tagger: %s failed: %s", article_id, error)
                 failed += 1
                 set_article_tags(conn, article_id, tags=[])
-            else:
-                set_article_tags(conn, article_id, tags=tags)
-                processed += 1
-                total_tags += len(tags)
+                continue
+            if not tags and empty_logged < 3:
+                # First few empty-result responses get sampled into
+                # the log so we can see what the LLM is actually
+                # returning. Capped to avoid log spam when something
+                # is systematically wrong (which is the case when
+                # we get this branch in the first place).
+                log.warning(
+                    "news tagger: %s parsed to 0 tags; raw[:600]=%r",
+                    article_id, raw[:600],
+                )
+                empty_logged += 1
+            set_article_tags(conn, article_id, tags=tags)
+            processed += 1
+            total_tags += len(tags)
         finish_fetch_run(
             conn,
             run_id,
