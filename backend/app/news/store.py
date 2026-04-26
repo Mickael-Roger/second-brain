@@ -198,17 +198,21 @@ def aggregate_tags(
     [from, to] window. Tags appearing on fewer than `min_count`
     articles are dropped (they're not 'trends', they're singletons).
 
+    `from_iso` / `to_iso` are inclusive `YYYY-MM-DD` boundaries. We
+    extract the date prefix from `published_at` (which is a full
+    ISO datetime) for the comparison — comparing a full datetime
+    against a bare date string lexicographically would silently
+    exclude every article published ON the upper-bound day (because
+    "2026-04-26T15:30:00..." sorts greater than "2026-04-26").
+
     Case-insensitive grouping so 'GPT-5' and 'gpt-5' aren't treated as
-    different tags. We keep one canonical casing per group — whichever
-    spelling we saw first in the result set, since SQLite's GROUP BY
-    on a case-insensitive key is non-deterministic about the picked
-    representative; the LLM is prompted to be consistent so this
-    rarely matters in practice."""
+    different tags."""
     rows = conn.execute(
         "SELECT MIN(je.value) AS tag, COUNT(DISTINCT a.id) AS n "
         "FROM news_articles a, json_each(a.tags_json) je "
         "WHERE a.tags_extracted_at IS NOT NULL "
-        "  AND a.published_at >= ? AND a.published_at <= ? "
+        "  AND substr(a.published_at, 1, 10) >= ? "
+        "  AND substr(a.published_at, 1, 10) <= ? "
         "GROUP BY LOWER(je.value) "
         "HAVING n >= ? "
         "ORDER BY n DESC, tag ASC",
@@ -225,11 +229,15 @@ def list_articles_with_tag(
     to_iso: str,
 ) -> list[StoredArticle]:
     """All articles in the window whose tag list contains `tag`
-    (case-insensitive, exact match — no substring or stemming)."""
+    (case-insensitive, exact match — no substring or stemming).
+
+    Same date-prefix trick as `aggregate_tags` so today's articles
+    aren't dropped by the upper-bound comparison."""
     rows = conn.execute(
         "SELECT a.* FROM news_articles a, json_each(a.tags_json) je "
         "WHERE LOWER(je.value) = LOWER(?) "
-        "  AND a.published_at >= ? AND a.published_at <= ? "
+        "  AND substr(a.published_at, 1, 10) >= ? "
+        "  AND substr(a.published_at, 1, 10) <= ? "
         "ORDER BY a.published_at DESC",
         (tag, from_iso, to_iso),
     ).fetchall()
