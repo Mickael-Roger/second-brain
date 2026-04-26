@@ -75,7 +75,7 @@ async def run_nightly() -> str:
     report = "\n".join(parts)
 
     try:
-        from app.services.email import send_email
+        from app.services.email import render_markdown_to_html_doc, send_email
 
         if organize is not None:
             subject = (
@@ -87,7 +87,14 @@ async def run_nightly() -> str:
                 f"[second-brain] nightly — archived {archive.moved} "
                 f"(organize failed)"
             )
-        send_email(subject=subject, body=report)
+        # Send multipart: the markdown source is the text/plain part (so
+        # plain clients still get a readable report), the rendered HTML
+        # is the multipart/html alternative (so GUI clients show it nicely).
+        send_email(
+            subject=subject,
+            body=report,
+            html=render_markdown_to_html_doc(report),
+        )
     except Exception:
         log.exception("nightly report email failed")
 
