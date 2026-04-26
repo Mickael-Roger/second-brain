@@ -131,6 +131,61 @@ class FeverClient:
                 break
         return out
 
+    async def items_in_range(
+        self,
+        *,
+        from_ts: int,
+        to_ts: int | None = None,
+        max_items: int = 500,
+    ) -> list[FeverItem]:
+        """Walk items newest-first via Fever's `max_id` cursor and return
+        those whose `created_on_time` falls in [from_ts, to_ts]. Stops
+        early once a page contains items strictly older than `from_ts`
+        (Fever returns ids in monotonically-decreasing order with max_id,
+        and item id correlates with created_on_time, so once we see an
+        out-of-range item we know the rest of the walk is also out of
+        range).
+
+        `to_ts=None` means "no upper bound" (i.e. up to now). Returned
+        items are newest-first."""
+        out: list[FeverItem] = []
+        cursor: int | None = None
+        # Same page cap as items_since — Fever pages are 50 items.
+        max_pages = max(1, (max_items + 49) // 50)
+        for _ in range(max_pages):
+            params = {"items": ""}
+            if cursor is not None:
+                params["max_id"] = str(cursor)
+            body = await self._post(params=params)
+            items = body.get("items") or []
+            if not items:
+                break
+            below_floor = False
+            for raw in items:
+                item = _parse_item(raw)
+                ts = item.created_on_time
+                # Track the cursor for the next page regardless of
+                # whether this item is in-range — we need to keep walking
+                # backwards through items to find the boundary.
+                rid = int(raw.get("id", 0))
+                if cursor is None or rid < cursor:
+                    cursor = rid
+                if ts and ts < from_ts:
+                    below_floor = True
+                    continue
+                if to_ts is not None and ts and ts > to_ts:
+                    continue
+                out.append(item)
+                if len(out) >= max_items:
+                    return out
+            if below_floor:
+                # We crossed the lower bound on this page — anything older
+                # is by definition out of range.
+                break
+            if len(items) < 50:
+                break
+        return out
+
 
 def _parse_item(raw: dict[str, Any]) -> FeverItem:
     return FeverItem(

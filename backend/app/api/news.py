@@ -14,7 +14,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import sqlite3
-from datetime import date, timedelta
+from datetime import date, datetime, time, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
@@ -152,15 +152,73 @@ def get_event_detail(
     )
 
 
+def _resolve_period_ts(
+    period: str, from_: str | None, to: str | None
+) -> tuple[int, int | None]:
+    """Map the UI's period selector to a (from_ts, to_ts) pair, in unix
+    seconds (UTC). `to_ts=None` means "no upper bound" (i.e. up to now).
+
+    Boundaries are inclusive — the date `from_` becomes 00:00 UTC of
+    that day, the date `to` becomes 23:59:59 UTC of that day, so an
+    article published any time on `to` is captured."""
+    today = date.today()
+    if period == "custom":
+        f = date.fromisoformat(from_) if from_ else today
+        t = date.fromisoformat(to) if to else today
+    elif period == "today":
+        f = t = today
+    elif period == "30d":
+        f = today - timedelta(days=30)
+        t = today
+    else:  # default: 7d
+        f = today - timedelta(days=7)
+        t = today
+    from_dt = datetime.combine(f, time.min, tzinfo=timezone.utc)
+    to_dt = datetime.combine(t, time.max, tzinfo=timezone.utc)
+    return int(from_dt.timestamp()), int(to_dt.timestamp())
+
+
 @router.post("/fetch", response_model=TriggerResponse, status_code=202)
-async def trigger_fetch(_user: str = Depends(current_user)) -> TriggerResponse:
-    """Kick off an immediate fetch pass in the background. The UI polls
-    /api/news/runs (or just refreshes /events) to see the result."""
+async def trigger_fetch(
+    period: str = Query(
+        "7d", description="today | 7d | 30d | custom — scopes the manual fetch"
+    ),
+    from_: str | None = Query(None, alias="from"),
+    to: str | None = Query(None),
+    _user: str = Depends(current_user),
+) -> TriggerResponse:
+    """Kick off an immediate fetch pass in the background, scoped to the
+    selected period. Only articles published in that range are stored.
+
+    The scheduler uses incremental fetches (no period) for efficiency;
+    manual fetches use a date range so the user gets predictable
+    results regardless of what's already in the DB."""
+    from app.config import get_settings
     from app.news.service import fetch_all_sources
+
+    if get_settings().news.sources.freshrss is None:
+        raise HTTPException(
+            status_code=400,
+            detail="news.sources.freshrss is not configured",
+        )
+
+    from_ts, to_ts = _resolve_period_ts(period, from_, to)
+    log.info(
+        "manual news fetch requested (period=%s, from_ts=%d, to_ts=%d)",
+        period, from_ts, to_ts,
+    )
 
     async def _go() -> None:
         try:
-            await fetch_all_sources()
+            summaries = await fetch_all_sources(from_ts=from_ts, to_ts=to_ts)
+            for s in summaries:
+                if s.error:
+                    log.warning("manual news fetch: %s error=%s", s.source, s.error)
+                else:
+                    log.info(
+                        "manual news fetch: %s fetched=%d inserted=%d",
+                        s.source, s.fetched, s.inserted,
+                    )
         except Exception:
             log.exception("manual news fetch failed")
 

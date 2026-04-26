@@ -44,7 +44,19 @@ export default function NewsView() {
   });
 
   const fetchNow = useMutation({
-    mutationFn: () => api.post<{ started: boolean }>("/api/news/fetch"),
+    mutationFn: () => {
+      // Scope the manual fetch to the currently-selected period — the
+      // UI's "fetch now" should only pull articles for what the user
+      // is looking at, not everything FreshRSS has ever seen.
+      const qs = new URLSearchParams({ period });
+      if (period === "custom") {
+        qs.set("from", customFrom);
+        qs.set("to", customTo);
+      }
+      return api.post<{ started: boolean }>(
+        `/api/news/fetch?${qs.toString()}`,
+      );
+    },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["news-events"] }),
   });
 

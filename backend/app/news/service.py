@@ -1,9 +1,19 @@
 """News-fetch orchestration.
 
-Pulls items from each configured source, persists new articles to
-SQLite, and records a fetch-run row. Clustering is a separate pass
-(see `cluster.py`) because it's expensive enough that we don't want
-to run it on every 30-minute fetch.
+Two modes:
+
+  - Incremental (`from_ts is None`): used by the scheduler. Walks Fever
+    forward from the last `external_id` we already stored — efficient,
+    pulls only new items.
+
+  - Ranged (`from_ts` set): used by the manual API trigger. Walks Fever
+    backwards from the newest item via `max_id`, keeping only items
+    whose `created_on_time` falls in the [`from_ts`, `to_ts`] window.
+    Slower but lets the user say "fetch only the last 7 days" even on
+    a fresh DB or after deleting old articles.
+
+Clustering is a separate pass (see `cluster.py`) because it's expensive
+enough that we don't want to run it on every fetch.
 """
 
 from __future__ import annotations
@@ -46,8 +56,16 @@ def _last_external_id(conn: sqlite3.Connection, source: str) -> int:
         return 0
 
 
-async def fetch_freshrss() -> FetchSummary:
-    """One fetch pass over the FreshRSS source."""
+async def fetch_freshrss(
+    *,
+    from_ts: int | None = None,
+    to_ts: int | None = None,
+) -> FetchSummary:
+    """One fetch pass over the FreshRSS source.
+
+    When `from_ts` is set, walk newest-first via `max_id` and keep only
+    items in [from_ts, to_ts]. Otherwise do an incremental walk from
+    the last stored `external_id`."""
     settings = get_settings()
     cfg = settings.news.sources.freshrss
     if cfg is None:
@@ -57,9 +75,17 @@ async def fetch_freshrss() -> FetchSummary:
     conn = open_connection()
     try:
         run_id = create_fetch_run(conn, kind="fetch", source=source)
-        since = _last_external_id(conn, source)
+        since = _last_external_id(conn, source) if from_ts is None else 0
     finally:
         conn.close()
+
+    if from_ts is None:
+        log.info("news fetch: freshrss starting (incremental, since_id=%d)", since)
+    else:
+        log.info(
+            "news fetch: freshrss starting (range, from_ts=%d, to_ts=%s)",
+            from_ts, "now" if to_ts is None else str(to_ts),
+        )
 
     fetched = 0
     inserted = 0
@@ -67,9 +93,16 @@ async def fetch_freshrss() -> FetchSummary:
     try:
         async with FeverClient(base_url=cfg.base_url, api_key=cfg.api_key) as client:
             feeds = await client.feeds()
-            items = await client.items_since(
-                since_id=since, max_items=cfg.max_items_per_run
-            )
+            if from_ts is None:
+                items = await client.items_since(
+                    since_id=since, max_items=cfg.max_items_per_run
+                )
+            else:
+                items = await client.items_in_range(
+                    from_ts=from_ts,
+                    to_ts=to_ts,
+                    max_items=cfg.max_items_per_run,
+                )
             fetched = len(items)
             if items:
                 conn = open_connection()
@@ -113,26 +146,32 @@ async def fetch_freshrss() -> FetchSummary:
     if error:
         return FetchSummary(source=source, fetched=fetched, inserted=inserted, error=error)
     log.info(
-        "news fetch: freshrss fetched=%d inserted=%d (since_id=%d)",
-        fetched, inserted, since,
+        "news fetch: freshrss done fetched=%d inserted=%d", fetched, inserted
     )
     return FetchSummary(source=source, fetched=fetched, inserted=inserted)
 
 
-async def fetch_all_sources() -> list[FetchSummary]:
+async def fetch_all_sources(
+    *,
+    from_ts: int | None = None,
+    to_ts: int | None = None,
+) -> list[FetchSummary]:
     """Fetch every configured source, swallowing per-source failures so a
     single bad source doesn't stop the rest. Used by the scheduled job
-    and the manual API trigger."""
+    (no range = incremental) and the manual API trigger (range from the
+    UI's period selector)."""
     settings = get_settings()
     summaries: list[FetchSummary] = []
-    if settings.news.sources.freshrss is not None:
-        try:
-            summaries.append(await fetch_freshrss())
-        except Exception as exc:
-            log.exception("news fetch: freshrss raised")
-            summaries.append(
-                FetchSummary(source="freshrss", fetched=0, inserted=0, error=str(exc))
-            )
+    if settings.news.sources.freshrss is None:
+        log.warning("news fetch: no source configured (news.sources.freshrss is null)")
+        return summaries
+    try:
+        summaries.append(await fetch_freshrss(from_ts=from_ts, to_ts=to_ts))
+    except Exception as exc:
+        log.exception("news fetch: freshrss raised")
+        summaries.append(
+            FetchSummary(source="freshrss", fetched=0, inserted=0, error=str(exc))
+        )
     return summaries
 
 
