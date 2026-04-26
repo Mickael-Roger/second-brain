@@ -27,10 +27,10 @@ function slugify(s: string): string {
     .replace(/^-+|-+$/g, "");
 }
 
-// Decide what URL an `<img src="…">` should actually point at.
-// Returns null when the existing src is fine (external / data URI / already
-// pointing at the vault file API).
-function resolveImageSrc(
+// Decide what URL an embed (`<img src="…">` or `<a href="sb:embed:…">`)
+// should actually point at. Returns null when the existing value is fine
+// (external / data URI / already pointing at the vault file API).
+function resolveEmbedTarget(
   src: string,
   currentPath: string | undefined,
   entries: TreeEntry[],
@@ -81,10 +81,10 @@ function resolveImageSrc(
   return `/api/vault/file?path=${encodeURIComponent(target)}`;
 }
 
-// Walk the rendered HTML and rewrite <img src="…"> attributes to point at
-// /api/vault/file. Performed on the HTML string (off-DOM via <template>)
-// so the browser never tries to fetch the bogus `sb:embed:` URL.
-function rewriteImageSources(
+// Walk the rendered HTML and rewrite <img src="…"> + <a href="sb:embed:…">
+// to point at /api/vault/file. Performed on the HTML string (off-DOM via
+// <template>) so the browser never tries to fetch the bogus `sb:embed:` URL.
+function rewriteEmbedTargets(
   html: string,
   currentPath: string | undefined,
   entries: TreeEntry[],
@@ -92,14 +92,24 @@ function rewriteImageSources(
   if (!html) return html;
   const tpl = document.createElement("template");
   tpl.innerHTML = html;
-  const imgs = tpl.content.querySelectorAll("img");
-  for (const img of imgs) {
+  for (const img of tpl.content.querySelectorAll("img")) {
     const src = img.getAttribute("src");
     if (!src) continue;
-    const resolved = resolveImageSrc(src, currentPath, entries);
+    const resolved = resolveEmbedTarget(src, currentPath, entries);
     if (resolved && resolved !== src) {
       img.setAttribute("src", resolved);
       img.setAttribute("loading", "lazy");
+    }
+  }
+  for (const a of tpl.content.querySelectorAll("a")) {
+    const href = a.getAttribute("href") ?? "";
+    if (!href.startsWith("sb:embed:")) continue;
+    const resolved = resolveEmbedTarget(href, currentPath, entries);
+    if (resolved && resolved !== href) {
+      a.setAttribute("href", resolved);
+      a.setAttribute("download", "");
+      a.setAttribute("target", "_blank");
+      a.setAttribute("rel", "noopener");
     }
   }
   return tpl.innerHTML;
@@ -171,7 +181,7 @@ export default function NoteRenderer({
   const html = useMemo(() => {
     const body = content.replace(/^---\s*\n[\s\S]*?\n---\s*\n?/, "");
     const raw = renderMarkdown(body);
-    return rewriteImageSources(raw, currentPath, treeEntries);
+    return rewriteEmbedTargets(raw, currentPath, treeEntries);
   }, [content, currentPath, treeEntries]);
 
   return (

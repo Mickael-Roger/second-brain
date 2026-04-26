@@ -41,11 +41,21 @@ function rewriteWikilinks(md: string): string {
   });
 }
 
+// Obsidian image extensions. Anything else (PDFs, zips, …) becomes a
+// download link so the browser doesn't try to render it as an <img>.
+const IMAGE_EXTS = new Set([
+  "png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "ico", "avif",
+]);
+
 function rewriteEmbeds(md: string): string {
   return md.replace(EMBED_RE, (_full, target, _pipe, alias) => {
-    const display = (alias ?? target).trim();
     const t = String(target).trim();
-    return `![${display}](sb:embed:${encodeURIComponent(t)})`;
+    const display = (alias ?? t).trim();
+    const ext = t.split(".").pop()?.toLowerCase() ?? "";
+    if (IMAGE_EXTS.has(ext)) {
+      return `![${display}](sb:embed:${encodeURIComponent(t)})`;
+    }
+    return `[${display}](sb:embed:${encodeURIComponent(t)})`;
   });
 }
 
