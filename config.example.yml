@@ -113,6 +113,29 @@ organize:
   modified_since: last_run   # last_run | always_full
 
 # ---------------------------------------------------------------------------
+# News & Events — pulls articles from your RSS aggregator (FreshRSS via the
+# Fever-compatible API) on a cron schedule, then asks the LLM to group
+# same-topic articles into "events" the UI shows as bubbles.
+#
+# `fetch_schedule` runs frequently (every 30 min by default); `cluster_schedule`
+# runs once a day after the day's news has settled. Each pass is independent —
+# turning one off via the cron expression leaves the other working.
+# ---------------------------------------------------------------------------
+news:
+  enabled: false                     # flip to true once `sources.freshrss` is filled in
+  fetch_schedule:   "*/30 * * * *"   # cron (UTC) — pull new items
+  cluster_schedule: "10 6 * * *"     # cron (UTC) — group articles into events
+  cluster_window_days: 2             # how far back the cluster pass scans
+  cluster_llm_provider: null         # llm provider name; null = use llm.default
+  sources:
+    freshrss:
+      base_url: "https://freshrss.example.com/api/fever.php"
+      # api_key is md5(username:password). Pre-compute once:
+      #   echo -n "youruser:yourpassword" | md5sum
+      api_key: "REPLACE_WITH_MD5_HASH"
+      max_items_per_run: 500
+
+# ---------------------------------------------------------------------------
 # SMTP — outbound only. Used for the nightly Organize report.
 # When `enabled: false`, the report is logged to stdout instead of emailed
 # (handy during initial setup so you can verify cron without an SMTP server).

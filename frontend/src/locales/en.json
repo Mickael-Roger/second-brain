@@ -5,7 +5,31 @@
   "nav": {
     "chat": "Chat",
     "wiki": "Wiki",
-    "organize": "Organize"
+    "organize": "Organize",
+    "news": "News"
+  },
+  "news": {
+    "title": "News & Events",
+    "fetch": "Fetch now",
+    "fetching": "Fetching…",
+    "cluster": "Re-cluster",
+    "clustering": "Clustering…",
+    "periodLabel": "Period",
+    "periodToday": "Today",
+    "period7d": "7 days",
+    "period30d": "30 days",
+    "periodCustom": "Custom",
+    "from": "From",
+    "to": "To",
+    "empty": "No events yet. Trigger a fetch and a cluster to see today's news grouped here.",
+    "loading": "Loading events…",
+    "articleCount_one": "{{count}} article",
+    "articleCount_other": "{{count}} articles",
+    "openSource": "Open source",
+    "occurredOn": "Occurred",
+    "noDescription": "No description.",
+    "fetchTriggered": "Fetch started — refresh in a moment.",
+    "clusterTriggered": "Clustering started — events will refresh shortly."
   },
   "organize": {
     "title": "Nightly Organize",

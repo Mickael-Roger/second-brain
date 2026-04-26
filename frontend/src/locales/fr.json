@@ -5,7 +5,31 @@
   "nav": {
     "chat": "Discussion",
     "wiki": "Wiki",
-    "organize": "Organisation"
+    "organize": "Organisation",
+    "news": "Actualités"
+  },
+  "news": {
+    "title": "Actualités & événements",
+    "fetch": "Récupérer maintenant",
+    "fetching": "Récupération…",
+    "cluster": "Re-grouper",
+    "clustering": "Regroupement…",
+    "periodLabel": "Période",
+    "periodToday": "Aujourd'hui",
+    "period7d": "7 jours",
+    "period30d": "30 jours",
+    "periodCustom": "Personnalisée",
+    "from": "Du",
+    "to": "Au",
+    "empty": "Aucun événement pour le moment. Lancez une récupération puis un regroupement pour voir les actualités du jour.",
+    "loading": "Chargement des événements…",
+    "articleCount_one": "{{count}} article",
+    "articleCount_other": "{{count}} articles",
+    "openSource": "Ouvrir la source",
+    "occurredOn": "Survenu le",
+    "noDescription": "Pas de description.",
+    "fetchTriggered": "Récupération lancée — rafraîchissez dans un instant.",
+    "clusterTriggered": "Regroupement lancé — les événements vont se mettre à jour."
   },
   "organize": {
     "title": "Organisation nocturne",

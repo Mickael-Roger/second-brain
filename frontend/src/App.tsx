@@ -7,6 +7,7 @@ import AppShell, { type ViewId } from "@/components/layout/AppShell";
 import ChatView from "@/components/chat/ChatView";
 import WikiView, { type WikiTarget } from "@/components/wiki/WikiView";
 import OrganizeView from "@/components/organize/OrganizeView";
+import NewsView from "@/components/news/NewsView";
 
 export default function App() {
   const { t } = useTranslation();
@@ -40,6 +41,8 @@ export default function App() {
         <ChatView onOpenWiki={openWiki} />
       ) : view === "organize" ? (
         <OrganizeView onOpenWiki={openWiki} />
+      ) : view === "news" ? (
+        <NewsView />
       ) : (
         <WikiView target={wikiTarget} />
       )}

@@ -3,12 +3,12 @@
 
 import { useTranslation } from "react-i18next";
 import { useQueryClient } from "@tanstack/react-query";
-import { BookOpen, Brain, LogOut, MessageSquare, Sparkles } from "lucide-react";
+import { BookOpen, Brain, LogOut, MessageSquare, Newspaper, Sparkles } from "lucide-react";
 
 import { logout } from "@/lib/auth";
 import { setLanguage, currentLanguage } from "@/lib/i18n";
 
-export type ViewId = "chat" | "wiki" | "organize";
+export type ViewId = "chat" | "wiki" | "organize" | "news";
 
 interface Props {
   active: ViewId;
@@ -29,6 +29,7 @@ export default function AppShell({ active, onSelect, children }: Props) {
     { id: "chat", icon: MessageSquare, label: t("nav.chat") },
     { id: "wiki", icon: BookOpen, label: t("nav.wiki") },
     { id: "organize", icon: Sparkles, label: t("nav.organize") },
+    { id: "news", icon: Newspaper, label: t("nav.news") },
   ];
 
   return (

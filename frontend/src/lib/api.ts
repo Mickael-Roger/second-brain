@@ -141,6 +141,31 @@ export interface OrganizeProposal {
   created_at: string;
 }
 
+// ---- News ----
+
+export interface NewsEventBubble {
+  id: string;
+  title: string;
+  summary: string | null;
+  occurred_on: string;
+  article_count: number;
+}
+
+export interface NewsArticle {
+  id: string;
+  source: string;
+  feed_title: string | null;
+  url: string | null;
+  title: string;
+  description: string | null;
+  author: string | null;
+  published_at: string;
+}
+
+export interface NewsEventDetail extends NewsEventBubble {
+  articles: NewsArticle[];
+}
+
 export interface OrganizeRun {
   id: string;
   started_at: string;

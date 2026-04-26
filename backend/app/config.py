@@ -132,6 +132,33 @@ class OrganizeSection(BaseModel):
     modified_since: Literal["last_run", "always_full"] = "last_run"
 
 
+class FreshRSSSourceConfig(BaseModel):
+    """Fever-API-compatible FreshRSS endpoint.
+
+    `api_key` is the pre-computed `md5(username:password)` token Fever
+    expects in the POST body — pre-compute it once, paste it in. We do
+    NOT take username/password here; storing the hash directly avoids
+    hashing logic at startup and keeps the config self-describing.
+    """
+
+    base_url: str                       # e.g. https://freshrss.example.com/api/fever.php
+    api_key: str                        # md5(username:password)
+    max_items_per_run: int = 500
+
+
+class NewsSourcesSection(BaseModel):
+    freshrss: FreshRSSSourceConfig | None = None
+
+
+class NewsSection(BaseModel):
+    enabled: bool = False
+    fetch_schedule: str = "*/30 * * * *"   # cron, UTC
+    cluster_schedule: str = "10 6 * * *"   # cron, UTC — daily after fetch settles
+    cluster_window_days: int = 2           # how far back the cluster pass scans for new articles
+    cluster_llm_provider: str | None = None  # llm provider name; falls back to llm.default
+    sources: NewsSourcesSection = NewsSourcesSection()
+
+
 class SMTPSection(BaseModel):
     enabled: bool = False
     host: str | None = None
@@ -183,6 +210,7 @@ class Settings(BaseModel):
     llm: LLMSection
     obsidian: ObsidianSection = ObsidianSection()
     organize: OrganizeSection = OrganizeSection()
+    news: NewsSection = NewsSection()
     smtp: SMTPSection = SMTPSection()
     logging: LoggingSection = LoggingSection()
 

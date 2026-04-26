@@ -98,28 +98,71 @@ async def run_nightly() -> str:
     return report
 
 
+async def _news_fetch_job() -> None:
+    from app.news.service import fetch_all_sources
+
+    try:
+        await fetch_all_sources()
+    except Exception:
+        log.exception("scheduled news fetch failed")
+
+
+async def _news_cluster_job() -> None:
+    from app.news.cluster import run_cluster_pass
+
+    try:
+        await run_cluster_pass()
+    except Exception:
+        log.exception("scheduled news cluster failed")
+
+
 def start_scheduler() -> None:
     global _SCHEDULER
     settings = get_settings()
-    if not settings.organize.enabled:
-        log.info("scheduler disabled (organize.enabled = false)")
+    if not settings.organize.enabled and not settings.news.enabled:
+        log.info("scheduler disabled (organize.enabled and news.enabled both false)")
         return
     if _SCHEDULER is not None:
         return
 
     sched = AsyncIOScheduler(timezone="UTC")
-    trigger = CronTrigger.from_crontab(settings.organize.schedule, timezone="UTC")
-    sched.add_job(
-        run_nightly,
-        trigger=trigger,
-        id="nightly",
-        replace_existing=True,
-        max_instances=1,
-        coalesce=True,
-    )
+
+    if settings.organize.enabled:
+        sched.add_job(
+            run_nightly,
+            trigger=CronTrigger.from_crontab(settings.organize.schedule, timezone="UTC"),
+            id="nightly",
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+        )
+        log.info("scheduler: nightly cron = %s", settings.organize.schedule)
+
+    if settings.news.enabled:
+        sched.add_job(
+            _news_fetch_job,
+            trigger=CronTrigger.from_crontab(settings.news.fetch_schedule, timezone="UTC"),
+            id="news-fetch",
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+        )
+        sched.add_job(
+            _news_cluster_job,
+            trigger=CronTrigger.from_crontab(settings.news.cluster_schedule, timezone="UTC"),
+            id="news-cluster",
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+        )
+        log.info(
+            "scheduler: news fetch = %s, news cluster = %s",
+            settings.news.fetch_schedule, settings.news.cluster_schedule,
+        )
+
     sched.start()
     _SCHEDULER = sched
-    log.info("scheduler started (nightly cron: %s)", settings.organize.schedule)
+    log.info("scheduler started")
 
 
 def shutdown_scheduler() -> None:
