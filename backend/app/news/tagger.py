@@ -55,8 +55,11 @@ Return ONE JSON object and nothing else (no preamble, no code fences):
 }
 
 Rules:
-- Return between 1 and 6 tags. Long articles often cover several
+- Return between 1 and 20 tags. Long articles routinely cover many
   distinct topics — return ALL of them, not just the headline one.
+  6+ tags is normal for in-depth pieces; 15–20 is fine for very
+  topic-dense articles. Don't pad: only return tags the article
+  actually substantively discusses.
 - Each tag is a short noun phrase, ideally 1–3 words. No leading '#',
   no spaces in multi-word tags (use hyphens or PascalCase). Examples:
   "GPT-5", "OpenAI", "France", "PensionReform", "AppleEarnings".
