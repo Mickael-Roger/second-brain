@@ -72,31 +72,48 @@ The response is constrained by a JSON schema — the server will reject
 anything that isn't `{"tags": [...]}` with up to 20 string entries.
 Your job is just to populate that array with the right strings.
 
-Tag style — these are the exact shapes we want:
+PRINCIPLE: The dashboard only surfaces tags that appear on at least
+two articles. So your goal is to pick the SAME canonical concept that
+other writers will also pick when covering the same subject. Generic
+enough to match across articles, specific enough to mean something.
+
+Tag style — exactly this shape:
   "gpt-5.5"
-  "ubuntu-26.04"
+  "ubuntu"          ← family-level, not "ubuntu-26.04-beta-arm64"
   "sam-altman"
   "openai"
   "france-pension-reform"
   "apple-q1-earnings"
 
 Tag rules:
-- ALL lowercase. Use hyphens to separate words: "sam-altman", not
-  "SamAltman" and not "Sam Altman".
-- Keep version numbers, dates, and dotted notation as-is inside the
-  slug: "gpt-5.5", "ubuntu-26.04", "ios-19".
-- 1 to 20 tags per article. Long articles routinely cover many
-  distinct topics — return ALL of them. 6+ tags is normal for
-  in-depth pieces; 15–20 is fine for very topic-dense articles.
-  Don't pad: only return tags the article actually substantively
-  discusses.
-- Tags should name specific ENTITIES: people (sam-altman), companies
-  (openai), products (gpt-5.5), versions (ubuntu-26.04), events
-  (apple-q1-earnings), places when central (france), specific
-  policies (pension-reform). NOT generic concepts ("news", "tech",
-  "ai", "world", "today").
-- Do NOT tag the publication source (skip "techcrunch", "le-monde",
-  etc.).
+- ALL lowercase. Hyphen-separated. No '#' prefix, no spaces, no
+  CamelCase: "sam-altman", not "SamAltman" or "Sam Altman".
+- 5 to 10 tags per article is the sweet spot. Stop padding once you
+  have the genuine entities — long articles can stretch to 15, but
+  most should sit in the 5–8 range.
+- Stay at the FAMILY level by default. Group variants under one
+  canonical tag. Examples:
+    BAD:  ["usb", "usb-1", "usb-2", "usb-3", "usb-c"]
+    GOOD: ["usb"]
+    BAD:  ["python", "python-3", "python-3.12", "python-3.13"]
+    GOOD: ["python"]
+    BAD:  ["chatgpt", "chatgpt-plus", "chatgpt-pro", "chatgpt-team"]
+    GOOD: ["chatgpt"]
+  A version qualifier is justified ONLY when the version itself is
+  the topic of the article (e.g. tag "gpt-5.5" if the article is
+  specifically announcing that release).
+- Tags should name specific ENTITIES: people, companies, products,
+  recurring events, places when central, specific policies.
+- NEVER tag a news source / aggregator / publication. Forbidden
+  examples: "hacker-news", "reddit", "techcrunch", "the-verge",
+  "ars-technica", "wired", "le-monde", "franceinfo", "lemde",
+  "tbpn", "deus-ex-silicium". The article's origin is metadata, not
+  a topic.
+- NEVER tag generic categories: "news", "tech", "world", "today",
+  "ai", "science", "politics", "business". They match everything
+  and surface nothing.
+- NEVER tag the medium itself: "podcast", "newsletter", "video",
+  "youtube", "blog".
 - Be consistent across runs: the same entity should always get the
   same slug.
 - If the article is a stub, paywalled redirect, or has nothing
@@ -104,34 +121,56 @@ Tag rules:
 """
 
 
-def _load_synthesis_prompt() -> str:
-    """Load the tagger's system prompt from the vault.
+def _read_vault_extra() -> str | None:
+    """Read user-supplied extra synthesis instructions from the vault.
 
-    Reads `<vault>/<obsidian.news_synthesis_file>` (default
-    `NEWS_SYNTHESIS.md`), strips an optional YAML frontmatter block.
-    Falls back to the built-in default when the file is missing,
-    empty, or the vault is unconfigured."""
+    Returns the file's body (frontmatter stripped) or None if the file
+    doesn't exist / vault isn't configured. Loaded fresh on every pass
+    so edits to the file take effect on the next cron run."""
     from app.vault import vault_root
 
     s = get_settings()
     if s.obsidian.vault_path is None:
-        return _DEFAULT_SYSTEM_PROMPT
+        return None
     try:
         path = vault_root() / s.obsidian.news_synthesis_file
     except RuntimeError:
-        return _DEFAULT_SYSTEM_PROMPT
+        return None
     if not path.is_file():
-        return _DEFAULT_SYSTEM_PROMPT
+        return None
     try:
         text = path.read_text(encoding="utf-8")
     except OSError as exc:
         log.warning("could not read news synthesis prompt %s: %s", path, exc)
-        return _DEFAULT_SYSTEM_PROMPT
+        return None
     if text.startswith("---\n"):
         end = text.find("\n---", 4)
         if end >= 0:
             text = text[end + 4 :].lstrip("\n")
-    return text.strip() or _DEFAULT_SYSTEM_PROMPT
+    text = text.strip()
+    return text or None
+
+
+def _load_synthesis_prompt() -> str:
+    """Compose the tagger's system prompt.
+
+    The built-in default carries the format/style rules that are
+    invariant. If the user has a `<vault>/<obsidian.news_synthesis_file>`
+    file (default `NEWS_SYNTHESIS.md`), it's appended as
+    user-specific overrides — additional instructions that refine
+    or extend the defaults for this user's particular feeds and
+    preferences. Loaded fresh on every pass so vault edits take
+    effect on the next cron run."""
+    extra = _read_vault_extra()
+    if extra:
+        return (
+            _DEFAULT_SYSTEM_PROMPT
+            + "\n\n## User-specific instructions (from "
+            + get_settings().obsidian.news_synthesis_file
+            + ")\n\n"
+            + extra
+        )
+    return _DEFAULT_SYSTEM_PROMPT
 
 
 @dataclass(slots=True)
