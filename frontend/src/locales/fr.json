@@ -82,7 +82,9 @@
     "newChat": "Nouvelle discussion",
     "chats": "Discussions",
     "logout": "Se déconnecter",
-    "search": "Rechercher…"
+    "search": "Rechercher…",
+    "themeToLight": "Passer au thème clair",
+    "themeToDark": "Passer au thème sombre"
   },
   "chat": {
     "placeholder": "Parlez à votre second cerveau…",

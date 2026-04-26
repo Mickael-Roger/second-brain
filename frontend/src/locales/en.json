@@ -82,7 +82,9 @@
     "newChat": "New chat",
     "chats": "Chats",
     "logout": "Sign out",
-    "search": "Search…"
+    "search": "Search…",
+    "themeToLight": "Switch to light mode",
+    "themeToDark": "Switch to dark mode"
   },
   "chat": {
     "placeholder": "Message your second brain…",

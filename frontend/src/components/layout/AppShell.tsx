@@ -1,12 +1,23 @@
 // Top-level shell with a thin nav rail. The two views (Chat, Wiki) own their
 // own internal layout — the rail just switches between them.
 
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useQueryClient } from "@tanstack/react-query";
-import { BookOpen, Brain, LogOut, MessageSquare, Newspaper, Sparkles } from "lucide-react";
+import {
+  BookOpen,
+  Brain,
+  LogOut,
+  MessageSquare,
+  Moon,
+  Newspaper,
+  Sparkles,
+  Sun,
+} from "lucide-react";
 
 import { logout } from "@/lib/auth";
 import { setLanguage, currentLanguage } from "@/lib/i18n";
+import { currentTheme, setTheme, type Theme } from "@/lib/theme";
 
 export type ViewId = "chat" | "wiki" | "organize" | "news";
 
@@ -19,6 +30,13 @@ interface Props {
 export default function AppShell({ active, onSelect, children }: Props) {
   const { t, i18n } = useTranslation();
   const qc = useQueryClient();
+  const [theme, setThemeState] = useState<Theme>(() => currentTheme());
+
+  function toggleTheme() {
+    const next: Theme = theme === "light" ? "dark" : "light";
+    setTheme(next);
+    setThemeState(next);
+  }
 
   async function onLogout() {
     await logout();
@@ -79,6 +97,26 @@ export default function AppShell({ active, onSelect, children }: Props) {
               EN
             </button>
           </div>
+          <button
+            onClick={toggleTheme}
+            title={
+              theme === "light"
+                ? t("sidebar.themeToDark")
+                : t("sidebar.themeToLight")
+            }
+            aria-label={
+              theme === "light"
+                ? t("sidebar.themeToDark")
+                : t("sidebar.themeToLight")
+            }
+            className="flex h-10 w-10 items-center justify-center rounded-lg text-muted hover:bg-bg hover:text-text"
+          >
+            {theme === "light" ? (
+              <Moon className="h-5 w-5" />
+            ) : (
+              <Sun className="h-5 w-5" />
+            )}
+          </button>
           <button
             onClick={onLogout}
             title={t("sidebar.logout")}
