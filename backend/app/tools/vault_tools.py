@@ -19,7 +19,9 @@ from app.vault import (
     list_tree,
     move_note,
     read_note,
+    replace_in_note,
     search_vault,
+    update_frontmatter,
     write_note,
 )
 from app.vault.guard import GitConflictError
@@ -139,6 +141,34 @@ async def _move(args: dict[str, Any]):
     except GitConflictError as exc:
         return text_result(str(exc), is_error=True)
     return text_result(f"moved → {n.path}")
+
+
+async def _replace_in_note(args: dict[str, Any]):
+    try:
+        n = await replace_in_note(
+            args["path"],
+            args["find"],
+            args["replace"],
+            replace_all=bool(args.get("replace_all", False)),
+        )
+    except (VaultPathError, FileNotFoundError, ValueError) as exc:
+        return text_result(str(exc), is_error=True)
+    except GitConflictError as exc:
+        return text_result(str(exc), is_error=True)
+    return text_result(f"replaced in {n.path} ({len(n.content)} bytes)")
+
+
+async def _update_frontmatter(args: dict[str, Any]):
+    updates = args.get("updates")
+    if not isinstance(updates, dict):
+        return text_result("`updates` must be a JSON object", is_error=True)
+    try:
+        n = await update_frontmatter(args["path"], updates)
+    except (VaultPathError, FileNotFoundError) as exc:
+        return text_result(str(exc), is_error=True)
+    except GitConflictError as exc:
+        return text_result(str(exc), is_error=True)
+    return text_result(f"updated frontmatter on {n.path}")
 
 
 async def _delete(args: dict[str, Any]):
@@ -315,6 +345,58 @@ def register_all(reg: ToolRegistry) -> None:
             "required": ["path"],
         },
         _create_folder,
+    )
+    reg.register(
+        "vault.replace_in_note",
+        (
+            "SURGICAL update — replace an exact substring inside an existing "
+            "note. Cheaper than `vault.edit_note` for small fixes (typo, link "
+            "rename, change one date) because you don't have to send the full "
+            "body. The match is exact, NOT regex. Fails if `find` is not "
+            "present, or if it matches more than once unless `replace_all` is "
+            "true (in that case make sure `find` is unique enough, or include "
+            "surrounding context). Use `vault.edit_note` for larger rewrites."
+        ),
+        {
+            "type": "object",
+            "properties": {
+                "path": _PATH,
+                "find": {"type": "string", "description": "Exact substring to look for."},
+                "replace": {"type": "string", "description": "Replacement text."},
+                "replace_all": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "Replace every occurrence; default fails on >1 matches.",
+                },
+            },
+            "required": ["path", "find", "replace"],
+        },
+        _replace_in_note,
+    )
+    reg.register(
+        "vault.update_frontmatter",
+        (
+            "Merge changes into a note's YAML frontmatter without touching "
+            "the body. `updates` is an object — each key replaces (or adds) "
+            "that frontmatter field; pass null as the value to REMOVE a "
+            "field. Notes without frontmatter get one added. Use this for "
+            "tag/metadata edits without rewriting the whole note."
+        ),
+        {
+            "type": "object",
+            "properties": {
+                "path": _PATH,
+                "updates": {
+                    "type": "object",
+                    "description": (
+                        "Object of frontmatter keys to merge. Lists/strings/"
+                        "numbers/bools as values; null = delete the key."
+                    ),
+                },
+            },
+            "required": ["path", "updates"],
+        },
+        _update_frontmatter,
     )
     reg.register(
         "vault.move",

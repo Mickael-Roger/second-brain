@@ -200,6 +200,80 @@ async def append_note(path: str, content: str, *, message: str | None = None) ->
     return NoteRead(path=to_relative(abs_path), content=new_content)
 
 
+async def replace_in_note(
+    path: str,
+    find: str,
+    replace: str,
+    *,
+    replace_all: bool = False,
+    message: str | None = None,
+) -> NoteRead:
+    """Surgical text replacement in an existing note.
+
+    By default the operation fails when `find` matches zero times (the LLM
+    would silently no-op) or more than once (ambiguous — the caller should
+    include enough context to make the match unique). Pass `replace_all=True`
+    to replace every occurrence intentionally.
+    """
+    abs_path = resolve_vault_path(path)
+    if not abs_path.is_file():
+        raise FileNotFoundError(f"note not found: {path}")
+
+    content = abs_path.read_text(encoding="utf-8")
+    occurrences = content.count(find)
+    if occurrences == 0:
+        raise ValueError(f"`find` string not present in {path}")
+    if occurrences > 1 and not replace_all:
+        raise ValueError(
+            f"`find` matches {occurrences} times in {path}; pass replace_all=true "
+            "to substitute every occurrence, or include more context to make the "
+            "match unique"
+        )
+    new_content = content.replace(find, replace)
+    if new_content == content:
+        # find == replace shortcut: don't touch mtime.
+        return NoteRead(path=to_relative(abs_path), content=content)
+
+    msg = message or f"vault.replace_in_note {to_relative(abs_path)}"
+    async with get_guard().transaction(msg):
+        await asyncio.to_thread(_write_text, abs_path, new_content)
+    return NoteRead(path=to_relative(abs_path), content=new_content)
+
+
+async def update_frontmatter(
+    path: str,
+    updates: dict,
+    *,
+    message: str | None = None,
+) -> NoteRead:
+    """Merge changes into a note's YAML frontmatter, leaving the body alone.
+
+    Each key in `updates` is set on the frontmatter; passing ``None`` as a
+    value removes that key. Notes with no frontmatter yet get one added.
+    """
+    import frontmatter as _fm
+
+    abs_path = resolve_vault_path(path)
+    if not abs_path.is_file():
+        raise FileNotFoundError(f"note not found: {path}")
+
+    raw = abs_path.read_text(encoding="utf-8")
+    post = _fm.loads(raw)
+    for key, value in updates.items():
+        if value is None:
+            post.metadata.pop(key, None)
+        else:
+            post[key] = value
+    new_content = _fm.dumps(post)
+    if new_content == raw:
+        return NoteRead(path=to_relative(abs_path), content=raw)
+
+    msg = message or f"vault.update_frontmatter {to_relative(abs_path)}"
+    async with get_guard().transaction(msg):
+        await asyncio.to_thread(_write_text, abs_path, new_content)
+    return NoteRead(path=to_relative(abs_path), content=new_content)
+
+
 async def create_note(
     folder: str,
     title: str,

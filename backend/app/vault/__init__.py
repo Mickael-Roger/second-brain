@@ -12,7 +12,9 @@ from .vault import (
     list_tree,
     move_note,
     read_note,
+    replace_in_note,
     search_vault,
+    update_frontmatter,
     write_note,
 )
 
@@ -33,8 +35,10 @@ __all__ = [
     "move_note",
     "read_context_files",
     "read_note",
+    "replace_in_note",
     "resolve_vault_path",
     "search_vault",
+    "update_frontmatter",
     "vault_root",
     "write_note",
 ]
