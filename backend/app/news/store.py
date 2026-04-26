@@ -204,11 +204,23 @@ _ARTICLE_SELECT = (
 )
 
 
+# Unified visibility predicate used by every list query. An article
+# is visible when either:
+#   - it falls inside the [from, to] date window (the recency rule), OR
+#   - it's still unread (the "never lose track of unread" rule).
+# Read articles older than the window are deliberately hidden.
+_VISIBILITY_WHERE = (
+    "((substr(a.published_at, 1, 10) >= ? AND "
+    "  substr(a.published_at, 1, 10) <= ?) "
+    " OR a.is_read = 0)"
+)
+
+
 def list_feeds_with_counts(
     conn: sqlite3.Connection, *, from_iso: str, to_iso: str
 ) -> list[FeedSummary]:
-    """For each feed, return total + unread article counts in the
-    [from, to] window, plus the feed's favicon."""
+    """For each feed, return total + unread article counts (window OR
+    unread), plus the feed's favicon."""
     rows = conn.execute(
         "SELECT a.feed_id, "
         "       COALESCE(MAX(a.feed_title), '(unknown feed)') AS feed_title, "
@@ -217,8 +229,7 @@ def list_feeds_with_counts(
         "       COUNT(*) AS total, "
         "       SUM(CASE WHEN a.is_read = 0 THEN 1 ELSE 0 END) AS unread "
         "FROM news_articles a LEFT JOIN news_feeds f ON f.id = a.feed_id "
-        "WHERE substr(a.published_at, 1, 10) >= ? "
-        "  AND substr(a.published_at, 1, 10) <= ? "
+        f"WHERE {_VISIBILITY_WHERE} "
         "GROUP BY a.feed_id "
         "ORDER BY feed_title COLLATE NOCASE ASC",
         (from_iso, to_iso),
@@ -246,11 +257,7 @@ def list_articles(
     unread_only: bool = False,
     limit: int = 500,
 ) -> list[StoredArticle]:
-    sql = (
-        _ARTICLE_SELECT
-        + " WHERE substr(a.published_at, 1, 10) >= ?"
-          " AND substr(a.published_at, 1, 10) <= ?"
-    )
+    sql = _ARTICLE_SELECT + f" WHERE {_VISIBILITY_WHERE}"
     params: list = [from_iso, to_iso]
     if feed_id:
         sql += " AND a.feed_id = ?"
