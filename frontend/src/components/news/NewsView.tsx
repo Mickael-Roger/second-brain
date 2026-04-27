@@ -8,12 +8,15 @@
 //            "chat about this" button that hands the article context
 //            off to the Chat tab.
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  BookmarkPlus,
+  BookText,
   ChevronDown,
   ChevronRight,
+  Eye,
   ExternalLink,
   Mail,
   MailOpen,
@@ -25,6 +28,7 @@ import {
 
 import {
   api,
+  ApiError,
   type NewsArticleDetail,
   type NewsArticleSummary,
   type NewsFeedSummary,
@@ -449,6 +453,10 @@ interface DetailPaneProps {
   onChat: (a: NewsArticleDetail) => void;
 }
 
+type ViewMode = "summary" | "html";
+
+type CaptureKind = "keep" | "article" | "watched";
+
 function DetailPane({
   articleId,
   article,
@@ -458,6 +466,41 @@ function DetailPane({
   onChat,
 }: DetailPaneProps) {
   const { t } = useTranslation();
+  const [viewMode, setViewMode] = useState<ViewMode>("summary");
+  const [captureBusy, setCaptureBusy] = useState<CaptureKind | null>(null);
+  const [captureMessage, setCaptureMessage] = useState<
+    { kind: "ok"; path: string } | { kind: "err"; text: string } | null
+  >(null);
+
+  // Switching articles resets the local content-tab + capture state.
+  const currentId = article?.id ?? null;
+  useEffect(() => {
+    setViewMode("summary");
+    setCaptureMessage(null);
+  }, [currentId]);
+
+  async function runCapture(kind: CaptureKind, id: string) {
+    if (captureBusy) return;
+    setCaptureBusy(kind);
+    setCaptureMessage(null);
+    try {
+      const res = await api.post<{ path: string }>(
+        `/api/news/articles/${encodeURIComponent(id)}/${kind}`,
+      );
+      setCaptureMessage({ kind: "ok", path: res.path });
+    } catch (err: unknown) {
+      const text =
+        err instanceof ApiError
+          ? typeof err.detail === "object" && err.detail && "detail" in err.detail
+            ? String((err.detail as { detail: unknown }).detail)
+            : String(err.detail ?? err.message)
+          : String((err as Error)?.message ?? err);
+      setCaptureMessage({ kind: "err", text });
+    } finally {
+      setCaptureBusy(null);
+    }
+  }
+
   if (!articleId) {
     return (
       <section className="flex h-full items-center justify-center bg-bg p-4 text-center">
@@ -538,14 +581,82 @@ function DetailPane({
               <MessageSquare className="h-3 w-3" />
               {t("news.chatAbout")}
             </button>
+            <button
+              type="button"
+              onClick={() => runCapture("keep", article.id)}
+              disabled={captureBusy !== null}
+              title={t("news.captureKeepHint")}
+              className="inline-flex items-center gap-1 rounded-lg border border-border bg-bg px-2 py-1 text-xs hover:border-accent disabled:opacity-50"
+            >
+              <BookmarkPlus className="h-3 w-3" />
+              {captureBusy === "keep" ? t("news.capturing") : t("news.captureKeep")}
+            </button>
+            <button
+              type="button"
+              onClick={() => runCapture("article", article.id)}
+              disabled={captureBusy !== null}
+              title={t("news.captureArticleHint")}
+              className="inline-flex items-center gap-1 rounded-lg border border-border bg-bg px-2 py-1 text-xs hover:border-accent disabled:opacity-50"
+            >
+              <BookText className="h-3 w-3" />
+              {captureBusy === "article" ? t("news.capturing") : t("news.captureArticle")}
+            </button>
+            <button
+              type="button"
+              onClick={() => runCapture("watched", article.id)}
+              disabled={captureBusy !== null}
+              title={t("news.captureWatchedHint")}
+              className="inline-flex items-center gap-1 rounded-lg border border-border bg-bg px-2 py-1 text-xs hover:border-accent disabled:opacity-50"
+            >
+              <Eye className="h-3 w-3" />
+              {captureBusy === "watched" ? t("news.capturing") : t("news.captureWatched")}
+            </button>
           </div>
+          {captureMessage && (
+            <p
+              className={`pt-2 text-xs ${
+                captureMessage.kind === "ok" ? "text-accent" : "text-red-500"
+              }`}
+            >
+              {captureMessage.kind === "ok"
+                ? t("news.captureOk", { path: captureMessage.path })
+                : t("news.captureFailed", { err: captureMessage.text })}
+            </p>
+          )}
         </header>
 
         <section>
-          <h3 className="mb-1 text-xs font-medium uppercase tracking-wide text-muted">
-            {t("news.summaryHeader")}
-          </h3>
-          <ArticleBody html={article.raw_html} fallback={article.summary} />
+          <div className="mb-2 flex items-center gap-2 border-b border-border">
+            <button
+              type="button"
+              onClick={() => setViewMode("summary")}
+              className={`-mb-px border-b-2 px-2 py-1 text-xs font-medium uppercase tracking-wide ${
+                viewMode === "summary"
+                  ? "border-accent text-accent"
+                  : "border-transparent text-muted hover:text-text"
+              }`}
+            >
+              {t("news.tabSummary")}
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode("html")}
+              disabled={!article.raw_html}
+              className={`-mb-px border-b-2 px-2 py-1 text-xs font-medium uppercase tracking-wide disabled:opacity-40 ${
+                viewMode === "html"
+                  ? "border-accent text-accent"
+                  : "border-transparent text-muted hover:text-text"
+              }`}
+              title={!article.raw_html ? t("news.tabHtmlMissing") : undefined}
+            >
+              {t("news.tabHtml")}
+            </button>
+          </div>
+          {viewMode === "html" && article.raw_html ? (
+            <ArticleBody html={article.raw_html} fallback={null} />
+          ) : (
+            <ArticleBody html={null} fallback={article.summary} />
+          )}
         </section>
       </article>
     </section>

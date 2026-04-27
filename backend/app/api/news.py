@@ -266,6 +266,84 @@ async def mark_unread(
     return _toggle_read(article_id, conn, is_read=False)
 
 
+# ── Capture: turn an article into an Obsidian vault note ───────────
+
+
+class CaptureResponse(BaseModel):
+    path: str
+
+
+def _load_article_record(article_id: str, conn: sqlite3.Connection):
+    """Fetch the SQLite header + JSON body, raising HTTPException on
+    misses. Returns the ArticleRecord usable by capture flows."""
+    a = get_article(conn, article_id)
+    if a is None:
+        raise HTTPException(status_code=404, detail="article not found")
+    record = articles.read_article(article_id)
+    if record is None:
+        # The detail JSON should always exist for a row we have in
+        # SQLite; if it's missing, capture cannot synthesize content.
+        raise HTTPException(
+            status_code=409,
+            detail="article body not yet captured on disk; try fetching again",
+        )
+    return record
+
+
+@router.post("/articles/{article_id}/keep", response_model=CaptureResponse)
+async def capture_keep_endpoint(
+    article_id: str,
+    _user: str = Depends(current_user),
+    conn: sqlite3.Connection = Depends(get_db),
+) -> CaptureResponse:
+    """LLM-generated short digest → Raw/Feeds/Notes/<title>.md."""
+    from app.news.capture import capture_keep
+
+    record = _load_article_record(article_id, conn)
+    try:
+        path = await capture_keep(record)
+    except Exception as exc:
+        log.exception("news capture (keep) failed for %s", article_id)
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return CaptureResponse(path=path)
+
+
+@router.post("/articles/{article_id}/article", response_model=CaptureResponse)
+async def capture_article_endpoint(
+    article_id: str,
+    _user: str = Depends(current_user),
+    conn: sqlite3.Connection = Depends(get_db),
+) -> CaptureResponse:
+    """LLM-generated full article → Raw/Feeds/Articles/<title>.md."""
+    from app.news.capture import capture_article
+
+    record = _load_article_record(article_id, conn)
+    try:
+        path = await capture_article(record)
+    except Exception as exc:
+        log.exception("news capture (article) failed for %s", article_id)
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return CaptureResponse(path=path)
+
+
+@router.post("/articles/{article_id}/watched", response_model=CaptureResponse)
+async def capture_watched_endpoint(
+    article_id: str,
+    _user: str = Depends(current_user),
+    conn: sqlite3.Connection = Depends(get_db),
+) -> CaptureResponse:
+    """Bare stub (link only) → Raw/Feeds/Youtube/<title>.md."""
+    from app.news.capture import capture_watched
+
+    record = _load_article_record(article_id, conn)
+    try:
+        path = await capture_watched(record)
+    except Exception as exc:
+        log.exception("news capture (watched) failed for %s", article_id)
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return CaptureResponse(path=path)
+
+
 @router.post("/fetch", response_model=TriggerResponse, status_code=202)
 async def trigger_fetch(
     period: str | None = Query(

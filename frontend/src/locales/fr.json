@@ -24,7 +24,19 @@
     "markUnread": "Marquer comme non lu",
     "marking": "Marquage…",
     "chatAbout": "Discuter de cet article",
-    "uncategorized": "Sans catégorie"
+    "uncategorized": "Sans catégorie",
+    "tabSummary": "Résumé",
+    "tabHtml": "HTML",
+    "tabHtmlMissing": "Pas de HTML brut pour cet article.",
+    "captureKeep": "Retenir",
+    "captureKeepHint": "Enregistrer un court résumé LLM dans Raw/Feeds/Notes/.",
+    "captureArticle": "Note complète",
+    "captureArticleHint": "Enregistrer un résumé d'article complet (LLM) dans Raw/Feeds/Articles/.",
+    "captureWatched": "Lu/Vu",
+    "captureWatchedHint": "Marquer comme lu/vu/écouté — crée un stub dans Raw/Feeds/Youtube/.",
+    "capturing": "Enregistrement…",
+    "captureOk": "Enregistré dans {{path}}",
+    "captureFailed": "Échec : {{err}}"
   },
   "login": {
     "title": "Connexion",
