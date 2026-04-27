@@ -16,7 +16,6 @@ from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from app.api import anki as anki_api
 from app.api import auth as auth_api
 from app.api import chat as chat_api
 from app.api import news as news_api
@@ -126,7 +125,6 @@ def create_app() -> FastAPI:
     app.include_router(vault_api.router)
     app.include_router(organize_api.router)
     app.include_router(news_api.router)
-    app.include_router(anki_api.router)
 
     @app.get("/api/health")
     def health() -> dict[str, str]:

@@ -172,60 +172,6 @@ export interface NewsFeedSummary {
   unread: number;
 }
 
-// ---- Anki ----
-
-export interface AnkiDeck {
-  id: number;
-  name: string;
-  card_count: number;
-  new_count: number;
-  due_count: number;
-}
-
-export interface AnkiCard {
-  id: number;
-  nid: number;
-  did: number;
-  ord: number;
-  type: number;   // 0 new, 1 learn, 2 review, 3 relearn
-  queue: number;
-  due: number;
-  ivl: number;
-  factor: number;
-  reps: number;
-  lapses: number;
-}
-
-export type AnkiNoteType = "basic" | "basic_reverse";
-
-export interface AnkiNote {
-  id: number;
-  deck_id: number;
-  notetype: AnkiNoteType;
-  fields: string[];
-  tags: string[];
-  cards: AnkiCard[];
-}
-
-export interface AnkiCardForReview {
-  card: AnkiCard;
-  front_html: string;
-  back_html: string;
-}
-
-export interface AnkiReviewResult {
-  card: AnkiCard;
-  show_in_seconds: number;
-}
-
-export interface AnkiSyncStatus {
-  enabled: boolean;
-  last_sync_ms: number | null;
-  last_action: string | null;
-  last_error: string | null;
-  local_mod_ms: number | null;
-}
-
 export interface OrganizeRun {
   id: string;
   started_at: string;

@@ -1,16 +1,18 @@
-"""anki.* — deck and card management tools for the LLM.
+"""anki.* — read access + add for the LLM.
 
-Exposes deck and note CRUD minus delete. The LLM can:
-  - browse decks (anki.list_decks)
-  - create / rename decks (anki.create_deck, anki.rename_deck)
-  - browse notes (anki.list_notes, anki.read_note)
-  - add / edit notes (anki.add_note, anki.update_note)
+Exposes a deliberately small surface:
+  - anki.list_decks  — browse decks
+  - anki.list_notes  — browse notes (filter by deck and/or text search)
+  - anki.read_note   — full content of one note
+  - anki.add_note    — add a flashcard (basic or basic_reverse)
 
-Delete operations are intentionally NOT exposed: the LLM should not
-be able to silently destroy flashcards. The user deletes via the UI.
+Decks are not created here; the user manages decks in Anki desktop /
+AnkiWeb and they appear locally after sync_download. The LLM cannot
+update or delete notes — those flows live entirely in the user's
+hands (Anki desktop, AnkiWeb, or vault file edits).
 
-These tools require anki.enabled = true in config.yml. When disabled
-they return a clear error message rather than silently failing.
+Tools require anki.enabled = true in config.yml; when disabled they
+return a clear error rather than silently failing.
 """
 
 from __future__ import annotations
@@ -22,13 +24,10 @@ from app.anki import (
     NOTETYPE_BASIC,
     NOTETYPE_BASIC_REVERSE,
     add_note,
-    create_deck,
     get_note,
     list_decks,
     list_notes,
     open_anki,
-    rename_deck,
-    update_note,
 )
 from app.config import get_settings
 
@@ -41,7 +40,6 @@ _NOTETYPE_CHOICES = (NOTETYPE_BASIC, NOTETYPE_BASIC_REVERSE)
 
 
 def _ensure_enabled() -> str | None:
-    """Return an error message if anki is disabled, else None."""
     if not get_settings().anki.enabled:
         return "Anki is disabled in config.yml (set anki.enabled = true)."
     return None
@@ -51,7 +49,7 @@ def _format_tags(tags: list[str]) -> str:
     return " ".join(tags) if tags else "(none)"
 
 
-# ── Deck handlers ────────────────────────────────────────────────────
+# ── Handlers ─────────────────────────────────────────────────────────
 
 
 async def _list_decks(_args: dict[str, Any]):
@@ -71,47 +69,6 @@ async def _list_decks(_args: dict[str, Any]):
             f"{d.due_count} due, {d.new_count} new"
         )
     return text_result("\n".join(lines))
-
-
-async def _create_deck(args: dict[str, Any]):
-    if (err := _ensure_enabled()):
-        return text_result(err, is_error=True)
-    name = str(args.get("name", "")).strip()
-    if not name:
-        return text_result("`name` is required.", is_error=True)
-    conn = open_anki()
-    try:
-        deck = create_deck(conn, name)
-    except ValueError as exc:
-        return text_result(str(exc), is_error=True)
-    finally:
-        conn.close()
-    return text_result(f"Created deck [{deck.id}] {deck.name}.")
-
-
-async def _rename_deck(args: dict[str, Any]):
-    if (err := _ensure_enabled()):
-        return text_result(err, is_error=True)
-    try:
-        deck_id = int(args["deck_id"])
-    except (KeyError, TypeError, ValueError):
-        return text_result("`deck_id` is required (integer).", is_error=True)
-    new_name = str(args.get("name", "")).strip()
-    if not new_name:
-        return text_result("`name` is required.", is_error=True)
-    conn = open_anki()
-    try:
-        rename_deck(conn, deck_id, new_name)
-    except KeyError:
-        return text_result(f"deck {deck_id} not found", is_error=True)
-    except ValueError as exc:
-        return text_result(str(exc), is_error=True)
-    finally:
-        conn.close()
-    return text_result(f"Renamed deck [{deck_id}] to {new_name!r}.")
-
-
-# ── Note handlers ────────────────────────────────────────────────────
 
 
 async def _list_notes(args: dict[str, Any]):
@@ -211,64 +168,6 @@ async def _add_note(args: dict[str, Any]):
     )
 
 
-async def _update_note(args: dict[str, Any]):
-    if (err := _ensure_enabled()):
-        return text_result(err, is_error=True)
-    try:
-        note_id = int(args["note_id"])
-    except (KeyError, TypeError, ValueError):
-        return text_result("`note_id` is required (integer).", is_error=True)
-
-    front = args.get("front")
-    back = args.get("back")
-    fields: list[str] | None = None
-    if front is not None or back is not None:
-        # Need both — if only one is given, fill the other from the existing
-        # note so the caller doesn't have to re-send unchanged data.
-        conn = open_anki()
-        try:
-            existing = get_note(conn, note_id)
-        finally:
-            conn.close()
-        if existing is None:
-            return text_result(f"note {note_id} not found", is_error=True)
-        fields = [
-            str(front).strip() if front is not None else (existing.fields[0] if existing.fields else ""),
-            str(back).strip() if back is not None else (existing.fields[1] if len(existing.fields) > 1 else ""),
-        ]
-        if not fields[0] or not fields[1]:
-            return text_result(
-                "Both front and back must be non-empty after update.", is_error=True,
-            )
-
-    raw_tags = args.get("tags")
-    tags: list[str] | None = None
-    if raw_tags is not None:
-        if isinstance(raw_tags, str):
-            tags = [t for t in raw_tags.split() if t]
-        else:
-            tags = [str(t).strip() for t in raw_tags if str(t).strip()]
-
-    if fields is None and tags is None:
-        return text_result(
-            "Nothing to update — supply `front`, `back`, and/or `tags`.",
-            is_error=True,
-        )
-
-    conn = open_anki()
-    try:
-        n = update_note(conn, note_id, fields=fields, tags=tags)
-    except KeyError:
-        return text_result(f"note {note_id} not found", is_error=True)
-    except ValueError as exc:
-        return text_result(str(exc), is_error=True)
-    finally:
-        conn.close()
-    return text_result(
-        f"Updated note [{n.id}] (tags: {_format_tags(n.tags)})."
-    )
-
-
 # ── Registration ─────────────────────────────────────────────────────
 
 
@@ -276,35 +175,11 @@ def register_all(reg: ToolRegistry) -> None:
     reg.register(
         "anki.list_decks",
         "List all Anki decks in the local collection. Returns deck id, "
-        "name, and card counts (total / due today / new).",
+        "name, and card counts (total / due today / new). Decks are "
+        "managed externally (Anki desktop / AnkiWeb); to create a deck, "
+        "make it there and wait for the next sync.",
         {"type": "object", "properties": {}},
         _list_decks,
-    )
-    reg.register(
-        "anki.create_deck",
-        "Create a new Anki deck. Use this before adding notes if the "
-        "user asks for a topic-specific deck.",
-        {
-            "type": "object",
-            "properties": {
-                "name": {"type": "string", "description": "Deck name."},
-            },
-            "required": ["name"],
-        },
-        _create_deck,
-    )
-    reg.register(
-        "anki.rename_deck",
-        "Rename an existing Anki deck. Cannot rename the Default deck.",
-        {
-            "type": "object",
-            "properties": {
-                "deck_id": {"type": "integer", "description": "Deck id from anki.list_decks."},
-                "name": {"type": "string", "description": "New deck name."},
-            },
-            "required": ["deck_id", "name"],
-        },
-        _rename_deck,
     )
     reg.register(
         "anki.list_notes",
@@ -348,7 +223,8 @@ def register_all(reg: ToolRegistry) -> None:
         "Add a flashcard to a deck. `notetype` is either 'basic' "
         "(creates one card front→back) or 'basic_reverse' (creates "
         "two cards, front→back AND back→front). Both `front` and "
-        "`back` must be non-empty. `tags` is optional.",
+        "`back` must be non-empty. `tags` is optional. The deck must "
+        "already exist (use anki.list_decks to find its id).",
         {
             "type": "object",
             "properties": {
@@ -370,25 +246,4 @@ def register_all(reg: ToolRegistry) -> None:
             "required": ["deck_id", "front", "back"],
         },
         _add_note,
-    )
-    reg.register(
-        "anki.update_note",
-        "Update an existing note's fields and/or tags. You can pass "
-        "just `front`, just `back`, just `tags`, or any combination — "
-        "unsupplied fields are kept as-is. Tags fully replace the "
-        "previous tag set when supplied.",
-        {
-            "type": "object",
-            "properties": {
-                "note_id": {"type": "integer"},
-                "front": {"type": "string"},
-                "back":  {"type": "string"},
-                "tags": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                },
-            },
-            "required": ["note_id"],
-        },
-        _update_note,
     )
