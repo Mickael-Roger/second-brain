@@ -129,7 +129,11 @@ const marked = new Marked(
 marked.setOptions({ gfm: true, breaks: false, async: false });
 
 export function renderMarkdown(md: string): string {
-  const piped = rewriteCallouts(rewriteEmbeds(rewriteWikilinks(md)));
+  // Order matters: embeds must run BEFORE wikilinks. `rewriteWikilinks`
+  // matches `[[X]]` which is also a substring of `![[X]]`, so running it
+  // first eats the inner part of every embed and the embed rewriter never
+  // sees them — images would render with `src="sb:wikilink:…"` and break.
+  const piped = rewriteCallouts(rewriteWikilinks(rewriteEmbeds(md)));
   const html = marked.parse(piped);
   return typeof html === "string" ? html : "";
 }
