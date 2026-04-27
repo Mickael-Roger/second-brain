@@ -10,6 +10,7 @@ import { EditorView } from "@codemirror/view";
 import { Save, X } from "lucide-react";
 
 import { api, ApiError, type VaultNote } from "@/lib/api";
+import { currentTheme, type Theme } from "@/lib/theme";
 
 interface Props {
   path: string;
@@ -24,24 +25,24 @@ interface LockResponse {
   expires_at: string;
 }
 
-const editorTheme = EditorView.theme(
-  {
-    "&": { height: "100%", fontSize: "14px" },
-    ".cm-scroller": {
-      fontFamily: "ui-monospace, SFMono-Regular, monospace",
-      lineHeight: "1.55",
-    },
-    ".cm-content": { padding: "1.25rem 1.5rem" },
-    ".cm-gutters": {
-      backgroundColor: "rgb(var(--surface))",
-      borderRight: "1px solid rgb(var(--border))",
-      color: "rgb(var(--muted))",
-    },
-    ".cm-focused .cm-cursor": { borderLeftColor: "rgb(var(--accent))" },
-    ".cm-line": { color: "rgb(var(--text))" },
+// CSS-variable-based overlay so the editor follows the app's
+// light/dark theme. The actual base theme (built-in light/dark) is
+// selected dynamically via the `theme` prop on <CodeMirror>.
+const editorTheme = EditorView.theme({
+  "&": { height: "100%", fontSize: "14px" },
+  ".cm-scroller": {
+    fontFamily: "ui-monospace, SFMono-Regular, monospace",
+    lineHeight: "1.55",
   },
-  { dark: true },
-);
+  ".cm-content": { padding: "1.25rem 1.5rem" },
+  ".cm-gutters": {
+    backgroundColor: "rgb(var(--surface))",
+    borderRight: "1px solid rgb(var(--border))",
+    color: "rgb(var(--muted))",
+  },
+  ".cm-focused .cm-cursor": { borderLeftColor: "rgb(var(--accent))" },
+  ".cm-line": { color: "rgb(var(--text))" },
+});
 
 export default function WikiEditor({ path, initialContent, onSaved, onCancel }: Props) {
   const { t } = useTranslation();
@@ -52,6 +53,20 @@ export default function WikiEditor({ path, initialContent, onSaved, onCancel }: 
   const [saving, setSaving] = useState(false);
   const [acquiring, setAcquiring] = useState(true);
   const releaseGuard = useRef(false);
+  const [theme, setEditorTheme] = useState<Theme>(() => currentTheme());
+
+  // Mirror the app theme (toggled via the sidebar Sun/Moon button) by
+  // observing the `theme-light` class on <html>. Without this, the
+  // editor would stay on whatever theme was active at mount even when
+  // the user toggles modes mid-edit.
+  useEffect(() => {
+    const obs = new MutationObserver(() => setEditorTheme(currentTheme()));
+    obs.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["class"],
+    });
+    return () => obs.disconnect();
+  }, []);
 
   // Acquire the lock on mount; release on unmount.
   useEffect(() => {
@@ -180,7 +195,7 @@ export default function WikiEditor({ path, initialContent, onSaved, onCancel }: 
           value={content}
           onChange={onChange}
           extensions={[markdown(), editorTheme]}
-          theme="dark"
+          theme={theme}
           height="100%"
           basicSetup={{
             lineNumbers: true,

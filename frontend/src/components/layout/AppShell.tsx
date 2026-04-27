@@ -11,7 +11,6 @@ import {
   MessageSquare,
   Moon,
   Newspaper,
-  Sparkles,
   Sun,
 } from "lucide-react";
 
@@ -19,7 +18,7 @@ import { logout } from "@/lib/auth";
 import { setLanguage, currentLanguage } from "@/lib/i18n";
 import { currentTheme, setTheme, type Theme } from "@/lib/theme";
 
-export type ViewId = "chat" | "wiki" | "organize" | "news";
+export type ViewId = "chat" | "wiki" | "news";
 
 interface Props {
   active: ViewId;
@@ -46,7 +45,6 @@ export default function AppShell({ active, onSelect, children }: Props) {
   const items: { id: ViewId; icon: typeof MessageSquare; label: string }[] = [
     { id: "chat", icon: MessageSquare, label: t("nav.chat") },
     { id: "wiki", icon: BookOpen, label: t("nav.wiki") },
-    { id: "organize", icon: Sparkles, label: t("nav.organize") },
     { id: "news", icon: Newspaper, label: t("nav.news") },
   ];
 

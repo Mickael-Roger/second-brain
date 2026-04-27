@@ -125,22 +125,6 @@ export interface VaultSearchHit {
   snippet: string;
 }
 
-// ---- Organize ----
-
-export interface OrganizeProposal {
-  path: string;
-  move_to: string | null;
-  tags: string[] | null;
-  wikilinks: { target: string; context?: string }[];
-  refactor: string | null;
-  notes: string | null;
-  parse_error: string | null;
-  state: "pending" | "applied" | "discarded" | "failed";
-  apply_error: string | null;
-  apply_ops: string[];
-  created_at: string;
-}
-
 // ---- News ----
 
 export interface NewsArticleSummary {
@@ -170,23 +154,5 @@ export interface NewsFeedSummary {
   favicon: string | null;
   total: number;
   unread: number;
-}
-
-export interface OrganizeRun {
-  id: string;
-  started_at: string;
-  finished_at: string | null;
-  mode: "dry-run" | "apply";
-  status: "running" | "completed" | "applied" | "discarded" | "failed";
-  notes_total: number;
-  summary: string | null;
-  error: string | null;
-  counts: {
-    pending: number;
-    applied: number;
-    discarded: number;
-    failed: number;
-  };
-  proposals: OrganizeProposal[];
 }
 

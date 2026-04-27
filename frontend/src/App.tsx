@@ -6,7 +6,6 @@ import LoginPage from "@/routes/login";
 import AppShell, { type ViewId } from "@/components/layout/AppShell";
 import ChatView from "@/components/chat/ChatView";
 import WikiView, { type WikiTarget } from "@/components/wiki/WikiView";
-import OrganizeView from "@/components/organize/OrganizeView";
 import NewsView from "@/components/news/NewsView";
 
 export default function App() {
@@ -39,8 +38,6 @@ export default function App() {
     <AppShell active={view} onSelect={setView}>
       {view === "chat" ? (
         <ChatView onOpenWiki={openWiki} />
-      ) : view === "organize" ? (
-        <OrganizeView onOpenWiki={openWiki} />
       ) : view === "news" ? (
         <NewsView onOpenChat={() => setView("chat")} />
       ) : (
