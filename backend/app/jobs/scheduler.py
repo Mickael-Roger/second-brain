@@ -24,6 +24,7 @@ from app.vault.guard import (
     batch_session,
     capture_head,
     commit_and_push,
+    diff_names,
     diff_stat,
     get_guard,
     stash,
@@ -100,15 +101,26 @@ async def run_nightly(*, since: timedelta | None = None) -> str:
         try:
             organize = await run_organize(since=since)
             log.info(
-                "nightly job: organize processed=%d proposals=%d skipped=%d",
-                organize.processed, len(organize.proposals), len(organize.skipped),
+                "nightly job: organize considered=%d errors=%d",
+                len(organize.candidate_paths), len(organize.errors),
             )
         except Exception as exc:
             organize_error = str(exc)
             log.exception("nightly organize failed")
 
-    # ── Capture diff --stat of everything the run produced ───────────
+    # ── Capture what the run produced ────────────────────────────────
     stat = diff_stat(base_sha)
+    changed = diff_names(base_sha)
+
+    # Modified / skipped vs the actual disk state, not a self-report.
+    if organize is not None:
+        considered = list(organize.candidate_paths)
+        modified_paths = sorted(p for p in considered if p in changed)
+        skipped_paths = sorted(p for p in considered if p not in changed)
+    else:
+        considered = []
+        modified_paths = []
+        skipped_paths = []
 
     # ── Finalise: bulk-commit (apply) or stash (dry-run) ────────────
     finalise_msg: str
@@ -134,9 +146,7 @@ async def run_nightly(*, since: timedelta | None = None) -> str:
             log.exception("nightly stash failed")
             finalise_msg = f"stash FAILED: {exc} (changes left in working tree)"
 
-    # Embed both the diff stat and the finalisation outcome at the top
-    # of the report — they're the bottom line the user actually wants
-    # to read first.
+    # ── Build the markdown report ───────────────────────────────────
     parts = [
         f"# Nightly run — {datetime.now(timezone.utc).isoformat()}",
         "",
@@ -150,33 +160,24 @@ async def run_nightly(*, since: timedelta | None = None) -> str:
         _format_archive_section(archive),
         "",
     ]
-    if organize is not None:
-        parts.append(organize.report)
-    elif organize_error:
-        parts.append(f"## Organize\n\nFailed: {organize_error}")
+    parts.extend(_format_organize_section(
+        organize, organize_error, considered, modified_paths, skipped_paths
+    ))
     report = "\n".join(parts)
 
     try:
         from app.services.email import render_nightly_email_html, send_email
 
         if organize is not None:
-            actionable_count = sum(
-                1 for p in organize.proposals
-                if not p.is_no_op and not p.parse_error
-            )
             subject = (
                 f"[second-brain] nightly — archived {archive.moved}, "
-                f"reviewed {organize.processed}, "
-                f"proposals {actionable_count}"
+                f"considered {len(considered)}, modified {len(modified_paths)}"
             )
         else:
             subject = (
                 f"[second-brain] nightly — archived {archive.moved} "
                 f"(organize failed)"
             )
-        # Build the HTML alternative deterministically from the structured
-        # result. The markdown report stays as the plain-text alternative
-        # so clients without HTML support still get something readable.
         try:
             html = render_nightly_email_html(
                 subject=subject,
@@ -185,6 +186,9 @@ async def run_nightly(*, since: timedelta | None = None) -> str:
                 organize_error=organize_error,
                 diff_stat=stat,
                 finalise_msg=finalise_msg,
+                considered=considered,
+                modified_paths=modified_paths,
+                skipped_paths=skipped_paths,
             )
         except Exception:
             log.exception("nightly HTML render failed; sending plain-text only")
@@ -194,6 +198,48 @@ async def run_nightly(*, since: timedelta | None = None) -> str:
         log.exception("nightly report email failed")
 
     return report
+
+
+def _format_organize_section(
+    organize: OrganizeResult | None,
+    organize_error: str | None,
+    considered: list[str],
+    modified_paths: list[str],
+    skipped_paths: list[str],
+) -> list[str]:
+    if organize is None:
+        return [
+            "## Organize",
+            "",
+            f"Failed: {organize_error or 'unknown error'}",
+            "",
+        ]
+    duration = (organize.finished_at - organize.started_at).total_seconds()
+    lines = [
+        f"## Organize — {organize.started_at.date().isoformat()}",
+        "",
+        f"Started:  {organize.started_at.isoformat()}",
+        f"Finished: {organize.finished_at.isoformat()} ({duration:.1f}s)",
+        f"Last run: {organize.last_run_at.isoformat() if organize.last_run_at else '(first run)'}",
+        f"Notes considered: {len(considered)}",
+        f"Modified: {len(modified_paths)}",
+        f"Skipped: {len(skipped_paths)}",
+        f"Agent errors: {len(organize.errors)}",
+        "",
+    ]
+    if skipped_paths:
+        lines.append("### Skipped")
+        lines.append("")
+        for p in skipped_paths:
+            lines.append(f"- `{p}`")
+        lines.append("")
+    if organize.errors:
+        lines.append("### Errors")
+        lines.append("")
+        for path, reason in organize.errors:
+            lines.append(f"- `{path}` — {reason}")
+        lines.append("")
+    return lines
 
 
 async def _news_fetch_job() -> None:

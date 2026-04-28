@@ -56,31 +56,18 @@ def render_nightly_email_html(
     organize_error: str | None,
     diff_stat: str = "",
     finalise_msg: str = "",
+    considered: list[str] | None = None,
+    modified_paths: list[str] | None = None,
+    skipped_paths: list[str] | None = None,
 ) -> str:
     """Build the HTML alternative for the nightly Organize email from the
     job's structured result. Deterministic, no LLM call.
 
-    The proposals list is partitioned in Python so the template stays free
-    of derivation logic: actionable (will change something), parse_error
-    failures, and silent no-ops (each shown as a single bullet at the end).
+    `considered`, `modified_paths`, `skipped_paths` are computed by the
+    scheduler against the actual `git diff` (not self-reported by the
+    agent) so the email reflects on-disk truth.
     """
     if organize is not None:
-        proposals = organize.proposals
-        actionable_count = sum(
-            1 for p in proposals if not p.is_no_op and not p.parse_error
-        )
-        failures_count = sum(1 for p in proposals if p.parse_error)
-        apply_ok_count = sum(
-            1 for a in organize.applied if not a.error and a.operations
-        )
-        apply_err_count = sum(1 for a in organize.applied if a.error)
-        # Skipped = considered but not modified. Just paths.
-        modified_paths = {
-            a.path for a in organize.applied if not a.error and a.operations
-        }
-        considered: list[str] = [p.path for p in proposals]
-        considered.extend(path for path, _ in organize.skipped)
-        skipped_paths = sorted({p for p in considered if p not in modified_paths})
         last_run_iso = (
             organize.last_run_at.isoformat() if organize.last_run_at else None
         )
@@ -90,10 +77,7 @@ def render_nightly_email_html(
         duration_s = f"{(organize.finished_at - organize.started_at).total_seconds():.1f}"
         mode = organize.mode
     else:
-        actionable_count = failures_count = apply_ok_count = apply_err_count = 0
-        skipped_paths = []
         last_run_iso = None
-        # Without an organize result we still want a date stamp on the email.
         from datetime import datetime, timezone
         now = datetime.now(timezone.utc)
         run_date = now.date().isoformat()
@@ -114,11 +98,9 @@ def render_nightly_email_html(
         archive=archive,
         organize=organize,
         organize_error=organize_error,
-        actionable_count=actionable_count,
-        failures_count=failures_count,
-        apply_ok_count=apply_ok_count,
-        apply_err_count=apply_err_count,
-        skipped_paths=skipped_paths,
+        considered=considered or [],
+        modified_paths=modified_paths or [],
+        skipped_paths=skipped_paths or [],
         diff_stat=diff_stat,
         finalise_msg=finalise_msg,
     )

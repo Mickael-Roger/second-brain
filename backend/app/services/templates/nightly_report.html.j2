@@ -77,12 +77,10 @@
       <p class="errors"><strong>Failed:</strong> {{ organize_error or 'unknown error' }}</p>
     {% else %}
     <ul class="stats">
-      <li><strong>{{ organize.processed }}</strong>considered</li>
-      <li><strong>{{ apply_ok_count }}</strong>modified</li>
+      <li><strong>{{ considered|length }}</strong>considered</li>
+      <li><strong>{{ modified_paths|length }}</strong>modified</li>
       <li><strong>{{ skipped_paths|length }}</strong>skipped</li>
-      <li><strong>{{ actionable_count }}</strong>actionable</li>
-      <li><strong>{{ apply_err_count }}</strong>apply errors</li>
-      <li><strong>{{ failures_count }}</strong>parse failures</li>
+      <li><strong>{{ organize.errors|length }}</strong>agent errors</li>
     </ul>
     <p class="meta-line">Last run: {{ last_run or '(first run)' }}</p>
     {% endif %}
@@ -98,12 +96,12 @@
   </div>
   {% endif %}
 
-  {# ── Errors (subset of skipped, with reason) — operational ── #}
-  {% if organize and organize.skipped %}
+  {# ── Agent errors (with reason) ───────────────────────── #}
+  {% if organize and organize.errors %}
   <div class="section">
-    <h2>Errors ({{ organize.skipped|length }})</h2>
+    <h2>Agent errors ({{ organize.errors|length }})</h2>
     <ul class="tight">
-      {% for path, reason in organize.skipped %}
+      {% for path, reason in organize.errors %}
       <li><code>{{ path }}</code> — <span class="meta-line">{{ reason }}</span></li>
       {% endfor %}
     </ul>

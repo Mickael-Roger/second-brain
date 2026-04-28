@@ -292,6 +292,25 @@ def diff_stat(base_sha: str | None, root: Path | None = None) -> str:
     return r.stdout
 
 
+def diff_names(base_sha: str | None, root: Path | None = None) -> set[str]:
+    """Set of vault-relative paths that changed between `base_sha` and
+    the current working tree. Used to decide which candidates were
+    actually modified by the run vs left alone.
+
+    Returns an empty set when git is disabled / SHA is None.
+    """
+    if base_sha is None:
+        return set()
+    r = _run(
+        ["git", "diff", "--name-only", base_sha],
+        root or vault_root(),
+    )
+    if r.returncode != 0:
+        log.warning("git diff --name-only failed: %s", r.stderr.strip())
+        return set()
+    return {line for line in r.stdout.splitlines() if line.strip()}
+
+
 def commit_and_push(message: str, root: Path | None = None) -> bool:
     """Stage everything, commit with `message`, push. Returns True if a
     commit was actually made (False when the working tree was clean).
