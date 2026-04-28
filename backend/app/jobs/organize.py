@@ -151,6 +151,7 @@ class OrganizeResult:
     proposals: list[Proposal]
     applied: list[AppliedNote]
     report: str
+    last_run_at: datetime | None = None
 
 
 # ── candidate selection + run state ──────────────────────────────────
@@ -653,6 +654,7 @@ async def run_organize(
         proposals=proposals,
         applied=applied,
         report=report,
+        last_run_at=last_run,
     )
 
 

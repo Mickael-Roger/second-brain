@@ -75,22 +75,36 @@ async def run_nightly() -> str:
     report = "\n".join(parts)
 
     try:
-        from app.services.email import render_markdown_to_html_via_llm, send_email
+        from app.services.email import render_nightly_email_html, send_email
 
         if organize is not None:
+            actionable_count = sum(
+                1 for p in organize.proposals
+                if not p.is_no_op and not p.parse_error
+            )
             subject = (
                 f"[second-brain] nightly — archived {archive.moved}, "
-                f"reviewed {organize.processed}, proposals {len(organize.proposals)}"
+                f"reviewed {organize.processed}, "
+                f"proposals {actionable_count}"
             )
         else:
             subject = (
                 f"[second-brain] nightly — archived {archive.moved} "
                 f"(organize failed)"
             )
-        # Render the markdown to a styled HTML document via the LLM so the
-        # email looks readable in GUI clients. Falls back to plain text if
-        # the LLM is unreachable or returns garbage.
-        html = await render_markdown_to_html_via_llm(report)
+        # Build the HTML alternative deterministically from the structured
+        # result. The markdown report stays as the plain-text alternative
+        # so clients without HTML support still get something readable.
+        try:
+            html = render_nightly_email_html(
+                subject=subject,
+                archive=archive,
+                organize=organize,
+                organize_error=organize_error,
+            )
+        except Exception:
+            log.exception("nightly HTML render failed; sending plain-text only")
+            html = None
         send_email(subject=subject, body=report, html=html)
     except Exception:
         log.exception("nightly report email failed")

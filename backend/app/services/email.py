@@ -9,95 +9,104 @@ Three security modes (config: `smtp.security`):
   - starttls — plain SMTP then STARTTLS upgrade (port 587 typical).
   - ssl      — SSL/TLS from the start (port 465 typical).
 
-The HTML alternative (used by the nightly Organize report) is rendered
-by the configured LLM rather than a markdown library — see
-`render_markdown_to_html_via_llm`.
+The HTML alternative for the nightly Organize report is rendered from the
+job's structured result via a Jinja template (see
+`render_nightly_email_html`). The plain-text alternative stays as the
+markdown report so any client without HTML support remains readable.
 """
 
 from __future__ import annotations
 
 import logging
-import re
 import smtplib
 import ssl
 from email.message import EmailMessage
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+from jinja2 import Environment, FileSystemLoader, StrictUndefined, select_autoescape
 
 from app.config import get_settings
-from app.llm import Message, TextBlock, complete
+
+if TYPE_CHECKING:
+    from app.jobs.journal_archive import ArchiveResult
+    from app.jobs.organize import OrganizeResult
 
 log = logging.getLogger(__name__)
 
 
-_HTML_RENDER_SYSTEM_PROMPT = """\
-You convert a markdown document into a self-contained HTML email document.
-
-OUTPUT CONTRACT (strict):
-- Output ONLY the HTML. No preamble, no commentary, no markdown code fences
-  wrapping the result.
-- Begin with `<!doctype html>` and end with `</html>`.
-- Embed all CSS in a single <style> block inside <head>. No external
-  resources (no <link>, no <script>, no images, no @import). Email clients
-  often strip those.
-- Use only widely-supported HTML and CSS (no JS, no SVG, no CSS variables).
-- Keep the body width ~720px max so it looks good on both desktop and
-  mobile email clients.
-
-CONTENT FIDELITY (strict):
-- Preserve EVERY heading, paragraph, list item, code fence, blockquote,
-  and table from the input. Do not summarize, drop, reorder, or invent.
-- Render code fences (```bash, ```json, etc.) as <pre><code> with a tinted
-  background and a monospace font; no syntax highlighting needed.
-- Status markers like ✅ / ❌ / ⚠ get subtle inline color (green / red /
-  amber). Keep it tasteful.
-- Wikilinks `[[Note]]` should render as inline <code>[[Note]]</code> (no
-  link — this is an email and the user reads it outside the app).
-
-STYLE:
-- Clean, scannable, professional. Sans-serif body, h1/h2/h3 hierarchy
-  visually distinct. Generous spacing. Limited palette (3–4 colors max
-  including the body text and link colors). Do NOT add decorative
-  emoji, illustrations, or stock content.
-"""
+_TEMPLATES_DIR = Path(__file__).parent / "templates"
 
 
-def _strip_code_fence(text: str) -> str:
-    """LLMs sometimes wrap their answer in ```html ... ``` despite the
-    instructions. Strip a single leading/trailing fence if present."""
-    s = text.strip()
-    m = re.match(r"^```(?:html)?\s*\n", s)
-    if m:
-        s = s[m.end():]
-        if s.endswith("```"):
-            s = s[: -3].rstrip()
-    return s
+def _jinja_env() -> Environment:
+    return Environment(
+        loader=FileSystemLoader(_TEMPLATES_DIR),
+        autoescape=select_autoescape(["html", "j2"]),
+        undefined=StrictUndefined,
+        trim_blocks=True,
+        lstrip_blocks=True,
+    )
 
 
-async def render_markdown_to_html_via_llm(markdown_text: str) -> str | None:
-    """Ask the configured LLM to render the markdown as a styled HTML
-    document. Returns None if the LLM is unreachable or the output looks
-    unusable — caller should fall back to the plain-text body.
+def render_nightly_email_html(
+    *,
+    subject: str,
+    archive: "ArchiveResult",
+    organize: "OrganizeResult | None",
+    organize_error: str | None,
+) -> str:
+    """Build the HTML alternative for the nightly Organize email from the
+    job's structured result. Deterministic, no LLM call.
+
+    The proposals list is partitioned in Python so the template stays free
+    of derivation logic: actionable (will change something), parse_error
+    failures, and silent no-ops (each shown as a single bullet at the end).
     """
-    try:
-        raw = await complete(
-            _HTML_RENDER_SYSTEM_PROMPT,
-            [Message(role="user", content=[TextBlock(text=markdown_text)])],
+    if organize is not None:
+        proposals = organize.proposals
+        actionable = [p for p in proposals if not p.is_no_op and not p.parse_error]
+        failures = [p for p in proposals if p.parse_error]
+        no_ops = [p for p in proposals if p.is_no_op and not p.parse_error]
+        applied_ok = [
+            a for a in organize.applied if not a.error and a.operations
+        ]
+        last_run_iso = (
+            organize.last_run_at.isoformat() if organize.last_run_at else None
         )
-    except Exception as exc:
-        log.warning("LLM markdown→HTML render failed: %s", exc)
-        return None
+        run_date = organize.started_at.date().isoformat()
+        started_iso = organize.started_at.isoformat()
+        finished_iso = organize.finished_at.isoformat()
+        duration_s = f"{(organize.finished_at - organize.started_at).total_seconds():.1f}"
+        mode = organize.mode
+    else:
+        actionable = failures = no_ops = applied_ok = []
+        last_run_iso = None
+        # Without an organize result we still want a date stamp on the email.
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc)
+        run_date = now.date().isoformat()
+        started_iso = finished_iso = now.isoformat()
+        duration_s = "0.0"
+        mode = "n/a"
 
-    html = _strip_code_fence(raw)
-    if not html:
-        log.warning("LLM markdown→HTML returned an empty response")
-        return None
-    if "<html" not in html.lower():
-        log.warning(
-            "LLM markdown→HTML output doesn't look like an HTML document "
-            "(no <html> tag): %r…",
-            html[:200],
-        )
-        return None
-    return html
+    env = _jinja_env()
+    template = env.get_template("nightly_report.html.j2")
+    return template.render(
+        subject=subject,
+        run_date=run_date,
+        started=started_iso,
+        finished=finished_iso,
+        duration_s=duration_s,
+        mode=mode,
+        last_run=last_run_iso,
+        archive=archive,
+        organize=organize,
+        organize_error=organize_error,
+        actionable=actionable,
+        failures=failures,
+        no_ops=no_ops,
+        applied_ok=applied_ok,
+    )
 
 
 def send_email(subject: str, body: str, *, html: str | None = None) -> None:
