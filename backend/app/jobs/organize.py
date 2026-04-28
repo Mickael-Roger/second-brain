@@ -20,6 +20,7 @@ import json
 import logging
 import sqlite3
 from dataclasses import dataclass, field
+from datetime import date as _date
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -49,6 +50,57 @@ MAX_NOTE_CHARS = 12_000
 
 _LAST_RUN_KEY = "last_run_at"
 _MODULE = "organize"
+
+# Hard exclusions matching ORGANIZE.md "What you NEVER touch" section.
+# A candidate path is skipped if any of these match:
+#   * its first path component equals an entry in EXCLUDED_TOP_DIRS, OR
+#   * any prefix of the path matches EXCLUDED_PREFIXES, OR
+#   * the full vault-relative path is in EXCLUDED_FILES, OR
+#   * the path is today's flat-journal note (handled separately).
+EXCLUDED_TOP_DIRS = frozenset({
+    "Trash",
+    "Templates",
+    "Excalidraw",
+    "files",
+    "Tracking",
+})
+EXCLUDED_PREFIXES = (
+    "Raw/Anki/",
+    "Raw/Logger/Opencode/",
+    "Raw/Review/",
+)
+EXCLUDED_FILES = frozenset({
+    "USER.md",
+    "PREFERENCES.md",
+    "INDEX.md",
+    "AGENTS.md",
+    "INGEST.md",
+    "ORGANIZE.md",
+    "README.md",
+    "Cheatsheet.md",
+    "Raw/Inbox/Notes.md",
+})
+
+
+def _is_excluded(rel: str) -> bool:
+    """True when a vault-relative .md path is on the hard-exclusion list."""
+    if rel in EXCLUDED_FILES:
+        return True
+    top = rel.split("/", 1)[0]
+    if top in EXCLUDED_TOP_DIRS:
+        return True
+    return any(rel.startswith(prefix) for prefix in EXCLUDED_PREFIXES)
+
+
+def _is_todays_flat_journal(rel: str) -> bool:
+    """True when `rel` is today's flat-path daily note (e.g. Journal/2026-04-28.md).
+
+    The daily note in progress is left alone; archived journals
+    (Journal/YYYY/MM/...) and prior days are fair game.
+    """
+    s = get_settings().obsidian.journal
+    today_name = f"{_date.today().isoformat()}.md"
+    return rel == f"{s.folder}/{today_name}"
 
 
 # ── data ────────────────────────────────────────────────────────────
@@ -163,6 +215,8 @@ def _select_candidates(
         if any(part.startswith(".") for part in rel_parts):
             continue
         rel = p.relative_to(root).as_posix()
+        if _is_excluded(rel) or _is_todays_flat_journal(rel):
+            continue
         if rel.startswith("Inbox/"):
             in_inbox.append(p)
             continue
@@ -307,7 +361,10 @@ def _vault_paths_sample() -> list[str]:
         rel_parts = p.relative_to(root).parts
         if any(part.startswith(".") for part in rel_parts):
             continue
-        paths.append(p.relative_to(root).as_posix())
+        rel = p.relative_to(root).as_posix()
+        if _is_excluded(rel):
+            continue
+        paths.append(rel)
         if len(paths) >= MAX_VAULT_PATHS_IN_PROMPT:
             break
     return paths
