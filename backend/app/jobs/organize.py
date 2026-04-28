@@ -256,15 +256,22 @@ def _select_candidates(
 # ── prompt + parser ──────────────────────────────────────────────────
 
 
-_DEFAULT_SYSTEM_PROMPT = """\
-You are reviewing one note from the user's Obsidian vault. Use INDEX.md (the
-vault's structural map), USER.md (facts about the user), and PREFERENCES.md
-(operating preferences) — all three provided below — as authoritative
-context for your proposals.
+# The user's ORGANIZE.md describes intent, philosophy, and end-state in
+# prose. It deliberately doesn't talk about wire format. We append this
+# block to whatever ORGANIZE.md provides so the LLM always emits a
+# parseable JSON proposal — without it, the LLM responds conversationally
+# ("I'd merge this into…") and parse_proposal fails for every note.
+_JSON_OUTPUT_CONTRACT = """\
+## Output contract (strict, machine-parsed)
 
-Return ONE JSON object and nothing else (no preamble, no code fences). The
-schema:
+You receive ONE note per call. The orchestrator processes notes one
+at a time; you cannot edit other files via this response — anything
+cross-cutting goes in `notes` so the user can act later.
 
+Return ONE JSON object and nothing else: no preamble, no commentary,
+no markdown code fences around it. Schema:
+
+```json
 {
   "move_to": "<vault-relative .md path>" | null,
   "tags": ["tag1", "tag2"] | null,
@@ -272,26 +279,41 @@ schema:
   "refactor": "<the full rewritten note content, including frontmatter>" | null,
   "notes": "<short prose comment, optional>" | null
 }
+```
 
 Rules:
-- Use null for fields you don't want to change.
-- Only propose `move_to` if the note clearly belongs in a different folder
-  per INDEX.md.
-- Only propose `tags` if the existing frontmatter is missing/wrong.
-- Only propose `refactor` for grammar / spelling / clarity / structure
-  fixes that materially improve the note. Preserve the user's voice; do
-  not invent content. Honor PREFERENCES.md if it constrains style.
-- Wikilinks are suggestions for the user to consider; the system does NOT
-  auto-insert them.
-- If the note is already in good shape, return all-null fields.
+- Use `null` for fields you don't want to change.
+- `move_to` only when the note clearly belongs in a different folder per
+  INDEX.md.
+- `tags` only when the existing frontmatter is missing or wrong.
+- `refactor` is the FULL new file content (frontmatter included), used
+  only when content needs rewriting per ORGANIZE.md (not for moves).
+- `wikilinks` are guidance — the system does NOT auto-insert them.
+- If the note is already in good shape, return all-null fields. **This
+  is the correct answer for many notes per pass — not a failure.**
+
+Do not respond with prose explanations even if the note is hard to
+classify; the JSON object (with `notes` filled in) is the only valid
+output channel.
 """
+
+
+_DEFAULT_SYSTEM_PROMPT = (
+    "You are reviewing one note from the user's Obsidian vault. Use "
+    "INDEX.md (the vault's structural map), USER.md (facts about the "
+    "user), and PREFERENCES.md (operating preferences) — all three "
+    "provided below — as authoritative context for your proposals.\n\n"
+    + _JSON_OUTPUT_CONTRACT
+)
 
 
 def _load_system_prompt() -> str:
     """Load the Organize task's system prompt from the vault.
 
     Reads `<vault>/<obsidian.organize_prompt_file>` (default `ORGANIZE.md`),
-    strips an optional YAML frontmatter block. Falls back to the built-in
+    strips an optional YAML frontmatter block, and ALWAYS appends
+    `_JSON_OUTPUT_CONTRACT` so the LLM emits a parseable proposal even
+    when ORGANIZE.md is written in pure prose. Falls back to the built-in
     default when the file is missing, empty, or the vault is unconfigured.
     """
     s = get_settings()
@@ -312,7 +334,10 @@ def _load_system_prompt() -> str:
         end = text.find("\n---", 4)
         if end >= 0:
             text = text[end + 4 :].lstrip("\n")
-    return text.strip() or _DEFAULT_SYSTEM_PROMPT
+    body = text.strip()
+    if not body:
+        return _DEFAULT_SYSTEM_PROMPT
+    return f"{body}\n\n---\n\n{_JSON_OUTPUT_CONTRACT}"
 
 
 def _strip_code_fences(text: str) -> str:

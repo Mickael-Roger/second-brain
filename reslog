@@ -1,0 +1,28 @@
+Running organize (mode=dry-run, email=True, since=24h)…
+# Nightly run — 2026-04-28T14:06:43.000065+00:00
+
+Mode: **dry-run**
+Outcome: dry-run: no changes produced
+
+## Changes (git diff --stat)
+
+```
+(no changes)
+```
+
+## Journal archive
+Moved:   0
+Skipped: 0
+
+## Organize — 2026-04-28
+
+Started:  2026-04-28T14:06:38.078352+00:00
+Finished: 2026-04-28T14:06:42.971818+00:00 (4.9s)
+Last run: 2026-04-28T09:55:38.071353+00:00
+Notes considered: 5
+Proposals (actionable): 0
+Applied OK: 0
+Apply errors: 0
+LLM parse failures: 5
+Skipped: 0
+
