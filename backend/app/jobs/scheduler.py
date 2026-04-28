@@ -11,7 +11,7 @@ Step 7 will add the Organize pass between (1) and the email.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -43,9 +43,15 @@ def _format_archive_section(archive: ArchiveResult) -> str:
     return "\n".join(lines)
 
 
-async def run_nightly() -> str:
+async def run_nightly(*, since: timedelta | None = None) -> str:
     """Execute the nightly job: archive prior days, run the Organize pass,
-    email the combined report. Returns the report text."""
+    email the combined report. Returns the report text.
+
+    `since`, when set, restricts the Organize pass to files modified
+    within that window (overriding the per-note last_reviewed_at scope
+    for this run). Used by the `second-brain organize --since …` CLI
+    flag — cron runs leave it unset and use the default freshness logic.
+    """
     log.info("nightly job: starting")
     archive = await run_journal_archive()
     log.info("nightly job: archive moved=%d skipped=%d", archive.moved, archive.skipped)
@@ -53,7 +59,7 @@ async def run_nightly() -> str:
     organize: OrganizeResult | None = None
     organize_error: str | None = None
     try:
-        organize = await run_organize()
+        organize = await run_organize(since=since)
         log.info(
             "nightly job: organize processed=%d proposals=%d skipped=%d",
             organize.processed, len(organize.proposals), len(organize.skipped),

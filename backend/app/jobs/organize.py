@@ -21,7 +21,7 @@ import logging
 import sqlite3
 from dataclasses import dataclass, field
 from datetime import date as _date
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -182,6 +182,7 @@ def _select_candidates(
     conn: sqlite3.Connection,
     *,
     scope: str | None = None,
+    since: timedelta | None = None,
 ) -> tuple[list[Path], datetime | None]:
     """Pick the notes to review.
 
@@ -196,6 +197,10 @@ def _select_candidates(
     Other scopes:
       - "all" / "always_full" → every note in the vault.
       - "since_last_run" → legacy global cutoff (kept for cron back-compat).
+
+    `since`, when set, takes precedence over `scope`: only files modified
+    within that window are considered (Inbox included). Used by the
+    `--since 24h` CLI flag for ad-hoc debug runs.
     """
     from app.organize import get_note_review_map
 
@@ -208,6 +213,9 @@ def _select_candidates(
     last_run = _last_run_at(conn)
     review_map = get_note_review_map(conn)
     legacy_cutoff = 0.0 if last_run is None else last_run.timestamp()
+    since_cutoff = (
+        (datetime.now(timezone.utc) - since).timestamp() if since else None
+    )
 
     in_inbox: list[Path] = []
     modified: list[Path] = []
@@ -217,6 +225,13 @@ def _select_candidates(
             continue
         rel = p.relative_to(root).as_posix()
         if _is_excluded(rel) or _is_todays_flat_journal(rel):
+            continue
+        # `--since` is a hard time-window filter that overrides everything
+        # below — applied uniformly (Inbox included) so the operator gets
+        # exactly what they asked for.
+        if since_cutoff is not None:
+            if p.stat().st_mtime > since_cutoff:
+                modified.append(p)
             continue
         if rel.startswith("Inbox/"):
             in_inbox.append(p)
@@ -472,6 +487,7 @@ async def run_organize(
     run_id: str | None = None,
     extra_instruction: str | None = None,
     scope: str | None = None,
+    since: timedelta | None = None,
 ) -> OrganizeResult:
     """Execute one organize pass.
 
@@ -489,6 +505,16 @@ async def run_organize(
     `scope` overrides `organize.modified_since` for this run only:
         "all"             → every note (manual runs default to this).
         "since_last_run"  → Inbox + recently-modified (cron default).
+
+    `since`, when set, restricts the candidate list to files modified
+    within that window and supersedes `scope`. Used by the
+    `second-brain organize --since …` CLI flag.
+
+    In `dry-run` mode the per-note `last_reviewed_at` and the global
+    `last_run_at` are NOT advanced — a dry-run is a preview, not an
+    "execution complete". The next nightly cron will see the same
+    candidates again until the user actually applies (either by
+    re-running in `apply` mode or via the webapp's apply flow).
     """
     from app.organize import (
         create_run as store_create_run,
@@ -521,11 +547,13 @@ async def run_organize(
 
     conn = open_connection()
     try:
-        candidates, last_run = _select_candidates(conn, scope=scope)
+        candidates, last_run = _select_candidates(conn, scope=scope, since=since)
         if run_id is None:
             run_id = store_create_run(conn, mode=settings.organize.mode)
     finally:
         conn.close()
+
+    is_apply = settings.organize.mode == "apply"
 
     proposals: list[Proposal] = []
     skipped: list[tuple[str, str]] = []
@@ -556,8 +584,11 @@ async def run_organize(
                 )
                 proposals.append(proposal)
                 # Persist as it lands so the webapp shows progress live.
-                # Mark the note reviewed regardless of proposal state — the
-                # LLM did look at it, even if the proposal is a no-op.
+                # Only advance per-note last_reviewed_at when we're actually
+                # going to apply changes — a dry-run is a preview, not an
+                # "execution complete", and re-proposing the same files
+                # next night is exactly what the user wants until they
+                # apply (here or via the webapp).
                 conn = open_connection()
                 try:
                     store_insert_proposal(
@@ -575,8 +606,9 @@ async def run_organize(
                         parse_error=proposal.parse_error,
                         raw_response=proposal.raw_response,
                     )
-                    from app.organize import mark_note_reviewed
-                    mark_note_reviewed(conn, rel)
+                    if is_apply and not proposal.parse_error:
+                        from app.organize import mark_note_reviewed
+                        mark_note_reviewed(conn, rel)
                 finally:
                     conn.close()
             except Exception as exc:
@@ -621,12 +653,17 @@ async def run_organize(
     finished = datetime.now(timezone.utc)
     conn = open_connection()
     try:
-        _record_run(conn, finished)
+        # Only advance the global `last_run_at` cursor on apply runs —
+        # the legacy `since_last_run` scope keys off this and dry-runs
+        # shouldn't make the next nightly skip files just because a
+        # human-in-the-loop preview happened in between.
+        if is_apply:
+            _record_run(conn, finished)
         # Final run state. If we were in "apply" mode and at least one
         # proposal was applied, mark the run "applied"; otherwise "completed".
         run_status = (
             "applied"
-            if settings.organize.mode == "apply" and any(not a.error for a in applied)
+            if is_apply and any(not a.error for a in applied)
             else "completed"
         )
         store_finish_run(
@@ -727,6 +764,11 @@ async def apply_one_proposal(run_id: str, path: str) -> dict[str, Any]:
                 apply_ops=result.operations,
             )
             if not result.error:
+                # The dry-run that produced this proposal didn't advance
+                # last_reviewed_at (preview only). Mark reviewed now that
+                # the user accepted, so the next nightly skips this file.
+                from app.organize import mark_note_reviewed
+                mark_note_reviewed(conn, path)
                 _migrate_review_for_move(conn, result.operations)
         finally:
             conn.close()
@@ -908,6 +950,11 @@ async def apply_pending_proposals(run_id: str) -> dict[str, Any]:
                     apply_ops=result.operations,
                 )
                 if not result.error:
+                    # See note in apply_one_proposal — the dry-run that
+                    # produced this proposal skipped marking, so we do
+                    # it here on apply success.
+                    from app.organize import mark_note_reviewed
+                    mark_note_reviewed(conn, sp.path)
                     _migrate_review_for_move(conn, result.operations)
             finally:
                 conn.close()

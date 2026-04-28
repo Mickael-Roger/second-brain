@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import getpass
 import os
+import re
 import sys
+from datetime import timedelta
 from pathlib import Path
 
 import click
@@ -13,6 +15,28 @@ from app.auth.passwords import hash_password
 from app.config import get_settings
 from app.db.connection import open_connection
 from app.db.migrations import run_migrations
+
+
+_DURATION_RE = re.compile(r"^\s*(\d+)\s*([smhdw])\s*$", re.IGNORECASE)
+_DURATION_UNITS = {
+    "s": "seconds",
+    "m": "minutes",
+    "h": "hours",
+    "d": "days",
+    "w": "weeks",
+}
+
+
+def _parse_duration(value: str) -> timedelta:
+    """Parse e.g. '30m', '24h', '7d', '2w' into a timedelta."""
+    m = _DURATION_RE.match(value)
+    if not m:
+        raise click.BadParameter(
+            f"Invalid duration {value!r}. Expected formats: 30m, 24h, 7d, 2w."
+        )
+    n = int(m.group(1))
+    unit = m.group(2).lower()
+    return timedelta(**{_DURATION_UNITS[unit]: n})
 
 
 @click.group()
@@ -104,7 +128,19 @@ def serve_cmd(
     default=False,
     help="Skip the SMTP send. Report still prints to stdout.",
 )
-def organize_cmd(mode: str | None, no_email: bool) -> None:
+@click.option(
+    "--since",
+    "since_str",
+    type=str,
+    default=None,
+    help=(
+        "Only review files modified within this duration (e.g. 30m, 24h, "
+        "7d, 2w). Overrides the per-note last_reviewed_at logic for this "
+        "run only — handy for ad-hoc debugging without burning through "
+        "the whole vault."
+    ),
+)
+def organize_cmd(mode: str | None, no_email: bool, since_str: str | None) -> None:
     """Run the nightly Organize job (journal archive + LLM organize pass) right now.
 
     Same code path as the scheduled cron run. Useful to iterate on
@@ -118,6 +154,8 @@ def organize_cmd(mode: str | None, no_email: bool) -> None:
     if no_email:
         settings.smtp.enabled = False
 
+    since = _parse_duration(since_str) if since_str else None
+
     # Ensure the SQLite schema exists (the job records last_run_at in
     # module_state). The HTTP server normally does this in its lifespan;
     # the CLI does it here so a fresh data dir works without a separate
@@ -128,13 +166,15 @@ def organize_cmd(mode: str | None, no_email: bool) -> None:
     finally:
         conn.close()
 
+    since_msg = f", since={since_str}" if since_str else ""
     click.echo(
-        f"Running organize (mode={settings.organize.mode}, email={settings.smtp.enabled})…",
+        f"Running organize (mode={settings.organize.mode}, "
+        f"email={settings.smtp.enabled}{since_msg})…",
         err=True,
     )
     from app.jobs import run_nightly
 
-    report = asyncio.run(run_nightly())
+    report = asyncio.run(run_nightly(since=since))
     click.echo(report)
 
 
