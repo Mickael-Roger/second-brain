@@ -629,40 +629,6 @@ async def run_organize(
 # ── markdown rendering ───────────────────────────────────────────────
 
 
-def _render_proposal(p: Proposal) -> str:
-    if p.parse_error:
-        return (
-            f"_(LLM response failed to parse: {p.parse_error}.)_\n\n"
-            f"<details><summary>Raw response</summary>\n\n```\n{p.raw_response[:1500]}\n```\n\n</details>"
-        )
-    if p.is_no_op:
-        return "✅ OK, no changes proposed."
-
-    lines: list[str] = []
-    if p.move_to:
-        lines.append(f"**Move to:** `{p.move_to}`")
-    if p.tags is not None:
-        lines.append(f"**Tags:** {', '.join(f'`{t}`' for t in p.tags) if p.tags else '(empty)'}")
-    if p.wikilinks:
-        lines.append("**Wikilinks suggested:**")
-        for link in p.wikilinks:
-            ctx = f" — {link.context}" if link.context else ""
-            lines.append(f"  - `[[{link.target}]]`{ctx}")
-    if p.refactor:
-        lines.append("**Refactor:** the LLM proposed a rewrite (full new content, see raw).")
-    if p.notes:
-        lines.append(f"**Notes:** {p.notes}")
-    return "\n".join(lines)
-
-
-def _render_applied(a: AppliedNote) -> str:
-    if a.error:
-        return f"❌ `{a.path}` — {a.error}"
-    if not a.operations:
-        return f"`{a.path}` — (no-op)"
-    return f"✅ `{a.path}` — {', '.join(a.operations)}"
-
-
 def _format_report(
     started: datetime,
     finished: datetime,
@@ -673,59 +639,30 @@ def _format_report(
     skipped: list[tuple[str, str]],
     total: int,
 ) -> str:
+    """Operational summary of the run. The actual file changes are
+    surfaced via `git diff --stat` in the nightly wrapper — this report
+    intentionally does NOT enumerate them per file."""
+    actionable = sum(1 for p in proposals if not p.is_no_op and not p.parse_error)
+    parse_failed = sum(1 for p in proposals if p.parse_error)
+    applied_ok = sum(1 for a in applied if not a.error and a.operations)
+    apply_failed = sum(1 for a in applied if a.error)
+
     lines = [
-        f"# Organize report — {started.date().isoformat()}",
+        f"## Organize — {started.date().isoformat()}",
         "",
-        f"Mode: **{mode}**",
         f"Started:  {started.isoformat()}",
         f"Finished: {finished.isoformat()} ({(finished - started).total_seconds():.1f}s)",
         f"Last run: {last_run.isoformat() if last_run else '(first run)'}",
         f"Notes considered: {total}",
-        f"Proposals: {len(proposals)}",
+        f"Proposals (actionable): {actionable}",
+        f"Applied OK: {applied_ok}",
+        f"Apply errors: {apply_failed}",
+        f"LLM parse failures: {parse_failed}",
         f"Skipped: {len(skipped)}",
+        "",
     ]
-    if mode == "apply":
-        ok = sum(1 for a in applied if not a.error and a.operations)
-        lines.append(f"Applied: {ok}")
-
-    lines.append("")
-    # Split proposals: actionable / parse-failed / silent no-ops. The first
-    # two get full per-file sections; the no-ops collapse to a single bullet
-    # list so the email isn't drowned by "OK, no changes proposed." entries.
-    actionable = [p for p in proposals if not p.is_no_op and not p.parse_error]
-    failures = [p for p in proposals if p.parse_error]
-    no_ops = [p for p in proposals if p.is_no_op and not p.parse_error]
-
-    if actionable:
-        lines.append("## Proposals")
-        lines.append("")
-        for p in actionable:
-            lines.append(f"### `{p.path}`")
-            lines.append("")
-            lines.append(_render_proposal(p))
-            lines.append("")
-    if failures:
-        lines.append("## Failed to parse")
-        lines.append("")
-        for p in failures:
-            lines.append(f"### `{p.path}`")
-            lines.append("")
-            lines.append(_render_proposal(p))
-            lines.append("")
-    if no_ops:
-        lines.append(f"## Examined without changes ({len(no_ops)})")
-        lines.append("")
-        for p in no_ops:
-            lines.append(f"- `{p.path}`")
-        lines.append("")
-    if mode == "apply" and applied:
-        lines.append("## Applied")
-        lines.append("")
-        for a in applied:
-            lines.append(_render_applied(a))
-        lines.append("")
     if skipped:
-        lines.append("## Skipped")
+        lines.append("### Skipped")
         lines.append("")
         for path, reason in skipped:
             lines.append(f"- `{path}` — {reason}")

@@ -21,7 +21,6 @@
   .section:last-child { border-bottom: none; }
   .section h2 { margin: 0 0 12px; font-size: 16px; font-weight: 600; color: #0c0a09; letter-spacing: -0.01em; }
   .section h3 { margin: 18px 0 6px; font-size: 14px; font-weight: 600; color: #292524; }
-  .section h3 code { background: #f5f5f4; padding: 2px 6px; border-radius: 4px; font-size: 13px; }
   .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px 14px; margin: 0; padding: 0; list-style: none; }
   .stats li { color: #57534e; font-size: 13px; }
   .stats li strong { display: block; color: #0c0a09; font-size: 18px; font-weight: 600; }
@@ -31,23 +30,10 @@
   ul.tight { margin: 6px 0; padding-left: 20px; }
   ul.tight li { margin: 2px 0; color: #44403c; }
   code { font-family: "SFMono-Regular", "Menlo", "Consolas", monospace; font-size: 13px; }
-  pre { background: #fafaf9; border: 1px solid #e7e5e4; border-radius: 6px; padding: 10px 12px; overflow-x: auto; font-size: 12px; line-height: 1.45; color: #292524; }
-  .proposal { padding: 12px 14px; border: 1px solid #e7e5e4; border-radius: 8px; margin: 10px 0; background: #fafaf9; }
-  .proposal .field { margin: 4px 0; color: #44403c; }
-  .proposal .field-label { color: #78716c; font-weight: 600; margin-right: 6px; }
-  .proposal .move-to code { background: #dbeafe; color: #1e40af; padding: 2px 6px; border-radius: 4px; }
-  .proposal .tag { display: inline-block; background: #f5f5f4; color: #44403c; padding: 1px 6px; border-radius: 4px; font-size: 12px; margin-right: 4px; }
-  .proposal .wikilink { color: #6d28d9; }
-  .proposal .notes { color: #57534e; font-style: italic; font-size: 13px; }
-  .applied-ok { color: #166534; }
-  .applied-err { color: #991b1b; }
-  .applied .path { font-weight: 500; }
-  .examined { color: #78716c; font-size: 13px; }
-  .examined ul { columns: 2; column-gap: 24px; padding-left: 18px; margin: 6px 0; }
-  .examined li { break-inside: avoid; }
-  .empty { color: #a8a29e; font-style: italic; font-size: 13px; }
+  pre { background: #fafaf9; border: 1px solid #e7e5e4; border-radius: 6px; padding: 10px 12px; overflow-x: auto; font-size: 12px; line-height: 1.45; color: #292524; white-space: pre; }
   .errors { color: #991b1b; }
   .errors li { margin: 2px 0; }
+  .meta-line { color: #78716c; font-size: 13px; margin-top: 4px; }
 </style>
 </head>
 <body>
@@ -59,17 +45,15 @@
       &nbsp;·&nbsp; Mode <span class="badge {% if mode == 'apply' %}apply{% else %}dry-run{% endif %}">{{ mode }}</span>
     </div>
     {% if finalise_msg %}
-    <div class="meta" style="margin-top:6px;">{{ finalise_msg }}</div>
+    <div class="meta-line">{{ finalise_msg }}</div>
     {% endif %}
   </div>
 
-  {# ── Changes summary (git diff --stat) ─────────────────── #}
-  {% if diff_stat %}
+  {# ── Changes (git diff --stat) — the source of truth ──── #}
   <div class="section">
     <h2>Changes (git diff --stat)</h2>
-    <pre>{{ diff_stat.strip() }}</pre>
+    <pre>{{ diff_stat.strip() if diff_stat else '(no changes)' }}</pre>
   </div>
-  {% endif %}
 
   {# ── Journal archive ───────────────────────────────────── #}
   <div class="section">
@@ -78,12 +62,6 @@
       <li><strong>{{ archive.moved }}</strong>moved</li>
       <li><strong>{{ archive.skipped }}</strong>skipped</li>
     </ul>
-    {% if archive.paths %}
-    <h3>Archived paths</h3>
-    <ul class="tight">
-      {% for p in archive.paths %}<li><code>{{ p }}</code></li>{% endfor %}
-    </ul>
-    {% endif %}
     {% if archive.errors %}
     <h3>Errors</h3>
     <ul class="tight errors">
@@ -92,7 +70,7 @@
     {% endif %}
   </div>
 
-  {# ── Organize summary ──────────────────────────────────── #}
+  {# ── Organize counters + skipped (only operational data) ── #}
   <div class="section">
     <h2>Organize</h2>
     {% if organize is none %}
@@ -100,110 +78,24 @@
     {% else %}
     <ul class="stats">
       <li><strong>{{ organize.processed }}</strong>considered</li>
-      <li><strong>{{ actionable|length }}</strong>actionable</li>
-      <li><strong>{{ no_ops|length }}</strong>no-op</li>
-      <li><strong>{{ failures|length }}</strong>parse-failed</li>
+      <li><strong>{{ actionable_count }}</strong>actionable</li>
+      <li><strong>{{ apply_ok_count }}</strong>applied OK</li>
+      <li><strong>{{ apply_err_count }}</strong>apply errors</li>
+      <li><strong>{{ failures_count }}</strong>parse failures</li>
       <li><strong>{{ organize.skipped|length }}</strong>skipped</li>
-      {% if mode == 'apply' %}<li><strong>{{ applied_ok|length }}</strong>applied</li>{% endif %}
     </ul>
-    <p class="meta">Last run: {{ last_run or '(first run)' }}</p>
+    <p class="meta-line">Last run: {{ last_run or '(first run)' }}</p>
     {% endif %}
   </div>
 
-  {# ── Actionable proposals ──────────────────────────────── #}
-  {% if actionable %}
-  <div class="section">
-    <h2>Proposals ({{ actionable|length }})</h2>
-    {% for p in actionable %}
-    <div class="proposal">
-      <h3><code>{{ p.path }}</code></h3>
-      {% if p.move_to %}
-      <div class="field move-to"><span class="field-label">Move to</span><code>{{ p.move_to }}</code></div>
-      {% endif %}
-      {% if p.tags is not none %}
-      <div class="field"><span class="field-label">Tags</span>
-        {% if p.tags %}
-          {% for t in p.tags %}<span class="tag">{{ t }}</span>{% endfor %}
-        {% else %}
-          <span class="empty">(empty)</span>
-        {% endif %}
-      </div>
-      {% endif %}
-      {% if p.wikilinks %}
-      <div class="field"><span class="field-label">Wikilinks</span>
-        <ul class="tight">
-        {% for w in p.wikilinks %}
-          <li><span class="wikilink">[[{{ w.target }}]]</span>{% if w.context %} — {{ w.context }}{% endif %}</li>
-        {% endfor %}
-        </ul>
-      </div>
-      {% endif %}
-      {% if p.refactor %}
-      <div class="field"><span class="field-label">Refactor</span>full rewrite proposed ({{ p.refactor|length }} chars)</div>
-      {% endif %}
-      {% if p.notes %}
-      <div class="field notes">{{ p.notes }}</div>
-      {% endif %}
-    </div>
-    {% endfor %}
-  </div>
-  {% endif %}
-
-  {# ── Applied (apply mode only) ─────────────────────────── #}
-  {% if mode == 'apply' and organize and organize.applied %}
-  <div class="section applied">
-    <h2>Applied</h2>
-    <ul class="tight">
-      {% for a in organize.applied %}
-      {% if a.error %}
-      <li class="applied-err">❌ <span class="path"><code>{{ a.path }}</code></span> — {{ a.error }}</li>
-      {% elif a.operations %}
-      <li class="applied-ok">✅ <span class="path"><code>{{ a.path }}</code></span> — {{ a.operations|join(', ') }}</li>
-      {% else %}
-      <li><code>{{ a.path }}</code> — (no-op)</li>
-      {% endif %}
-      {% endfor %}
-    </ul>
-  </div>
-  {% endif %}
-
-  {# ── Parse failures ────────────────────────────────────── #}
-  {% if failures %}
-  <div class="section">
-    <h2>Parse failures ({{ failures|length }})</h2>
-    {% for p in failures %}
-    <div class="proposal">
-      <h3><code>{{ p.path }}</code></h3>
-      <p class="errors">{{ p.parse_error }}</p>
-      {% if p.raw_response %}
-      <details>
-        <summary class="meta">Raw response</summary>
-        <pre>{{ p.raw_response[:1500] }}</pre>
-      </details>
-      {% endif %}
-    </div>
-    {% endfor %}
-  </div>
-  {% endif %}
-
-  {# ── Skipped ──────────────────────────────────────────── #}
+  {# ── Skipped (LLM/read errors — keep, operational) ──────── #}
   {% if organize and organize.skipped %}
   <div class="section">
     <h2>Skipped ({{ organize.skipped|length }})</h2>
     <ul class="tight">
       {% for path, reason in organize.skipped %}
-      <li><code>{{ path }}</code> — <span class="meta">{{ reason }}</span></li>
+      <li><code>{{ path }}</code> — <span class="meta-line">{{ reason }}</span></li>
       {% endfor %}
-    </ul>
-  </div>
-  {% endif %}
-
-  {# ── Examined without changes ─────────────────────────── #}
-  {% if no_ops %}
-  <div class="section examined">
-    <h2>Examined without changes ({{ no_ops|length }})</h2>
-    <ul>
-      {% for p in no_ops %}<li><code>{{ p.path }}</code></li>{% endfor %}
     </ul>
   </div>
   {% endif %}

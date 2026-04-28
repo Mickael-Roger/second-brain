@@ -66,12 +66,14 @@ def render_nightly_email_html(
     """
     if organize is not None:
         proposals = organize.proposals
-        actionable = [p for p in proposals if not p.is_no_op and not p.parse_error]
-        failures = [p for p in proposals if p.parse_error]
-        no_ops = [p for p in proposals if p.is_no_op and not p.parse_error]
-        applied_ok = [
-            a for a in organize.applied if not a.error and a.operations
-        ]
+        actionable_count = sum(
+            1 for p in proposals if not p.is_no_op and not p.parse_error
+        )
+        failures_count = sum(1 for p in proposals if p.parse_error)
+        apply_ok_count = sum(
+            1 for a in organize.applied if not a.error and a.operations
+        )
+        apply_err_count = sum(1 for a in organize.applied if a.error)
         last_run_iso = (
             organize.last_run_at.isoformat() if organize.last_run_at else None
         )
@@ -81,7 +83,7 @@ def render_nightly_email_html(
         duration_s = f"{(organize.finished_at - organize.started_at).total_seconds():.1f}"
         mode = organize.mode
     else:
-        actionable = failures = no_ops = applied_ok = []
+        actionable_count = failures_count = apply_ok_count = apply_err_count = 0
         last_run_iso = None
         # Without an organize result we still want a date stamp on the email.
         from datetime import datetime, timezone
@@ -104,10 +106,10 @@ def render_nightly_email_html(
         archive=archive,
         organize=organize,
         organize_error=organize_error,
-        actionable=actionable,
-        failures=failures,
-        no_ops=no_ops,
-        applied_ok=applied_ok,
+        actionable_count=actionable_count,
+        failures_count=failures_count,
+        apply_ok_count=apply_ok_count,
+        apply_err_count=apply_err_count,
         diff_stat=diff_stat,
         finalise_msg=finalise_msg,
     )
