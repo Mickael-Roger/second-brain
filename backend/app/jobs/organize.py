@@ -1007,14 +1007,35 @@ def _format_report(
         lines.append(f"Applied: {ok}")
 
     lines.append("")
-    if proposals:
+    # Split proposals: actionable / parse-failed / silent no-ops. The first
+    # two get full per-file sections; the no-ops collapse to a single bullet
+    # list so the email isn't drowned by "OK, no changes proposed." entries.
+    actionable = [p for p in proposals if not p.is_no_op and not p.parse_error]
+    failures = [p for p in proposals if p.parse_error]
+    no_ops = [p for p in proposals if p.is_no_op and not p.parse_error]
+
+    if actionable:
         lines.append("## Proposals")
         lines.append("")
-        for p in proposals:
+        for p in actionable:
             lines.append(f"### `{p.path}`")
             lines.append("")
             lines.append(_render_proposal(p))
             lines.append("")
+    if failures:
+        lines.append("## Failed to parse")
+        lines.append("")
+        for p in failures:
+            lines.append(f"### `{p.path}`")
+            lines.append("")
+            lines.append(_render_proposal(p))
+            lines.append("")
+    if no_ops:
+        lines.append(f"## Examined without changes ({len(no_ops)})")
+        lines.append("")
+        for p in no_ops:
+            lines.append(f"- `{p.path}`")
+        lines.append("")
     if mode == "apply" and applied:
         lines.append("## Applied")
         lines.append("")
