@@ -58,7 +58,18 @@
       Started {{ started }} · Finished {{ finished }} ({{ duration_s }}s)
       &nbsp;·&nbsp; Mode <span class="badge {% if mode == 'apply' %}apply{% else %}dry-run{% endif %}">{{ mode }}</span>
     </div>
+    {% if finalise_msg %}
+    <div class="meta" style="margin-top:6px;">{{ finalise_msg }}</div>
+    {% endif %}
   </div>
+
+  {# ── Changes summary (git diff --stat) ─────────────────── #}
+  {% if diff_stat %}
+  <div class="section">
+    <h2>Changes (git diff --stat)</h2>
+    <pre>{{ diff_stat.strip() }}</pre>
+  </div>
+  {% endif %}
 
   {# ── Journal archive ───────────────────────────────────── #}
   <div class="section">

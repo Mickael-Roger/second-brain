@@ -571,10 +571,10 @@ async def run_organize(
                     extra_instruction=extra_instruction,
                 )
                 proposals.append(proposal)
-                # Mark reviewed only when we're actually going to apply
-                # changes — a dry-run is a preview, not an "execution
-                # complete", and re-proposing the same files next night
-                # is exactly what we want until the user runs --apply.
+                # Mark reviewed only when we're actually going to commit
+                # — a dry-run is a preview that gets stashed at the end,
+                # so the next nightly should re-propose the same files
+                # until the user runs an apply.
                 if is_apply and not proposal.parse_error:
                     conn = open_connection()
                     try:
@@ -585,16 +585,18 @@ async def run_organize(
                 log.exception("organize: proposal failed for %s", rel)
                 skipped.append((rel, f"LLM error: {exc}"))
 
+    # Always apply — the dry-run vs apply distinction is now decided at
+    # the git boundary (stash vs commit), not here. The caller wraps us
+    # in `batch_session()` so vault primitives don't commit individually.
     applied: list[AppliedNote] = []
-    if is_apply:
-        for proposal in proposals:
-            if proposal.parse_error or proposal.is_no_op:
-                continue
-            try:
-                applied.append(await _apply_proposal(proposal))
-            except Exception as exc:
-                log.exception("apply failed for %s", proposal.path)
-                applied.append(AppliedNote(path=proposal.path, error=f"apply: {exc}"))
+    for proposal in proposals:
+        if proposal.parse_error or proposal.is_no_op:
+            continue
+        try:
+            applied.append(await _apply_proposal(proposal))
+        except Exception as exc:
+            log.exception("apply failed for %s", proposal.path)
+            applied.append(AppliedNote(path=proposal.path, error=f"apply: {exc}"))
 
     finished = datetime.now(timezone.utc)
     if is_apply:

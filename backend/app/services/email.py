@@ -54,6 +54,8 @@ def render_nightly_email_html(
     archive: "ArchiveResult",
     organize: "OrganizeResult | None",
     organize_error: str | None,
+    diff_stat: str = "",
+    finalise_msg: str = "",
 ) -> str:
     """Build the HTML alternative for the nightly Organize email from the
     job's structured result. Deterministic, no LLM call.
@@ -106,6 +108,8 @@ def render_nightly_email_html(
         failures=failures,
         no_ops=no_ops,
         applied_ok=applied_ok,
+        diff_stat=diff_stat,
+        finalise_msg=finalise_msg,
     )
 
 

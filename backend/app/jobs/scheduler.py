@@ -1,11 +1,14 @@
 """APScheduler bootstrap.
 
 Single AsyncIOScheduler per process. The nightly job runs `run_nightly()`,
-which today does:
-  1. Journal archival (Step 6).
-  2. Send a heartbeat email summarising what happened.
-
-Step 7 will add the Organize pass between (1) and the email.
+which:
+  1. Pre-flight: commits + pushes any uncommitted vault changes so the
+     run starts from a clean baseline.
+  2. Inside a `batch_session()` (suppresses per-primitive git IO):
+     archives prior daily journals, runs the Organize pass.
+  3. Captures `git diff --stat` of the run's working-tree changes.
+  4. Apply mode → bulk-commits + pushes; dry-run → stashes.
+  5. Sends a heartbeat email summarising what happened.
 """
 
 from __future__ import annotations
@@ -17,6 +20,14 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
 from app.config import get_settings
+from app.vault.guard import (
+    batch_session,
+    capture_head,
+    commit_and_push,
+    diff_stat,
+    get_guard,
+    stash,
+)
 
 from .journal_archive import ArchiveResult, run_journal_archive
 from .organize import OrganizeResult, run_organize
@@ -45,31 +56,96 @@ def _format_archive_section(archive: ArchiveResult) -> str:
 
 async def run_nightly(*, since: timedelta | None = None) -> str:
     """Execute the nightly job: archive prior days, run the Organize pass,
-    email the combined report. Returns the report text.
+    finalise (commit or stash), email the combined report.
 
     `since`, when set, restricts the Organize pass to files modified
     within that window (overriding the per-note last_reviewed_at scope
     for this run). Used by the `second-brain organize --since …` CLI
     flag — cron runs leave it unset and use the default freshness logic.
+
+    Both modes (`dry-run` and `apply`) actually mutate the working tree.
+    The mode only decides what happens to those changes at the end:
+      - `apply`   → bulk commit + push (one commit per nightly run).
+      - `dry-run` → `git stash push` so the working tree returns to the
+                    pre-run state, with the proposed changes recoverable
+                    via `git stash pop`.
     """
     log.info("nightly job: starting")
-    archive = await run_journal_archive()
-    log.info("nightly job: archive moved=%d skipped=%d", archive.moved, archive.skipped)
+    settings = get_settings()
+    mode = settings.organize.mode
 
+    # ── Pre-flight ───────────────────────────────────────────────────
+    # Always commit + push any uncommitted vault changes BEFORE we
+    # start. Anything in the working tree at this point is unrelated
+    # to the run and the user wants it preserved on the remote.
+    try:
+        await get_guard().pre_flight()
+    except Exception as exc:
+        log.exception("nightly pre-flight (commit/push of pending changes) failed")
+        # If the pre-flight fails we'd be running with dirty state and
+        # the eventual stash/commit would mix this work with the user's.
+        # Bail out now and let the next nightly try again.
+        return f"# Nightly run — pre-flight failed\n\n{exc}\n"
+
+    base_sha = capture_head()
+
+    archive: ArchiveResult
     organize: OrganizeResult | None = None
     organize_error: str | None = None
-    try:
-        organize = await run_organize(since=since)
-        log.info(
-            "nightly job: organize processed=%d proposals=%d skipped=%d",
-            organize.processed, len(organize.proposals), len(organize.skipped),
-        )
-    except Exception as exc:
-        organize_error = str(exc)
-        log.exception("nightly organize failed")
 
+    # ── Run with per-primitive git IO suppressed ─────────────────────
+    async with batch_session():
+        archive = await run_journal_archive()
+        log.info("nightly job: archive moved=%d skipped=%d", archive.moved, archive.skipped)
+        try:
+            organize = await run_organize(since=since)
+            log.info(
+                "nightly job: organize processed=%d proposals=%d skipped=%d",
+                organize.processed, len(organize.proposals), len(organize.skipped),
+            )
+        except Exception as exc:
+            organize_error = str(exc)
+            log.exception("nightly organize failed")
+
+    # ── Capture diff --stat of everything the run produced ───────────
+    stat = diff_stat(base_sha)
+
+    # ── Finalise: bulk-commit (apply) or stash (dry-run) ────────────
+    finalise_msg: str
+    today = datetime.now(timezone.utc).date().isoformat()
+    if mode == "apply":
+        try:
+            committed = commit_and_push(f"nightly organize {today}")
+            finalise_msg = (
+                f"committed and pushed nightly organize {today}"
+                if committed else "no changes to commit"
+            )
+        except Exception as exc:
+            log.exception("nightly bulk commit/push failed")
+            finalise_msg = f"commit/push FAILED: {exc} (changes left in working tree)"
+    else:
+        try:
+            stashed = stash(f"second-brain organize dry-run {today}")
+            finalise_msg = (
+                f"dry-run: changes stashed as 'second-brain organize dry-run {today}'"
+                if stashed else "dry-run: no changes produced"
+            )
+        except Exception as exc:
+            log.exception("nightly stash failed")
+            finalise_msg = f"stash FAILED: {exc} (changes left in working tree)"
+
+    # Embed both the diff stat and the finalisation outcome at the top
+    # of the report — they're the bottom line the user actually wants
+    # to read first.
     parts = [
         f"# Nightly run — {datetime.now(timezone.utc).isoformat()}",
+        "",
+        f"Mode: **{mode}**",
+        f"Outcome: {finalise_msg}",
+        "",
+        "## Changes (git diff --stat)",
+        "",
+        f"```\n{stat.strip() or '(no changes)'}\n```",
         "",
         _format_archive_section(archive),
         "",
@@ -107,6 +183,8 @@ async def run_nightly(*, since: timedelta | None = None) -> str:
                 archive=archive,
                 organize=organize,
                 organize_error=organize_error,
+                diff_stat=stat,
+                finalise_msg=finalise_msg,
             )
         except Exception:
             log.exception("nightly HTML render failed; sending plain-text only")
