@@ -279,11 +279,17 @@ def diff_stat(base_sha: str | None, root: Path | None = None) -> str:
     `--stat=<width>,<name-width>` is forced wide because subprocess has
     no TTY: git would otherwise default to 80 columns and truncate
     long vault paths (which routinely exceed 80 chars).
+
+    `core.quotePath=false` keeps non-ASCII filenames readable instead of
+    being escaped to `\\303\\251` octals.
     """
     if base_sha is None:
         return ""
     r = _run(
-        ["git", "diff", "--stat=400,300", base_sha],
+        [
+            "git", "-c", "core.quotePath=false",
+            "diff", "--stat=400,300", base_sha,
+        ],
         root or vault_root(),
     )
     if r.returncode != 0:
@@ -298,11 +304,19 @@ def diff_names(base_sha: str | None, root: Path | None = None) -> set[str]:
     actually modified by the run vs left alone.
 
     Returns an empty set when git is disabled / SHA is None.
+
+    `core.quotePath=false` is critical: without it, accented paths come
+    back as octal-escaped quoted strings that won't match the UTF-8
+    `candidate_paths` we computed in Python — accented files would be
+    miscategorised as 'Skipped' even when they were modified.
     """
     if base_sha is None:
         return set()
     r = _run(
-        ["git", "diff", "--name-only", base_sha],
+        [
+            "git", "-c", "core.quotePath=false",
+            "diff", "--name-only", base_sha,
+        ],
         root or vault_root(),
     )
     if r.returncode != 0:

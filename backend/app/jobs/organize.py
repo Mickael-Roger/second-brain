@@ -250,6 +250,129 @@ def _load_system_prompt() -> str:
     return "\n\n---\n\n".join(pieces)
 
 
+# ── tool-call hard-exclusion guard ──────────────────────────────────
+
+
+# Tools that mutate the vault. Read-only tools (vault.read / list /
+# find / grep) are not guarded.
+_WRITE_TOOLS = frozenset({
+    "vault.edit_note",
+    "vault.append",
+    "vault.create_note",
+    "vault.create_folder",
+    "vault.move",
+    "vault.replace_in_note",
+    "vault.update_frontmatter",
+    "vault.delete",
+})
+
+# Vault-wide "untouchable" prefixes for write ops — moving INTO or OUT
+# of these is also forbidden.
+_ABSOLUTE_BLOCKED_TOPS = frozenset({
+    "Templates",
+    "Excalidraw",
+    "files",
+    "Tracking",
+})
+_ABSOLUTE_BLOCKED_PREFIXES = (
+    "Raw/Anki/",
+    "Raw/Logger/Opencode/",
+    "Raw/Review/",
+)
+
+
+def _writable(path: str, op: str) -> str | None:
+    """Return None when `op` on `path` is allowed by ORGANIZE.md hard
+    rules; otherwise return a human-readable refusal message that we
+    surface to the agent so it can self-correct.
+
+    `op` is one of: edit, append, replace, update_fm, delete, create,
+    move_src, move_dst, create_folder.
+    """
+    if not path:
+        return f"empty path for {op}"
+    if path in EXCLUDED_FILES:
+        return (
+            f"`{path}` is on the schema-files exclusion list "
+            "(USER/PREFERENCES/INDEX/AGENTS/INGEST/ORGANIZE/README/"
+            "Cheatsheet/Raw-Inbox-Notes). The agent never edits these."
+        )
+    top = path.split("/", 1)[0]
+    if top in _ABSOLUTE_BLOCKED_TOPS:
+        return (
+            f"`{path}` is under `{top}/`, which ORGANIZE.md marks as "
+            "untouchable (read-only / append-only by the user)."
+        )
+    if any(path.startswith(p) for p in _ABSOLUTE_BLOCKED_PREFIXES):
+        return f"`{path}` is in a hard-excluded subtree (Raw/Anki, Raw/Logger/Opencode, Raw/Review)."
+    if path.startswith("Trash/"):
+        # Trash is "append-only by you, prune-only by the user": new
+        # files (move-into / create-into) are fine, but mutations on
+        # existing Trash files and moves OUT of Trash are not.
+        if op in ("create", "create_folder", "move_dst"):
+            return None
+        return (
+            f"`{path}` is in Trash/. The agent may move FILES INTO "
+            "Trash and create new files there, but never edit, "
+            "append to, replace within, delete, or move out of Trash."
+        )
+    if path.startswith("Raw/WebClipper/"):
+        # WebClipper clips are input data. The only legitimate action
+        # is moving them OUT (to Trash). Editing in place is the
+        # "gutting" failure mode we keep observing.
+        if op == "move_src":
+            return None
+        return (
+            f"`{path}` is a WebClipper clip. The only valid mutation is "
+            "`vault.move` taking it OUT of Raw/WebClipper/ (typically to "
+            "Trash/Raw/WebClipper/<filename>.md). Editing or appending "
+            "to a clip in place strips the source — that is forbidden "
+            "by ORGANIZE.md."
+        )
+    return None
+
+
+def _check_tool_call(name: str, args: dict[str, object]) -> str | None:
+    """If the tool call would violate a hard rule, return a refusal
+    message; otherwise return None."""
+    if name not in _WRITE_TOOLS:
+        return None  # read-only tools never refused
+
+    if name == "vault.move":
+        src = str(args.get("src", "") or "")
+        dst = str(args.get("dst", "") or "")
+        if (msg := _writable(src, "move_src")):
+            return f"vault.move refused on src: {msg}"
+        if (msg := _writable(dst, "move_dst")):
+            return f"vault.move refused on dst: {msg}"
+        return None
+
+    if name == "vault.create_note":
+        folder = str(args.get("folder", "") or "")
+        title = str(args.get("title", "") or "")
+        path = f"{folder}/{title}.md" if folder else f"{title}.md"
+        msg = _writable(path, "create")
+        return f"vault.create_note refused: {msg}" if msg else None
+
+    if name == "vault.create_folder":
+        path = str(args.get("path", "") or "")
+        msg = _writable(path, "create_folder")
+        return f"vault.create_folder refused: {msg}" if msg else None
+
+    # Default: tools whose write target is `args["path"]`.
+    op_map = {
+        "vault.edit_note": "edit",
+        "vault.append": "append",
+        "vault.replace_in_note": "replace",
+        "vault.update_frontmatter": "update_fm",
+        "vault.delete": "delete",
+    }
+    op = op_map.get(name, "edit")
+    path = str(args.get("path", "") or "")
+    msg = _writable(path, op)
+    return f"{name} refused: {msg}" if msg else None
+
+
 # ── agent loop ───────────────────────────────────────────────────────
 
 
@@ -260,9 +383,10 @@ async def _process_with_agent(
     max_rounds: int,
 ) -> None:
     """Run an agent session for one candidate. The agent has the full
-    `vault.*` toolset and acts directly on the working tree. Returns
-    when the agent stops calling tools; raises on stream errors or when
-    `max_rounds` is exceeded.
+    `vault.*` toolset (filtered to write ops by `_check_tool_call`) and
+    acts directly on the working tree. Returns when the agent stops
+    calling tools; raises on stream errors or when `max_rounds` is
+    exceeded.
     """
     from app.tools.registry import get_registry
 
@@ -321,6 +445,20 @@ async def _process_with_agent(
 
         results: list[ToolResultBlock] = []
         for call in pending:
+            # Hard-rule guard: refuse mutations on excluded paths before
+            # they reach the vault primitive. The error message tells
+            # the agent which rule it tripped, so it can self-correct.
+            refusal = _check_tool_call(call.name, call.input)
+            if refusal:
+                log.warning("organize: refused %s call: %s", call.name, refusal)
+                results.append(
+                    ToolResultBlock(
+                        tool_use_id=call.id,
+                        content=[TextBlock(text=refusal)],
+                        is_error=True,
+                    )
+                )
+                continue
             try:
                 res = await registry.call(call.name, call.input)
                 results.append(
