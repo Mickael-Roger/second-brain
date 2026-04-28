@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
+import unicodedata
 from dataclasses import dataclass, field
 from datetime import date as _date
 from datetime import datetime, timedelta, timezone
@@ -295,6 +296,29 @@ Rules:
 Do not respond with prose explanations even if the note is hard to
 classify; the JSON object (with `notes` filled in) is the only valid
 output channel.
+
+### Hard rules the orchestrator enforces (proposals violating these are rejected)
+
+1. **Raw/WebClipper/ clips are input, never edited in place.** If the
+   note path starts with `Raw/WebClipper/`, you may NOT set `refactor`
+   without also setting `move_to` to a path OUTSIDE `Raw/WebClipper/`
+   (typically `Trash/Raw/WebClipper/<filename>.md`). A refactor that
+   gutifies or shortens a WebClipper clip while leaving its path
+   unchanged WILL be rejected. If you cannot do the proper move-and-
+   archive on this pass, set both `refactor` and `move_to` to null
+   and use `notes` to record what should happen later.
+
+2. **Filenames in `move_to` are ASCII only.** No accents, no diacritics,
+   no non-ASCII glyphs in the BASENAME of the move_to path. Examples:
+   `Wiki/Foo/Sécurité réseau.md` → must be `Wiki/Foo/Securite reseau.md`.
+   The orchestrator silently folds accents in your `move_to` if it
+   detects them, so prefer ASCII directly. The CONTENT (note body /
+   refactor) keeps original accents — this rule is about filenames only.
+
+3. **No empty refactors.** A `refactor` field set to "" or to content
+   shorter than half the original file size with no `move_to` will be
+   rejected as a "gutting" attempt. Either ship a real rewrite or null
+   the field.
 """
 
 
@@ -464,10 +488,97 @@ def _apply_tags(content: str, new_tags: list[str]) -> str:
     return frontmatter.dumps(post)
 
 
+_WEBCLIPPER_PREFIX = "Raw/WebClipper/"
+
+
+def _ascii_fold_basename(path: str) -> str:
+    """Strip diacritics from the BASENAME of a vault-relative path.
+    Folder portions are left alone (existing folders may be accented and
+    we shouldn't move files across renamed dirs as a side effect of one
+    proposal). Spaces and hyphens are preserved.
+
+    Example: 'Wiki/Foo/Sécurité réseau.md' → 'Wiki/Foo/Securite reseau.md'.
+    """
+    head, _, tail = path.rpartition("/")
+    nfkd = unicodedata.normalize("NFKD", tail)
+    folded = "".join(c for c in nfkd if not unicodedata.combining(c))
+    folded = folded.encode("ascii", "ignore").decode("ascii")
+    if not folded:
+        return path  # fold produced nothing; leave the original alone
+    return f"{head}/{folded}" if head else folded
+
+
+def _validate_proposal(proposal: Proposal) -> str | None:
+    """Pre-flight checks. Return an error string when the proposal would
+    violate a hard rule the LLM is supposed to honor but sometimes
+    doesn't. Hard rules belong in code, not just the prompt — the LLM
+    cannot be relied on to enforce them."""
+    src = proposal.path
+    refactor = proposal.refactor
+    move_to = proposal.move_to
+
+    # Rule 1: a Raw/WebClipper/ clip is INPUT, not a file you edit. The
+    # only legal mutations are (a) move it to Trash/Raw/WebClipper/ with
+    # a refactor that prepends a trash callout to the verbatim body, or
+    # (b) leave it alone. A refactor without a move out of WebClipper/
+    # always means "the LLM gutted the source in place" — we saw this
+    # happen and it loses data.
+    if src.startswith(_WEBCLIPPER_PREFIX) and refactor is not None:
+        if not move_to or move_to.startswith(_WEBCLIPPER_PREFIX):
+            return (
+                "WebClipper guard: refactor is set but move_to does not "
+                "take the file out of Raw/WebClipper/. Refactor-in-place "
+                "would gut the source. Either propose move_to outside "
+                "Raw/WebClipper/ (typically Trash/Raw/WebClipper/<file>.md) "
+                "or null both fields."
+            )
+
+    # Rule 2: a refactor that drastically shrinks the body without a move
+    # is suspicious — the LLM is probably "clearing the source" instead
+    # of doing real work. Only fail when no move_to is set (a move can
+    # legitimately ship a leaner version to its destination).
+    if refactor is not None and move_to is None:
+        # Use a 50% shrink threshold; legitimate refactors stay close in
+        # size, gutting drops content to near-zero.
+        try:
+            original = (vault_root() / src).read_text(encoding="utf-8")
+        except OSError:
+            original = ""
+        if original and len(refactor) < max(64, len(original) // 2):
+            return (
+                "Anti-gut guard: refactor would drop "
+                f"{len(original) - len(refactor)} chars "
+                f"(from {len(original)} to {len(refactor)}) without "
+                "moving the file. Set move_to or null the refactor."
+            )
+
+    return None
+
+
 async def _apply_proposal(proposal: Proposal) -> AppliedNote:
     """Best-effort apply. Order: refactor → tags → move. Each step is its
     own commit (vault primitives wrap their own git transaction)."""
     applied = AppliedNote(path=proposal.path)
+
+    # Hard-rule guards: catch the cases ORGANIZE.md describes but the LLM
+    # sometimes ignores. Surfacing them as apply-time errors keeps the
+    # bad proposals out of the working tree and the diff stat stays clean.
+    guard_error = _validate_proposal(proposal)
+    if guard_error:
+        applied.error = guard_error
+        return applied
+
+    # ASCII-fold the destination basename when needed. Existing accented
+    # files keep their names; only newly proposed move targets are
+    # normalised. This is a silent fix-up, not an error — the user wants
+    # ASCII filenames per ORGANIZE.md and the LLM is unreliable at it.
+    if proposal.move_to:
+        folded = _ascii_fold_basename(proposal.move_to)
+        if folded != proposal.move_to:
+            log.info(
+                "ascii-folded move_to: %r → %r", proposal.move_to, folded
+            )
+            proposal.move_to = folded
 
     current_path = proposal.path
 
