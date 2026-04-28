@@ -275,10 +275,17 @@ def diff_stat(base_sha: str | None, root: Path | None = None) -> str:
     """`git diff --stat` between `base_sha` and the current working tree.
 
     When `base_sha` is None (git disabled / empty repo), returns "".
+
+    `--stat=<width>,<name-width>` is forced wide because subprocess has
+    no TTY: git would otherwise default to 80 columns and truncate
+    long vault paths (which routinely exceed 80 chars).
     """
     if base_sha is None:
         return ""
-    r = _run(["git", "diff", "--stat", base_sha], root or vault_root())
+    r = _run(
+        ["git", "diff", "--stat=400,300", base_sha],
+        root or vault_root(),
+    )
     if r.returncode != 0:
         log.warning("git diff --stat failed: %s", r.stderr.strip())
         return ""
