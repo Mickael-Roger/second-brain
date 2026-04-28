@@ -672,6 +672,15 @@ def _format_report(
     applied_ok = sum(1 for a in applied if not a.error and a.operations)
     apply_failed = sum(1 for a in applied if a.error)
 
+    # "Skipped" = every considered note that did NOT end up modified.
+    # Union of: read/LLM errors, parse failures, no-op proposals, apply
+    # errors, apply no-ops. Paths only — the user just wants to see what
+    # was looked at and left alone.
+    modified_paths = {a.path for a in applied if not a.error and a.operations}
+    considered_paths: list[str] = [p.path for p in proposals]
+    considered_paths.extend(path for path, _ in skipped)
+    skipped_paths = sorted({p for p in considered_paths if p not in modified_paths})
+
     lines = [
         f"## Organize — {started.date().isoformat()}",
         "",
@@ -679,15 +688,22 @@ def _format_report(
         f"Finished: {finished.isoformat()} ({(finished - started).total_seconds():.1f}s)",
         f"Last run: {last_run.isoformat() if last_run else '(first run)'}",
         f"Notes considered: {total}",
-        f"Proposals (actionable): {actionable}",
-        f"Applied OK: {applied_ok}",
-        f"Apply errors: {apply_failed}",
-        f"LLM parse failures: {parse_failed}",
-        f"Skipped: {len(skipped)}",
+        f"Modified: {applied_ok}",
+        f"Skipped: {len(skipped_paths)}",
+        f"  · proposals (actionable): {actionable}",
+        f"  · apply errors: {apply_failed}",
+        f"  · LLM parse failures: {parse_failed}",
+        f"  · LLM/read errors: {len(skipped)}",
         "",
     ]
-    if skipped:
+    if skipped_paths:
         lines.append("### Skipped")
+        lines.append("")
+        for p in skipped_paths:
+            lines.append(f"- `{p}`")
+        lines.append("")
+    if skipped:
+        lines.append("### Errors (subset of skipped)")
         lines.append("")
         for path, reason in skipped:
             lines.append(f"- `{path}` — {reason}")

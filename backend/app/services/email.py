@@ -74,6 +74,13 @@ def render_nightly_email_html(
             1 for a in organize.applied if not a.error and a.operations
         )
         apply_err_count = sum(1 for a in organize.applied if a.error)
+        # Skipped = considered but not modified. Just paths.
+        modified_paths = {
+            a.path for a in organize.applied if not a.error and a.operations
+        }
+        considered: list[str] = [p.path for p in proposals]
+        considered.extend(path for path, _ in organize.skipped)
+        skipped_paths = sorted({p for p in considered if p not in modified_paths})
         last_run_iso = (
             organize.last_run_at.isoformat() if organize.last_run_at else None
         )
@@ -84,6 +91,7 @@ def render_nightly_email_html(
         mode = organize.mode
     else:
         actionable_count = failures_count = apply_ok_count = apply_err_count = 0
+        skipped_paths = []
         last_run_iso = None
         # Without an organize result we still want a date stamp on the email.
         from datetime import datetime, timezone
@@ -110,6 +118,7 @@ def render_nightly_email_html(
         failures_count=failures_count,
         apply_ok_count=apply_ok_count,
         apply_err_count=apply_err_count,
+        skipped_paths=skipped_paths,
         diff_stat=diff_stat,
         finalise_msg=finalise_msg,
     )
