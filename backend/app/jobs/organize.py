@@ -484,27 +484,23 @@ async def _apply_proposal(proposal: Proposal) -> AppliedNote:
 
 async def run_organize(
     *,
-    run_id: str | None = None,
     extra_instruction: str | None = None,
     scope: str | None = None,
     since: timedelta | None = None,
 ) -> OrganizeResult:
     """Execute one organize pass.
 
-    Persists a run + per-note proposals into SQLite (organize_runs /
-    organize_proposals) so the webapp can review and apply them later.
-    Returns the legacy in-memory result so the email path keeps working.
-
-    `run_id` may be supplied by the caller (e.g. an already-created
-    'running' row from the API endpoint); otherwise a new run is created
-    here.
+    Runs from the nightly cron or the `second-brain organize` CLI —
+    there is no webapp UI for it. Returns an in-memory `OrganizeResult`
+    that the email renderer consumes.
 
     `extra_instruction`, when given, is appended to every per-note user
-    prompt in this run — used by the manual run from the webapp.
+    prompt in this run.
 
     `scope` overrides `organize.modified_since` for this run only:
-        "all"             → every note (manual runs default to this).
-        "since_last_run"  → Inbox + recently-modified (cron default).
+        "all"             → every note.
+        "since_last_run"  → Inbox + recently-modified (legacy global cutoff).
+        default           → per-note last_reviewed_at (incremental).
 
     `since`, when set, restricts the candidate list to files modified
     within that window and supersedes `scope`. Used by the
@@ -513,15 +509,9 @@ async def run_organize(
     In `dry-run` mode the per-note `last_reviewed_at` and the global
     `last_run_at` are NOT advanced — a dry-run is a preview, not an
     "execution complete". The next nightly cron will see the same
-    candidates again until the user actually applies (either by
-    re-running in `apply` mode or via the webapp's apply flow).
+    candidates again until the user re-runs in `apply` mode.
     """
-    from app.organize import (
-        create_run as store_create_run,
-        finish_run as store_finish_run,
-        insert_proposal as store_insert_proposal,
-        set_proposal_state as store_set_proposal_state,
-    )
+    from app.organize import mark_note_reviewed
 
     settings = get_settings()
     started = datetime.now(timezone.utc)
@@ -548,8 +538,6 @@ async def run_organize(
     conn = open_connection()
     try:
         candidates, last_run = _select_candidates(conn, scope=scope, since=since)
-        if run_id is None:
-            run_id = store_create_run(conn, mode=settings.organize.mode)
     finally:
         conn.close()
 
@@ -583,101 +571,42 @@ async def run_organize(
                     extra_instruction=extra_instruction,
                 )
                 proposals.append(proposal)
-                # Persist as it lands so the webapp shows progress live.
-                # Only advance per-note last_reviewed_at when we're actually
-                # going to apply changes — a dry-run is a preview, not an
-                # "execution complete", and re-proposing the same files
-                # next night is exactly what the user wants until they
-                # apply (here or via the webapp).
-                conn = open_connection()
-                try:
-                    store_insert_proposal(
-                        conn,
-                        run_id,
-                        path=proposal.path,
-                        move_to=proposal.move_to,
-                        tags=proposal.tags,
-                        wikilinks=[
-                            {"target": w.target, "context": w.context}
-                            for w in proposal.wikilinks
-                        ],
-                        refactor=proposal.refactor,
-                        notes=proposal.notes,
-                        parse_error=proposal.parse_error,
-                        raw_response=proposal.raw_response,
-                    )
-                    if is_apply and not proposal.parse_error:
-                        from app.organize import mark_note_reviewed
+                # Mark reviewed only when we're actually going to apply
+                # changes — a dry-run is a preview, not an "execution
+                # complete", and re-proposing the same files next night
+                # is exactly what we want until the user runs --apply.
+                if is_apply and not proposal.parse_error:
+                    conn = open_connection()
+                    try:
                         mark_note_reviewed(conn, rel)
-                finally:
-                    conn.close()
+                    finally:
+                        conn.close()
             except Exception as exc:
                 log.exception("organize: proposal failed for %s", rel)
                 skipped.append((rel, f"LLM error: {exc}"))
 
     applied: list[AppliedNote] = []
-    if settings.organize.mode == "apply":
+    if is_apply:
         for proposal in proposals:
             if proposal.parse_error or proposal.is_no_op:
                 continue
             try:
-                a = await _apply_proposal(proposal)
-                applied.append(a)
-                conn = open_connection()
-                try:
-                    store_set_proposal_state(
-                        conn,
-                        run_id,
-                        proposal.path,
-                        state="failed" if a.error else "applied",
-                        apply_error=a.error,
-                        apply_ops=a.operations,
-                    )
-                finally:
-                    conn.close()
+                applied.append(await _apply_proposal(proposal))
             except Exception as exc:
                 log.exception("apply failed for %s", proposal.path)
                 applied.append(AppliedNote(path=proposal.path, error=f"apply: {exc}"))
-                conn = open_connection()
-                try:
-                    store_set_proposal_state(
-                        conn,
-                        run_id,
-                        proposal.path,
-                        state="failed",
-                        apply_error=f"apply: {exc}",
-                    )
-                finally:
-                    conn.close()
 
     finished = datetime.now(timezone.utc)
-    conn = open_connection()
-    try:
+    if is_apply:
         # Only advance the global `last_run_at` cursor on apply runs —
         # the legacy `since_last_run` scope keys off this and dry-runs
         # shouldn't make the next nightly skip files just because a
-        # human-in-the-loop preview happened in between.
-        if is_apply:
+        # preview happened in between.
+        conn = open_connection()
+        try:
             _record_run(conn, finished)
-        # Final run state. If we were in "apply" mode and at least one
-        # proposal was applied, mark the run "applied"; otherwise "completed".
-        run_status = (
-            "applied"
-            if is_apply and any(not a.error for a in applied)
-            else "completed"
-        )
-        store_finish_run(
-            conn,
-            run_id,
-            status=run_status,
-            notes_total=len(candidates),
-            summary=(
-                f"{len(proposals)} proposals, "
-                f"{len(applied)} applied, {len(skipped)} skipped"
-            ),
-        )
-    finally:
-        conn.close()
+        finally:
+            conn.close()
 
     report = _format_report(
         started, finished, settings.organize.mode, last_run, proposals, applied, skipped, len(candidates)
@@ -693,304 +622,6 @@ async def run_organize(
         report=report,
         last_run_at=last_run,
     )
-
-
-def _proposal_from_stored(sp: Any) -> "Proposal":
-    """Rebuild an in-memory Proposal from a StoredProposal row."""
-    return Proposal(
-        path=sp.path,
-        move_to=sp.move_to,
-        tags=sp.tags,
-        wikilinks=[
-            WikilinkSuggestion(target=w["target"], context=w.get("context", ""))
-            for w in sp.wikilinks
-        ],
-        refactor=sp.refactor,
-        notes=sp.notes,
-        raw_response=sp.raw_response,
-    )
-
-
-def _migrate_review_for_move(conn: sqlite3.Connection, ops: list[str]) -> None:
-    """If `_apply_proposal` performed a `move→<dst>` op, carry the
-    last_reviewed_at record across so the renamed file is still considered
-    fresh. Otherwise the moved file would get re-reviewed on the next run."""
-    for op in ops:
-        if op.startswith("move→"):
-            new_path = op[len("move→"):]
-            row = conn.execute(
-                "SELECT last_reviewed_at FROM note_reviews WHERE path NOT IN "
-                "(SELECT path FROM note_reviews WHERE path = ?) "
-                "ORDER BY rowid DESC LIMIT 1",
-                (new_path,),
-            ).fetchone()
-            # Simpler: just upsert "now" for the destination — the LLM has
-            # just looked at this content, the destination is freshly reviewed.
-            from app.organize import mark_note_reviewed
-            mark_note_reviewed(conn, new_path)
-            _ = row  # unused; kept for future smarter migration logic
-
-
-async def apply_one_proposal(run_id: str, path: str) -> dict[str, Any]:
-    """Apply just one pending proposal (the user clicked Apply on its card)."""
-    from app.organize import (
-        fetch_pending_proposals,
-        set_proposal_state as store_set_proposal_state,
-    )
-
-    conn = open_connection()
-    try:
-        target = next(
-            (p for p in fetch_pending_proposals(conn, run_id) if p.path == path),
-            None,
-        )
-    finally:
-        conn.close()
-    if target is None:
-        raise LookupError(f"no pending proposal at {path}")
-
-    proposal = _proposal_from_stored(target)
-    try:
-        result = await _apply_proposal(proposal)
-        state = "failed" if result.error else "applied"
-        conn = open_connection()
-        try:
-            store_set_proposal_state(
-                conn,
-                run_id,
-                path,
-                state=state,
-                apply_error=result.error,
-                apply_ops=result.operations,
-            )
-            if not result.error:
-                # The dry-run that produced this proposal didn't advance
-                # last_reviewed_at (preview only). Mark reviewed now that
-                # the user accepted, so the next nightly skips this file.
-                from app.organize import mark_note_reviewed
-                mark_note_reviewed(conn, path)
-                _migrate_review_for_move(conn, result.operations)
-        finally:
-            conn.close()
-        return {"state": state, "operations": result.operations, "error": result.error}
-    except Exception as exc:
-        log.exception("apply_one_proposal: failed for %s", path)
-        conn = open_connection()
-        try:
-            store_set_proposal_state(
-                conn,
-                run_id,
-                path,
-                state="failed",
-                apply_error=str(exc),
-            )
-        finally:
-            conn.close()
-        return {"state": "failed", "operations": [], "error": str(exc)}
-
-
-def _build_revision_prompt(
-    note_path: str,
-    note_content: str,
-    previous: Any,
-    instruction: str,
-    context_files: list[Any],
-    paths: list[str],
-) -> str:
-    """User-message text for asking the LLM to revise an earlier proposal."""
-    body = note_content
-    if len(body) > MAX_NOTE_CHARS:
-        body = body[:MAX_NOTE_CHARS] + "\n\n[…content truncated for review]"
-
-    prev_payload = {
-        "move_to": previous.move_to,
-        "tags": previous.tags,
-        "wikilinks": [
-            {"target": w["target"] if isinstance(w, dict) else w.target,
-             "context": w.get("context") if isinstance(w, dict) else w.context}
-            for w in (previous.wikilinks or [])
-        ],
-        "refactor": previous.refactor,
-        "notes": previous.notes,
-    }
-
-    parts: list[str] = [
-        f"## Note path\n{note_path}",
-        "## You proposed earlier (the user wants you to revise this)",
-        "```json\n" + json.dumps(prev_payload, indent=2, ensure_ascii=False) + "\n```",
-        f"## User's revision instruction\n> {instruction.strip()}",
-    ]
-    for cf in context_files:
-        parts.append(f"## {cf.label}\n```\n{cf.content.strip() or '(empty)'}\n```")
-    parts.append("## Vault paths (sample)\n" + "\n".join(f"- {p}" for p in paths))
-    parts.append(f"## Note content\n```markdown\n{body}\n```")
-    parts.append(
-        "Now return a NEW proposal in the same JSON schema (the one defined "
-        "in the system prompt), respecting the user's instruction. If the "
-        "user asks you NOT to do something, set that field to null."
-    )
-    return "\n\n".join(parts)
-
-
-async def revise_proposal(run_id: str, path: str, instruction: str) -> Proposal:
-    """Re-prompt the LLM with the user's revision request, replace the
-    stored proposal in place. The card stays at the same row; the state
-    flips back to 'pending'."""
-    from app.organize import (
-        get_run,
-        insert_proposal as store_insert_proposal,
-    )
-    from app.vault import read_context_files
-
-    conn = open_connection()
-    try:
-        run = get_run(conn, run_id)
-    finally:
-        conn.close()
-    if run is None:
-        raise LookupError(f"run {run_id} not found")
-
-    previous = next((p for p in run.proposals if p.path == path), None)
-    if previous is None:
-        raise LookupError(f"no proposal at {path} in run {run_id}")
-
-    note_abs = vault_root() / path
-    if not note_abs.is_file():
-        raise FileNotFoundError(f"source note not found on disk: {path}")
-    note_content = note_abs.read_text(encoding="utf-8")
-
-    context_files = read_context_files()
-    paths = _vault_paths_sample()
-    system_prompt = _load_system_prompt()
-    user_text = _build_revision_prompt(
-        path, note_content, previous, instruction, context_files, paths
-    )
-    raw = await complete(
-        system_prompt,
-        [Message(role="user", content=[TextBlock(text=user_text)])],
-    )
-    new_proposal = parse_proposal(path, raw)
-
-    # Replace the stored row in place — same path, fresh state=pending,
-    # revision history is not kept (the user can keep iterating until happy).
-    conn = open_connection()
-    try:
-        conn.execute(
-            "DELETE FROM organize_proposals WHERE run_id = ? AND path = ?",
-            (run_id, path),
-        )
-        store_insert_proposal(
-            conn,
-            run_id,
-            path=new_proposal.path,
-            move_to=new_proposal.move_to,
-            tags=new_proposal.tags,
-            wikilinks=[
-                {"target": w.target, "context": w.context}
-                for w in new_proposal.wikilinks
-            ],
-            refactor=new_proposal.refactor,
-            notes=new_proposal.notes,
-            parse_error=new_proposal.parse_error,
-            raw_response=new_proposal.raw_response,
-        )
-    finally:
-        conn.close()
-    return new_proposal
-
-
-async def apply_pending_proposals(run_id: str) -> dict[str, Any]:
-    """Apply every still-pending proposal of a stored run, updating each
-    proposal's state in the DB. Returns a small summary the API surfaces.
-
-    Used by `POST /api/organize/runs/{id}/apply` when the user reviews
-    the dry-run cards in the webapp and validates them.
-    """
-    from app.organize import (
-        fetch_pending_proposals,
-        finish_run as store_finish_run,
-        set_proposal_state as store_set_proposal_state,
-    )
-
-    conn = open_connection()
-    try:
-        pending = fetch_pending_proposals(conn, run_id)
-    finally:
-        conn.close()
-
-    applied = 0
-    failed = 0
-    for sp in pending:
-        # Reconstruct a Proposal-shaped object for _apply_proposal.
-        from app.jobs.organize import (
-            Proposal as _Proposal,
-            WikilinkSuggestion as _Wiki,
-        )
-
-        proposal = _Proposal(
-            path=sp.path,
-            move_to=sp.move_to,
-            tags=sp.tags,
-            wikilinks=[_Wiki(target=w["target"], context=w.get("context", "")) for w in sp.wikilinks],
-            refactor=sp.refactor,
-            notes=sp.notes,
-            raw_response=sp.raw_response,
-        )
-        try:
-            result = await _apply_proposal(proposal)
-            new_state = "failed" if result.error else "applied"
-            conn = open_connection()
-            try:
-                store_set_proposal_state(
-                    conn,
-                    run_id,
-                    sp.path,
-                    state=new_state,
-                    apply_error=result.error,
-                    apply_ops=result.operations,
-                )
-                if not result.error:
-                    # See note in apply_one_proposal — the dry-run that
-                    # produced this proposal skipped marking, so we do
-                    # it here on apply success.
-                    from app.organize import mark_note_reviewed
-                    mark_note_reviewed(conn, sp.path)
-                    _migrate_review_for_move(conn, result.operations)
-            finally:
-                conn.close()
-            if result.error:
-                failed += 1
-            else:
-                applied += 1
-        except Exception as exc:
-            log.exception("apply_pending: failed for %s", sp.path)
-            conn = open_connection()
-            try:
-                store_set_proposal_state(
-                    conn,
-                    run_id,
-                    sp.path,
-                    state="failed",
-                    apply_error=str(exc),
-                )
-            finally:
-                conn.close()
-            failed += 1
-
-    # If at least one proposal was applied, flip the run's status.
-    conn = open_connection()
-    try:
-        store_finish_run(
-            conn,
-            run_id,
-            status="applied" if applied > 0 else "completed",
-            notes_total=len(pending),
-            summary=f"applied {applied}, failed {failed}",
-        )
-    finally:
-        conn.close()
-
-    return {"applied": applied, "failed": failed}
 
 
 # ── markdown rendering ───────────────────────────────────────────────
