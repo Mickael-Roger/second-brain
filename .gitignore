@@ -22,6 +22,10 @@ ORGANIZE.example.md
 *.db-wal
 *.db-shm
 
+# Local debug captures
+reslog
+email.eml
+
 # IDE / OS
 .vscode/
 .idea/
