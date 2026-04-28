@@ -272,7 +272,14 @@ def capture_head(root: Path | None = None) -> str | None:
 
 
 def diff_stat(base_sha: str | None, root: Path | None = None) -> str:
-    """`git diff --stat` between `base_sha` and the current working tree.
+    """`git diff --stat` between `base_sha` and the current working tree
+    INCLUDING untracked files.
+
+    Plain `git diff --stat` doesn't enumerate untracked files — but the
+    organize agent legitimately creates new ones (Trash archives, new
+    wiki pages, etc.). To capture them we mark untracked files as
+    intent-to-add (`git add -N`) before the diff, then reset the index
+    afterwards so this read-only function leaves no side effects.
 
     When `base_sha` is None (git disabled / empty repo), returns "".
 
@@ -285,17 +292,43 @@ def diff_stat(base_sha: str | None, root: Path | None = None) -> str:
     """
     if base_sha is None:
         return ""
-    r = _run(
+    target = root or vault_root()
+
+    # Snapshot untracked files (excluding gitignored noise).
+    untracked_run = _run(
         [
             "git", "-c", "core.quotePath=false",
-            "diff", "--stat=400,300", base_sha,
+            "ls-files", "--others", "--exclude-standard",
         ],
-        root or vault_root(),
+        target,
     )
-    if r.returncode != 0:
-        log.warning("git diff --stat failed: %s", r.stderr.strip())
-        return ""
-    return r.stdout
+    untracked = [
+        line for line in untracked_run.stdout.splitlines() if line.strip()
+    ]
+
+    # Mark untracked files as intent-to-add so `git diff --stat` shows
+    # them as new-file additions.
+    if untracked:
+        _run(["git", "add", "-N", "--"] + untracked, target)
+
+    try:
+        r = _run(
+            [
+                "git", "-c", "core.quotePath=false",
+                "diff", "--stat=400,300", base_sha,
+            ],
+            target,
+        )
+        if r.returncode != 0:
+            log.warning("git diff --stat failed: %s", r.stderr.strip())
+            return ""
+        return r.stdout
+    finally:
+        # Undo the intent-to-add so the index returns to its previous
+        # state (untracked stays untracked). Required so the subsequent
+        # commit_and_push / stash flow isn't affected by this read.
+        if untracked:
+            _run(["git", "reset", "HEAD", "--"] + untracked, target)
 
 
 def diff_names(base_sha: str | None, root: Path | None = None) -> set[str]:
