@@ -22,6 +22,7 @@ import {
   MailOpen,
   MessageSquare,
   Newspaper,
+  Pencil,
   Play,
   Rss,
 } from "lucide-react";
@@ -115,25 +116,17 @@ export default function NewsView({ onOpenChat }: Props) {
   });
 
   function startChatAbout(a: NewsArticleDetail) {
-    const lines: string[] = [
-      `I'm looking at this news article in my second-brain.`,
-      ``,
-      `Title: ${a.title}`,
-      `Feed: ${a.feed_title ?? a.source}` +
-        (a.feed_group ? ` / ${a.feed_group}` : ""),
-      `Published: ${a.published_at}`,
-    ];
-    if (a.url) lines.push(`URL: ${a.url}`);
-    lines.push(
-      ``,
-      `Summary:`,
-      a.summary?.trim() || "(no summary)",
-      ``,
-      `Use the news.* tools (news.read_news with article_id="${a.id}",`,
-      `news.mark_read, news.list_news, etc.) to dig deeper. Help me`,
-      `understand it, find related articles, or take action.`,
-    );
-    window.localStorage.setItem("sb.chat.draft", lines.join("\n"));
+    // Don't paste the article body / summary into the prompt — keeps the
+    // user's first turn short and lets them ask their actual question.
+    // The LLM has `news.read_news(article_id=…)` registered as a tool;
+    // it can fetch the body on demand. We just pin the article so the
+    // LLM knows which one we mean.
+    const draft =
+      `I'd like to discuss this article: "${a.title}" ` +
+      `(news article id: \`${a.id}\`). Use \`news.read_news\` with that ` +
+      `article_id to read it when you need the content; ` +
+      `\`news.list_news\` / \`news.mark_read\` are also available.`;
+    window.localStorage.setItem("sb.chat.draft", draft);
     onOpenChat();
   }
 
@@ -455,7 +448,7 @@ interface DetailPaneProps {
 
 type ViewMode = "summary" | "html";
 
-type CaptureKind = "keep" | "article" | "watched";
+type CaptureKind = "keep" | "article" | "watched" | "custom";
 
 function DetailPane({
   articleId,
@@ -471,12 +464,16 @@ function DetailPane({
   const [captureMessage, setCaptureMessage] = useState<
     { kind: "ok"; path: string } | { kind: "err"; text: string } | null
   >(null);
+  const [customOpen, setCustomOpen] = useState(false);
+  const [customText, setCustomText] = useState("");
 
   // Switching articles resets the local content-tab + capture state.
   const currentId = article?.id ?? null;
   useEffect(() => {
     setViewMode("summary");
     setCaptureMessage(null);
+    setCustomOpen(false);
+    setCustomText("");
   }, [currentId]);
 
   async function runCapture(kind: CaptureKind, id: string) {
@@ -488,6 +485,32 @@ function DetailPane({
         `/api/news/articles/${encodeURIComponent(id)}/${kind}`,
       );
       setCaptureMessage({ kind: "ok", path: res.path });
+    } catch (err: unknown) {
+      const text =
+        err instanceof ApiError
+          ? typeof err.detail === "object" && err.detail && "detail" in err.detail
+            ? String((err.detail as { detail: unknown }).detail)
+            : String(err.detail ?? err.message)
+          : String((err as Error)?.message ?? err);
+      setCaptureMessage({ kind: "err", text });
+    } finally {
+      setCaptureBusy(null);
+    }
+  }
+
+  async function runCustomCapture(id: string, instruction: string) {
+    const trimmed = instruction.trim();
+    if (!trimmed || captureBusy) return;
+    setCaptureBusy("custom");
+    setCaptureMessage(null);
+    try {
+      const res = await api.post<{ path: string }>(
+        `/api/news/articles/${encodeURIComponent(id)}/custom`,
+        { instruction: trimmed },
+      );
+      setCaptureMessage({ kind: "ok", path: res.path });
+      setCustomOpen(false);
+      setCustomText("");
     } catch (err: unknown) {
       const text =
         err instanceof ApiError
@@ -611,7 +634,88 @@ function DetailPane({
               <Eye className="h-3 w-3" />
               {captureBusy === "watched" ? t("news.capturing") : t("news.captureWatched")}
             </button>
+            <button
+              type="button"
+              onClick={() => {
+                setCustomOpen((v) => !v);
+                setCaptureMessage(null);
+              }}
+              disabled={captureBusy !== null}
+              title={t("news.captureCustomHint")}
+              className={`inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-xs disabled:opacity-50 ${
+                customOpen
+                  ? "border-accent bg-accent/10 text-accent"
+                  : "border-border bg-bg hover:border-accent"
+              }`}
+            >
+              <Pencil className="h-3 w-3" />
+              {captureBusy === "custom"
+                ? t("news.capturing")
+                : t("news.captureCustom")}
+            </button>
           </div>
+          {customOpen && (
+            <div className="space-y-2 rounded-lg border border-border bg-bg p-2">
+              <label
+                htmlFor="news-custom-instruction"
+                className="block text-xs text-muted"
+              >
+                {t("news.captureCustomLabel")}
+              </label>
+              <textarea
+                id="news-custom-instruction"
+                value={customText}
+                onChange={(e) => setCustomText(e.target.value)}
+                onKeyDown={(e) => {
+                  if (
+                    (e.key === "Enter" && (e.ctrlKey || e.metaKey)) ||
+                    (e.key === "Enter" && !e.shiftKey && customText.trim())
+                  ) {
+                    e.preventDefault();
+                    void runCustomCapture(article.id, customText);
+                  }
+                  if (e.key === "Escape") {
+                    e.preventDefault();
+                    setCustomOpen(false);
+                  }
+                }}
+                rows={2}
+                maxLength={400}
+                placeholder={t("news.captureCustomPlaceholder")}
+                className="w-full resize-none rounded-md border border-border bg-surface px-2 py-1 text-xs focus:border-accent focus:outline-none"
+                autoFocus
+              />
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[11px] text-muted">
+                  {customText.length}/400
+                </span>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCustomOpen(false);
+                      setCustomText("");
+                    }}
+                    className="rounded-md border border-border bg-bg px-2 py-1 text-xs hover:border-accent"
+                  >
+                    {t("common.cancel")}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => runCustomCapture(article.id, customText)}
+                    disabled={
+                      captureBusy !== null || customText.trim().length === 0
+                    }
+                    className="rounded-md border border-accent bg-accent/10 px-2 py-1 text-xs text-accent hover:bg-accent/20 disabled:opacity-50"
+                  >
+                    {captureBusy === "custom"
+                      ? t("news.capturing")
+                      : t("news.captureCustomSubmit")}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
           {captureMessage && (
             <p
               className={`pt-2 text-xs ${

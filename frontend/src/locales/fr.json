@@ -34,6 +34,11 @@
     "captureArticleHint": "Enregistrer un résumé d'article complet (LLM) dans Raw/Feeds/Articles/.",
     "captureWatched": "Lu/Vu",
     "captureWatchedHint": "Marquer comme lu/vu/écouté — crée un stub dans Raw/Feeds/Youtube/.",
+    "captureCustom": "Action libre",
+    "captureCustomHint": "Enregistrer l'article avec une consigne libre (1–2 lignes) pour le prochain passage nocturne.",
+    "captureCustomLabel": "Indiquez à l'organisateur quoi faire de cet article (ex. : « fusionner dans Wiki/Tech/AI-ML/Mistral.md », « ajouter à ma liste de lecture », « classer dans Notes/Cuisine/ »). 1–2 lignes.",
+    "captureCustomPlaceholder": "Que doit faire le passage nocturne avec cet article ?",
+    "captureCustomSubmit": "Enregistrer",
     "capturing": "Enregistrement…",
     "captureOk": "Enregistré dans {{path}}",
     "captureFailed": "Échec : {{err}}"

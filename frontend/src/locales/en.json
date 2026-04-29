@@ -34,6 +34,11 @@
     "captureArticleHint": "Save a full LLM article summary under Raw/Feeds/Articles/.",
     "captureWatched": "Watched",
     "captureWatchedHint": "Mark this as read/watched/listened — saves a stub under Raw/Feeds/Youtube/.",
+    "captureCustom": "Custom action",
+    "captureCustomHint": "Save the article with a free-form instruction (1–2 lines) for the next nightly organize pass.",
+    "captureCustomLabel": "Tell the organizer what to do with this article (e.g. \"merge into Wiki/Tech/AI-ML/Mistral.md\", \"add to my reading list\", \"file under Notes/Cooking/\"). 1–2 lines.",
+    "captureCustomPlaceholder": "What should the nightly pass do with this article?",
+    "captureCustomSubmit": "Save",
     "capturing": "Saving…",
     "captureOk": "Saved to {{path}}",
     "captureFailed": "Capture failed: {{err}}"

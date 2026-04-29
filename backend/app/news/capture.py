@@ -241,3 +241,35 @@ async def capture_watched(article: ArticleRecord) -> str:
         message=f"news: watched {article.id}",
     )
     return note.path
+
+
+async def capture_custom(article: ArticleRecord, instruction: str) -> str:
+    """Custom-action capture in Raw/Feeds/Articles/.
+
+    Writes a full LLM-summarised article (same body as `capture_article`)
+    but stamps an `action: "<instruction>"` field in the frontmatter so
+    the next nightly organize pass routes the content per the user's
+    free-form instruction — same semantics as a WebClipper clip's
+    `action` field.
+    """
+    cleaned = (instruction or "").strip()
+    if not cleaned:
+        raise ValueError("instruction must not be empty")
+
+    full = await _llm_full_article(article)
+    title_base = _slugify(article.title)
+    title = _unique_title(FOLDER_ARTICLE, title_base)
+
+    body_parts: list[str] = [f"# {article.title}", "", full]
+    if article.url:
+        body_parts.extend(["", "---", "", f"Source: {_link_line(article)}"])
+    body = "\n".join(body_parts)
+
+    fm = _frontmatter_for(article, kind="article", extra_tags=["feed-custom"])
+    fm["action"] = cleaned
+    note = await create_note(
+        FOLDER_ARTICLE, title, body,
+        frontmatter=fm,
+        message=f"news: custom {article.id}",
+    )
+    return note.path

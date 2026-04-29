@@ -20,7 +20,7 @@ import sqlite3
 from datetime import date, datetime, time, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.auth import current_user
 from app.db.connection import get_db
@@ -273,6 +273,13 @@ class CaptureResponse(BaseModel):
     path: str
 
 
+class CustomCaptureRequest(BaseModel):
+    instruction: str = Field(
+        ..., min_length=1, max_length=400,
+        description="Free-form instruction stamped as `action:` in the captured note's frontmatter. The next nightly organize pass routes the content per this instruction.",
+    )
+
+
 def _load_article_record(article_id: str, conn: sqlite3.Connection):
     """Fetch the SQLite header + JSON body, raising HTTPException on
     misses. Returns the ArticleRecord usable by capture flows."""
@@ -340,6 +347,29 @@ async def capture_watched_endpoint(
         path = await capture_watched(record)
     except Exception as exc:
         log.exception("news capture (watched) failed for %s", article_id)
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return CaptureResponse(path=path)
+
+
+@router.post("/articles/{article_id}/custom", response_model=CaptureResponse)
+async def capture_custom_endpoint(
+    article_id: str,
+    body: CustomCaptureRequest,
+    _user: str = Depends(current_user),
+    conn: sqlite3.Connection = Depends(get_db),
+) -> CaptureResponse:
+    """LLM-generated full article + free-form `action` frontmatter →
+    Raw/Feeds/Articles/<title>.md. The next nightly organize pass
+    consumes the `action` field and routes the content accordingly."""
+    from app.news.capture import capture_custom
+
+    record = _load_article_record(article_id, conn)
+    try:
+        path = await capture_custom(record, body.instruction)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        log.exception("news capture (custom) failed for %s", article_id)
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     return CaptureResponse(path=path)
 
