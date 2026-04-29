@@ -246,24 +246,28 @@ async def capture_watched(article: ArticleRecord) -> str:
 async def capture_custom(article: ArticleRecord, instruction: str) -> str:
     """Custom-action capture in Raw/Feeds/Articles/.
 
-    Writes a full LLM-summarised article (same body as `capture_article`)
-    but stamps an `action: "<instruction>"` field in the frontmatter so
-    the next nightly organize pass routes the content per the user's
-    free-form instruction — same semantics as a WebClipper clip's
-    `action` field.
+    Lightweight: NO LLM call at capture time. The note carries the
+    article's title, source URL, and the original feed-supplied summary
+    verbatim, plus an `action: "<instruction>"` frontmatter field. The
+    next nightly organize pass reads the action and does the real work
+    against the original content — re-summarising at capture time would
+    waste tokens AND replace the source body with an LLM rewrite the
+    organize agent then has to second-guess.
     """
     cleaned = (instruction or "").strip()
     if not cleaned:
         raise ValueError("instruction must not be empty")
 
-    full = await _llm_full_article(article)
     title_base = _slugify(article.title)
     title = _unique_title(FOLDER_ARTICLE, title_base)
 
-    body_parts: list[str] = [f"# {article.title}", "", full]
+    body_parts: list[str] = [f"# {article.title}", ""]
+    summary = (article.summary or "").strip()
+    if summary:
+        body_parts.extend([summary, ""])
     if article.url:
-        body_parts.extend(["", "---", "", f"Source: {_link_line(article)}"])
-    body = "\n".join(body_parts)
+        body_parts.extend(["---", "", f"Source: {_link_line(article)}"])
+    body = "\n".join(body_parts).rstrip() + "\n"
 
     fm = _frontmatter_for(article, kind="article", extra_tags=["feed-custom"])
     fm["action"] = cleaned
