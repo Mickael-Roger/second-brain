@@ -57,16 +57,40 @@ EXCLUDED_PREFIXES = (
     "Raw/Logger/Opencode/",
     "Raw/Review/",
 )
+# Files that are never selected as candidates — they're not source data
+# the agent processes as input. Some of them are still WRITABLE by the
+# agent as a side effect (INDEX.md, TODO.md, Wiki/log.md): see
+# `_SCHEMA_PROTECTED_FILES` for the strict no-write subset.
 EXCLUDED_FILES = frozenset({
+    # User-owned schema layer.
     "USER.md",
     "PREFERENCES.md",
-    "INDEX.md",
     "AGENTS.md",
     "INGEST.md",
     "ORGANIZE.md",
     "README.md",
     "Cheatsheet.md",
+    # Maintained by the agent as a side effect of touching other files.
+    "INDEX.md",
+    "TODO.md",
+    "Wiki/log.md",
+    # Sentinel — drained but never moved/deleted itself.
     "Raw/Inbox/Notes.md",
+})
+
+# Files the agent must NEVER mutate via tools (a strict subset of
+# `EXCLUDED_FILES`). Anything in `EXCLUDED_FILES` but not here can be
+# written to as a side effect — INDEX.md gets updated when structure
+# drifts, TODO.md when an action item surfaces, Wiki/log.md when a
+# non-trivial op happens, etc.
+_SCHEMA_PROTECTED_FILES = frozenset({
+    "USER.md",
+    "PREFERENCES.md",
+    "AGENTS.md",
+    "INGEST.md",
+    "ORGANIZE.md",
+    "README.md",
+    "Cheatsheet.md",
 })
 
 
@@ -291,11 +315,13 @@ def _writable(path: str, op: str) -> str | None:
     """
     if not path:
         return f"empty path for {op}"
-    if path in EXCLUDED_FILES:
+    if path in _SCHEMA_PROTECTED_FILES:
         return (
             f"`{path}` is on the schema-files exclusion list "
-            "(USER/PREFERENCES/INDEX/AGENTS/INGEST/ORGANIZE/README/"
-            "Cheatsheet/Raw-Inbox-Notes). The agent never edits these."
+            "(USER/PREFERENCES/AGENTS/INGEST/ORGANIZE/README/Cheatsheet). "
+            "The agent never edits these — they're user-owned. "
+            "INDEX.md, TODO.md and Wiki/log.md are NOT on this list "
+            "and can be edited as side effects."
         )
     top = path.split("/", 1)[0]
     if top in _ABSOLUTE_BLOCKED_TOPS:
