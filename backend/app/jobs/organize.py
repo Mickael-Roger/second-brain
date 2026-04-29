@@ -325,9 +325,24 @@ def _writable(path: str, op: str) -> str | None:
         )
     top = path.split("/", 1)[0]
     if top in _ABSOLUTE_BLOCKED_TOPS:
+        # Sport Santé carve-out: the agent appends sport / fitness /
+        # health activity traces verbatim to existing notes under
+        # `Tracking/Sport Santé/`. This is the only writable subtree
+        # under Tracking/, per ORGANIZE.md's "Tracking is untouched
+        # carve-out". `move_dst` and `create` cover routing a Raw
+        # input into Tracking/Sport Santé/; append/edit/replace cover
+        # adding a trace to an existing dedicated note.
+        if path.startswith("Tracking/Sport Santé/") and op in (
+            "append", "edit", "replace", "update_fm",
+            "create", "create_folder", "move_dst",
+        ):
+            return None
         return (
             f"`{path}` is under `{top}/`, which ORGANIZE.md marks as "
-            "untouchable (read-only / append-only by the user)."
+            "untouchable (read-only / append-only by the user). "
+            "The only writable subtree under Tracking/ is "
+            "`Tracking/Sport Santé/` — for sport / health activity "
+            "traces appended verbatim to the existing dedicated note."
         )
     if any(path.startswith(p) for p in _ABSOLUTE_BLOCKED_PREFIXES):
         return f"`{path}` is in a hard-excluded subtree (Raw/Anki, Raw/Logger/Opencode, Raw/Review)."
