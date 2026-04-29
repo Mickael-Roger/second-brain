@@ -47,6 +47,7 @@ from .store import (
     finish_fetch_run,
     insert_article,
     purge_old_articles_with_ids,
+    reconcile_read_state,
     upsert_feed,
 )
 
@@ -255,20 +256,35 @@ async def fetch_freshrss(
                         skipped, sorted(excluded),
                     )
 
-            # ── Unread completeness pass ─────────────────────────────
-            # Pull every unread id from FreshRSS, diff against our DB,
-            # and fetch ALL missing items in one shot. No cap — the
-            # user explicitly asked us to never leave old unread items
-            # behind. items_by_ids batches by 50 so even a 10K backlog
-            # is just a series of HTTP calls (no Fever-side limit).
+            # ── Unread completeness + read-state reconciliation ──────
+            # Pull every unread id from FreshRSS. Used for two things:
+            # (1) reconcile is_read in BOTH directions on every locally
+            #     known article — covers toggles on items outside the
+            #     30-day ranged window, which the walk would otherwise
+            #     miss. Skipped if the call failed so we don't falsely
+            #     mark everything as read on a transient API error.
+            # (2) backfill unread items missing from our DB (very old
+            #     unread articles below the since_id walk's reach).
+            #     items_by_ids batches by 50 with no cap.
+            unread_ids: list[str] | None
             try:
                 unread_ids = await client.unread_item_ids()
             except Exception:
                 log.exception("news fetch: unread_item_ids failed (non-fatal)")
-                unread_ids = []
-            if unread_ids:
+                unread_ids = None
+            if unread_ids is not None:
+                unread_set = set(unread_ids)
                 conn = open_connection()
                 try:
+                    newly_read, newly_unread = reconcile_read_state(
+                        conn, source=source, unread_external_ids=unread_set,
+                    )
+                    if newly_read or newly_unread:
+                        log.info(
+                            "news fetch: reconciled read-state "
+                            "(newly_read=%d, newly_unread=%d)",
+                            newly_read, newly_unread,
+                        )
                     already = existing_external_ids(conn, source)
                 finally:
                     conn.close()

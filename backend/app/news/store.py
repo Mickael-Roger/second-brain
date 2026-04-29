@@ -163,6 +163,57 @@ def mark_article_read(
     return cur.rowcount > 0
 
 
+def reconcile_read_state(
+    conn: sqlite3.Connection,
+    *,
+    source: str,
+    unread_external_ids: set[str],
+) -> tuple[int, int]:
+    """Align local is_read with FreshRSS using its full unread set as
+    ground truth. Catches read-state changes the ranged walk misses —
+    in particular, toggles on articles older than the 30-day window.
+
+    Returns (newly_read, newly_unread):
+      - newly_read: local is_read=0 but external_id NOT in FreshRSS unread → flipped to 1
+      - newly_unread: local is_read=1 but external_id IS in FreshRSS unread → flipped to 0
+
+    Uses a temp table so the IN-list is unbounded (avoids SQLite's
+    ~32k parameter cap on busy aggregators)."""
+    conn.execute(
+        "CREATE TEMP TABLE IF NOT EXISTS _unread_ids (external_id TEXT PRIMARY KEY)"
+    )
+    try:
+        conn.execute("DELETE FROM _unread_ids")
+        if unread_external_ids:
+            conn.execute("BEGIN")
+            try:
+                conn.executemany(
+                    "INSERT OR IGNORE INTO _unread_ids (external_id) VALUES (?)",
+                    [(eid,) for eid in unread_external_ids],
+                )
+                conn.execute("COMMIT")
+            except Exception:
+                conn.execute("ROLLBACK")
+                raise
+        cur1 = conn.execute(
+            "UPDATE news_articles SET is_read = 1 "
+            "WHERE source = ? AND is_read = 0 "
+            "AND external_id NOT IN (SELECT external_id FROM _unread_ids)",
+            (source,),
+        )
+        newly_read = cur1.rowcount
+        cur2 = conn.execute(
+            "UPDATE news_articles SET is_read = 0 "
+            "WHERE source = ? AND is_read = 1 "
+            "AND external_id IN (SELECT external_id FROM _unread_ids)",
+            (source,),
+        )
+        newly_unread = cur2.rowcount
+    finally:
+        conn.execute("DROP TABLE IF EXISTS _unread_ids")
+    return newly_read, newly_unread
+
+
 def upsert_feed(
     conn: sqlite3.Connection,
     *,
