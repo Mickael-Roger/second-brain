@@ -276,8 +276,13 @@ class CaptureResponse(BaseModel):
 class CustomCaptureRequest(BaseModel):
     instruction: str = Field(
         ..., min_length=1, max_length=400,
-        description="Free-form instruction stamped as `action:` in the captured note's frontmatter. The next nightly organize pass routes the content per this instruction.",
+        description="Free-form instruction the agent will apply on this article via news.read_news + vault.* tools. Examples: 'save the link in TODO.md under Pro', 'append a paragraph to Wiki/Tech/AI-ML/Mistral.md', 'create a note in Notes/Cooking/'.",
     )
+
+
+class CustomActionResponse(BaseModel):
+    summary: str
+    files_touched: list[str] = []
 
 
 def _load_article_record(article_id: str, conn: sqlite3.Connection):
@@ -351,27 +356,32 @@ async def capture_watched_endpoint(
     return CaptureResponse(path=path)
 
 
-@router.post("/articles/{article_id}/custom", response_model=CaptureResponse)
-async def capture_custom_endpoint(
+@router.post("/articles/{article_id}/custom", response_model=CustomActionResponse)
+async def custom_action_endpoint(
     article_id: str,
     body: CustomCaptureRequest,
     _user: str = Depends(current_user),
     conn: sqlite3.Connection = Depends(get_db),
-) -> CaptureResponse:
-    """LLM-generated full article + free-form `action` frontmatter →
-    Raw/Feeds/Articles/<title>.md. The next nightly organize pass
-    consumes the `action` field and routes the content accordingly."""
-    from app.news.capture import capture_custom
+) -> CustomActionResponse:
+    """Run an LLM agent NOW that applies the user's free-form
+    instruction on this article. The agent has `news.read_news` (to
+    fetch the article body) and the full `vault.*` toolset (to write
+    anywhere in the vault). Returns the agent's final text turn plus
+    the list of files it touched."""
+    from app.news.capture import apply_custom_action
 
     record = _load_article_record(article_id, conn)
     try:
-        path = await capture_custom(record, body.instruction)
+        result = await apply_custom_action(record, body.instruction)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
-        log.exception("news capture (custom) failed for %s", article_id)
+        log.exception("news custom action failed for %s", article_id)
         raise HTTPException(status_code=500, detail=str(exc)) from exc
-    return CaptureResponse(path=path)
+    return CustomActionResponse(
+        summary=result.summary,
+        files_touched=result.files_touched,
+    )
 
 
 @router.post("/fetch", response_model=TriggerResponse, status_code=202)

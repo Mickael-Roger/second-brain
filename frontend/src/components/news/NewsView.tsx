@@ -462,7 +462,9 @@ function DetailPane({
   const [viewMode, setViewMode] = useState<ViewMode>("summary");
   const [captureBusy, setCaptureBusy] = useState<CaptureKind | null>(null);
   const [captureMessage, setCaptureMessage] = useState<
-    { kind: "ok"; path: string } | { kind: "err"; text: string } | null
+    | { kind: "ok"; path?: string; summary?: string; files?: string[] }
+    | { kind: "err"; text: string }
+    | null
   >(null);
   const [customOpen, setCustomOpen] = useState(false);
   const [customText, setCustomText] = useState("");
@@ -504,11 +506,17 @@ function DetailPane({
     setCaptureBusy("custom");
     setCaptureMessage(null);
     try {
-      const res = await api.post<{ path: string }>(
-        `/api/news/articles/${encodeURIComponent(id)}/custom`,
-        { instruction: trimmed },
-      );
-      setCaptureMessage({ kind: "ok", path: res.path });
+      const res = await api.post<{
+        summary: string;
+        files_touched: string[];
+      }>(`/api/news/articles/${encodeURIComponent(id)}/custom`, {
+        instruction: trimmed,
+      });
+      setCaptureMessage({
+        kind: "ok",
+        summary: res.summary,
+        files: res.files_touched,
+      });
       setCustomOpen(false);
       setCustomText("");
     } catch (err: unknown) {
@@ -650,7 +658,7 @@ function DetailPane({
             >
               <Pencil className="h-3 w-3" />
               {captureBusy === "custom"
-                ? t("news.capturing")
+                ? t("news.captureCustomBusy")
                 : t("news.captureCustom")}
             </button>
           </div>
@@ -709,7 +717,7 @@ function DetailPane({
                     className="rounded-md border border-accent bg-accent/10 px-2 py-1 text-xs text-accent hover:bg-accent/20 disabled:opacity-50"
                   >
                     {captureBusy === "custom"
-                      ? t("news.capturing")
+                      ? t("news.captureCustomBusy")
                       : t("news.captureCustomSubmit")}
                   </button>
                 </div>
@@ -717,15 +725,29 @@ function DetailPane({
             </div>
           )}
           {captureMessage && (
-            <p
+            <div
               className={`pt-2 text-xs ${
                 captureMessage.kind === "ok" ? "text-accent" : "text-red-500"
               }`}
             >
-              {captureMessage.kind === "ok"
-                ? t("news.captureOk", { path: captureMessage.path })
-                : t("news.captureFailed", { err: captureMessage.text })}
-            </p>
+              {captureMessage.kind === "err" ? (
+                <p>{t("news.captureFailed", { err: captureMessage.text })}</p>
+              ) : captureMessage.summary ? (
+                <div className="space-y-1">
+                  <p>{captureMessage.summary}</p>
+                  {captureMessage.files && captureMessage.files.length > 0 && (
+                    <p className="text-muted">
+                      {t("news.customFilesTouched", {
+                        count: captureMessage.files.length,
+                      })}{" "}
+                      <code>{captureMessage.files.join(", ")}</code>
+                    </p>
+                  )}
+                </div>
+              ) : (
+                <p>{t("news.captureOk", { path: captureMessage.path })}</p>
+              )}
+            </div>
           )}
         </header>
 
