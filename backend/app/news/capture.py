@@ -58,8 +58,17 @@ def _slugify(title: str, *, max_len: int = 80) -> str:
 
 def _unique_title(folder: str, base: str) -> str:
     """Return a title that doesn't collide with an existing note in
-    `folder`. Appends ' (2)', ' (3)', … until free."""
-    existing = set(find_notes("*.md", in_folder=folder, limit=500))
+    `folder`. Appends ' (2)', ' (3)', … until free.
+
+    The folder may not exist yet (first capture for this source). In
+    that case there's trivially no collision; `create_note` later calls
+    `_write_text` which `mkdir(parents=True)`s before writing, so the
+    folder will be created on the spot.
+    """
+    try:
+        existing = set(find_notes("*.md", in_folder=folder, limit=500))
+    except FileNotFoundError:
+        existing = set()
     candidate = base
     i = 2
     while f"{folder}/{candidate}.md" in existing:
