@@ -56,6 +56,12 @@ EXCLUDED_PREFIXES = (
     "Raw/Anki/",
     "Raw/Logger/Opencode/",
     "Raw/Review/",
+    # Memory is maintained entirely as a side effect of processing other
+    # files (facts/decisions/prefs in the existing flat files; People and
+    # Events fiches in their sub-folders). Never select Memory files as
+    # candidates to process — agents enrich them, but they're not source
+    # data themselves. Writes are still allowed by `_writable()`.
+    "Memory/",
 )
 # Files that are never selected as candidates — they're not source data
 # the agent processes as input. Some of them are still WRITABLE by the
