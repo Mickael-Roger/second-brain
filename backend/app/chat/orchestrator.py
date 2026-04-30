@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+from datetime import datetime, timezone
 from collections.abc import AsyncIterator
 from typing import Any, Protocol
 
@@ -64,8 +65,14 @@ _NULL_DISPATCHER: ToolDispatcher = _NullDispatcher()
 
 
 def _build_system_prompt(custom: str | None, language: str) -> str:
-    base = custom or _DEFAULT_SYSTEM_PROMPT
-    base += f"\n\nThe user's preferred language is {language.upper()}."
+    # Stamp the current UTC time at the top of every system prompt so
+    # the model has a reliable "now" reference (relative dates in
+    # journal entries, "yesterday", "next Monday", reasoning about
+    # whether a TODO is overdue, etc.).
+    now_stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC (%A)")
+    parts = [f"Current date/time: {now_stamp}.", custom or _DEFAULT_SYSTEM_PROMPT]
+    parts.append(f"The user's preferred language is {language.upper()}.")
+    base = "\n\n".join(parts)
 
     # Read INDEX.md / USER.md / PREFERENCES.md (any may be missing — silently
     # skipped). Late import: the vault package may be unconfigured at boot.

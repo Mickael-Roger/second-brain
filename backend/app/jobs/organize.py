@@ -279,7 +279,12 @@ def _load_system_prompt() -> str:
             if body:
                 base = body
 
-    pieces: list[str] = [base]
+    # Stamp the current UTC time at the top of the system prompt so the
+    # agent has a reliable "now" reference (today's date for trash
+    # callouts, completion stamps in TODO/DONE, frontmatter `updated:`
+    # fields, "this week" reasoning on journal entries, etc.).
+    now_stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC (%A)")
+    pieces: list[str] = [f"Current date/time: {now_stamp}.", base]
     try:
         from app.vault import read_context_files
 

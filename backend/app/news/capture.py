@@ -19,7 +19,7 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 from app.llm import (
@@ -296,7 +296,14 @@ def _build_custom_action_system_prompt() -> str:
     """ORGANIZE-style system prompt for the custom-action agent: brief
     + INDEX/USER/PREFERENCES context so the agent knows the vault.
     Falls back to just the brief if context loading fails."""
-    pieces: list[str] = [_CUSTOM_ACTION_SYSTEM_BASE]
+    # Stamp the current UTC time at the top so the agent has a reliable
+    # "now" reference (writing today's date in TODO entries, Memory
+    # event bullets, frontmatter, etc.).
+    now_stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC (%A)")
+    pieces: list[str] = [
+        f"Current date/time: {now_stamp}.",
+        _CUSTOM_ACTION_SYSTEM_BASE,
+    ]
     try:
         from app.vault import read_context_files
 
