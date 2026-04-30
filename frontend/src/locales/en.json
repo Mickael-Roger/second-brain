@@ -88,7 +88,10 @@
     "editing": "Editing {{path}}",
     "acquiring": "Acquiring lock…",
     "lockBusy": "Another session is editing this note.",
-    "lockError": "Could not acquire the edit lock."
+    "lockError": "Could not acquire the edit lock.",
+    "chatAboutPage": "Chat about this page",
+    "chatAboutPageHint": "Open a chat session pinned to this Wiki page — the LLM can vault.read it on demand.",
+    "chatAboutSelection": "Chat about selection"
   },
   "common": {
     "loading": "Loading…",

@@ -4,7 +4,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronLeft, ChevronRight, Home, Link2, Menu, Pencil, X } from "lucide-react";
+import {
+  ChevronLeft,
+  ChevronRight,
+  Home,
+  Link2,
+  Menu,
+  MessageSquare,
+  Pencil,
+  X,
+} from "lucide-react";
 
 import { api, type TreeEntry, type VaultNote } from "@/lib/api";
 import VaultTree from "./VaultTree";
@@ -19,7 +28,40 @@ export interface WikiTarget {
   nonce: number;
 }
 
-export default function WikiView({ target }: { target?: WikiTarget | null }) {
+interface Props {
+  target?: WikiTarget | null;
+  onOpenChat?: () => void;
+}
+
+// Truncate the selected text we drop into the chat draft. The LLM has
+// `vault.read` for the full page anyway; the quote is just to pin the
+// passage the user is asking about.
+const MAX_SELECTION_CHARS = 1500;
+
+function buildPageChatDraft(path: string): string {
+  return (
+    `I'd like to discuss this Wiki page: \`${path}\`. Use ` +
+    `\`vault.read("${path}")\` to load the content when you need it.`
+  );
+}
+
+function buildSelectionChatDraft(path: string, selection: string): string {
+  let text = selection.replace(/\s+$/g, "");
+  if (text.length > MAX_SELECTION_CHARS) {
+    text = text.slice(0, MAX_SELECTION_CHARS).trimEnd() + "…";
+  }
+  const quoted = text
+    .split("\n")
+    .map((line) => `> ${line}`)
+    .join("\n");
+  return (
+    `I'd like to discuss this excerpt from \`${path}\`:\n\n` +
+    `${quoted}\n\n` +
+    `Use \`vault.read("${path}")\` for the surrounding context if needed.`
+  );
+}
+
+export default function WikiView({ target, onOpenChat }: Props) {
   const { t } = useTranslation();
   const qc = useQueryClient();
   // null = vault home (root folder index). "" is reserved as a synonym for null.
@@ -89,6 +131,58 @@ export default function WikiView({ target }: { target?: WikiTarget | null }) {
     setBacklinksOpen(false);
   }, [activePath]);
 
+  // Floating "chat about selection" toolbar. We track which text the user
+  // has selected inside the rendered note so a click on the toolbar can
+  // hand it to the chat draft.
+  const noteContainerRef = useRef<HTMLDivElement | null>(null);
+  const [selection, setSelection] = useState<{
+    text: string;
+    rect: DOMRect;
+  } | null>(null);
+
+  useEffect(() => {
+    let pending: number | null = null;
+    function handle() {
+      if (pending !== null) cancelAnimationFrame(pending);
+      pending = requestAnimationFrame(() => {
+        pending = null;
+        const sel = window.getSelection();
+        if (!sel || sel.isCollapsed || sel.rangeCount === 0) {
+          setSelection(null);
+          return;
+        }
+        const text = sel.toString().trim();
+        if (!text) {
+          setSelection(null);
+          return;
+        }
+        const range = sel.getRangeAt(0);
+        const container = noteContainerRef.current;
+        if (!container || !container.contains(range.commonAncestorContainer)) {
+          setSelection(null);
+          return;
+        }
+        const rect = range.getBoundingClientRect();
+        if (rect.width === 0 && rect.height === 0) {
+          setSelection(null);
+          return;
+        }
+        setSelection({ text, rect });
+      });
+    }
+    document.addEventListener("selectionchange", handle);
+    return () => {
+      document.removeEventListener("selectionchange", handle);
+      if (pending !== null) cancelAnimationFrame(pending);
+    };
+  }, []);
+
+  // Drop the selection box when navigating away or entering edit mode
+  // (the editor manages its own selection).
+  useEffect(() => {
+    setSelection(null);
+  }, [activePath, editing]);
+
   // External "open this wiki path" requests (e.g. clicking a wikilink in
   // chat). Tracked by nonce so the same path can re-trigger.
   const lastNonceRef = useRef<number | null>(null);
@@ -120,6 +214,28 @@ export default function WikiView({ target }: { target?: WikiTarget | null }) {
         : null,
     enabled: activePath !== null && activeKind === "file",
   });
+
+  // Chat-about-page / chat-about-selection handlers. Both write the draft
+  // to localStorage (the chat Composer reads it on mount) and switch the
+  // active view to chat.
+  const startChatAboutPage = useCallback(() => {
+    if (!note.data || !onOpenChat) return;
+    window.localStorage.setItem(
+      "sb.chat.draft",
+      buildPageChatDraft(note.data.path),
+    );
+    onOpenChat();
+  }, [note.data, onOpenChat]);
+
+  const startChatAboutSelection = useCallback(() => {
+    if (!note.data || !onOpenChat || !selection) return;
+    window.localStorage.setItem(
+      "sb.chat.draft",
+      buildSelectionChatDraft(note.data.path, selection.text),
+    );
+    setSelection(null);
+    onOpenChat();
+  }, [note.data, onOpenChat, selection]);
 
   const treeAside = (
     <>
@@ -227,6 +343,17 @@ export default function WikiView({ target }: { target?: WikiTarget | null }) {
                 <Link2 className="h-3.5 w-3.5" />
                 <span>{note.data.backlinks.length}</span>
               </button>
+              {onOpenChat && (
+                <button
+                  type="button"
+                  onClick={startChatAboutPage}
+                  className="flex items-center gap-1 rounded border border-accent bg-accent/10 px-2 py-1 text-xs text-accent hover:bg-accent/20"
+                  title={t("wiki.chatAboutPageHint")}
+                >
+                  <MessageSquare className="h-3.5 w-3.5" />
+                  <span className="hidden sm:inline">{t("wiki.chatAboutPage")}</span>
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => setEditing(true)}
@@ -259,7 +386,10 @@ export default function WikiView({ target }: { target?: WikiTarget | null }) {
                   {(note.error as Error)?.message ?? "error"}
                 </p>
               ) : note.data ? (
-                <div className="flex-1 overflow-y-auto">
+                <div
+                  ref={noteContainerRef}
+                  className="flex-1 overflow-y-auto"
+                >
                   <NoteRenderer
                     content={note.data.content}
                     treeEntries={tree.data ?? []}
@@ -300,6 +430,41 @@ export default function WikiView({ target }: { target?: WikiTarget | null }) {
             </div>
           )}
         </div>
+
+        {/* Floating "chat about selection" toolbar — appears when the user
+            highlights text inside the rendered note. Positioned just
+            above the selection's bounding box, with viewport clamping
+            so it stays visible at the edges. mouseDown.preventDefault
+            keeps the click from clearing the selection before the
+            handler fires. */}
+        {!editing && selection && onOpenChat && (
+          <div
+            style={{
+              position: "fixed",
+              top: Math.max(8, selection.rect.top - 40),
+              left: Math.max(
+                8,
+                Math.min(
+                  window.innerWidth - 200,
+                  selection.rect.left + selection.rect.width / 2 - 90,
+                ),
+              ),
+              zIndex: 50,
+            }}
+            className="rounded-lg border border-accent bg-surface shadow-lg"
+            onMouseDown={(e) => e.preventDefault()}
+            onTouchStart={(e) => e.stopPropagation()}
+          >
+            <button
+              type="button"
+              onClick={startChatAboutSelection}
+              className="flex items-center gap-1.5 rounded-lg bg-accent/10 px-3 py-1.5 text-xs text-accent hover:bg-accent/20"
+            >
+              <MessageSquare className="h-3.5 w-3.5" />
+              {t("wiki.chatAboutSelection")}
+            </button>
+          </div>
+        )}
       </main>
     </div>
   );
