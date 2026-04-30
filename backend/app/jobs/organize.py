@@ -218,8 +218,18 @@ def _select_candidates(
             if p.stat().st_mtime > legacy_cutoff:
                 modified.append(p)
             continue
+        # Default ("incremental") scope. Cutoff = max of:
+        #   - per-note last_reviewed_at (file already seen recently);
+        #   - last_run_at, end of the previous apply run.
+        # The last_run_at floor breaks the loop where the agent edits
+        # file B as a side effect of processing A: B's mtime updates
+        # during the run, but mtime ≤ last_run_at, so the next nightly
+        # doesn't re-pick B as a candidate. Files modified AFTER the
+        # previous run's end (manual edits, fresh captures) still come
+        # through normally.
         last_reviewed = review_map.get(rel, 0.0)
-        if p.stat().st_mtime > last_reviewed:
+        cutoff = max(last_reviewed, legacy_cutoff)
+        if p.stat().st_mtime > cutoff:
             modified.append(p)
 
     in_inbox.sort(key=lambda x: x.stat().st_mtime)
