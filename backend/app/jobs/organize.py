@@ -73,6 +73,7 @@ EXCLUDED_FILES = frozenset({
     # Maintained by the agent as a side effect of touching other files.
     "INDEX.md",
     "TODO.md",
+    "DONE.md",
     "Wiki/log.md",
     # Sentinel — drained but never moved/deleted itself.
     "Raw/Inbox/Notes.md",
@@ -320,8 +321,8 @@ def _writable(path: str, op: str) -> str | None:
             f"`{path}` is on the schema-files exclusion list "
             "(USER/PREFERENCES/AGENTS/INGEST/ORGANIZE/README/Cheatsheet). "
             "The agent never edits these — they're user-owned. "
-            "INDEX.md, TODO.md and Wiki/log.md are NOT on this list "
-            "and can be edited as side effects."
+            "INDEX.md, TODO.md, DONE.md and Wiki/log.md are NOT on this "
+            "list and can be edited as side effects."
         )
     top = path.split("/", 1)[0]
     if top in _ABSOLUTE_BLOCKED_TOPS:
