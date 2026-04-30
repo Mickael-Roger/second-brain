@@ -91,7 +91,12 @@
     "lockError": "Impossible d'acquérir le verrou d'édition.",
     "chatAboutPage": "Discuter de cette page",
     "chatAboutPageHint": "Ouvre une session de chat pinned sur cette page Wiki — le LLM peut faire vault.read pour récupérer le contenu.",
-    "chatAboutSelection": "Discuter de la sélection"
+    "chatAboutSelection": "Discuter de la sélection",
+    "selectionChatTitle": "Discuter de cet extrait",
+    "selectionChatHint": "Pose ta question sur l'extrait surligné. L'agent a tout le toolset vault.* (read / find / grep / edit / etc.).",
+    "selectionChatPlaceholder": "Que veux-tu savoir sur cet extrait ?",
+    "selectionChatSend": "Envoyer",
+    "selectionChatBusy": "Réflexion…"
   },
   "common": {
     "loading": "Chargement…",

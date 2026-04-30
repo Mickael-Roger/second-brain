@@ -91,7 +91,12 @@
     "lockError": "Could not acquire the edit lock.",
     "chatAboutPage": "Chat about this page",
     "chatAboutPageHint": "Open a chat session pinned to this Wiki page — the LLM can vault.read it on demand.",
-    "chatAboutSelection": "Chat about selection"
+    "chatAboutSelection": "Chat about selection",
+    "selectionChatTitle": "Discuss this excerpt",
+    "selectionChatHint": "Ask anything about the highlighted excerpt. The agent has the full vault.* toolset (read / find / grep / edit / etc.).",
+    "selectionChatPlaceholder": "Ask the agent about the excerpt…",
+    "selectionChatSend": "Send",
+    "selectionChatBusy": "Thinking…"
   },
   "common": {
     "loading": "Loading…",

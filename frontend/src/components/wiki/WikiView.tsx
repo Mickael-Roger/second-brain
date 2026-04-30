@@ -22,6 +22,7 @@ import Backlinks from "./Backlinks";
 import SearchBar from "./SearchBar";
 import WikiEditor from "./WikiEditor";
 import FolderIndex from "./FolderIndex";
+import WikiSelectionChat from "./WikiSelectionChat";
 
 export interface WikiTarget {
   path: string | null;
@@ -33,31 +34,10 @@ interface Props {
   onOpenChat?: () => void;
 }
 
-// Truncate the selected text we drop into the chat draft. The LLM has
-// `vault.read` for the full page anyway; the quote is just to pin the
-// passage the user is asking about.
-const MAX_SELECTION_CHARS = 1500;
-
 function buildPageChatDraft(path: string): string {
   return (
     `I'd like to discuss this Wiki page: \`${path}\`. Use ` +
     `\`vault.read("${path}")\` to load the content when you need it.`
-  );
-}
-
-function buildSelectionChatDraft(path: string, selection: string): string {
-  let text = selection.replace(/\s+$/g, "");
-  if (text.length > MAX_SELECTION_CHARS) {
-    text = text.slice(0, MAX_SELECTION_CHARS).trimEnd() + "…";
-  }
-  const quoted = text
-    .split("\n")
-    .map((line) => `> ${line}`)
-    .join("\n");
-  return (
-    `I'd like to discuss this excerpt from \`${path}\`:\n\n` +
-    `${quoted}\n\n` +
-    `Use \`vault.read("${path}")\` for the surrounding context if needed.`
   );
 }
 
@@ -133,11 +113,19 @@ export default function WikiView({ target, onOpenChat }: Props) {
 
   // Floating "chat about selection" toolbar. We track which text the user
   // has selected inside the rendered note so a click on the toolbar can
-  // hand it to the chat draft.
+  // open the selection-chat popup with that excerpt as context.
   const noteContainerRef = useRef<HTMLDivElement | null>(null);
   const [selection, setSelection] = useState<{
     text: string;
     rect: DOMRect;
+  } | null>(null);
+  // The selection text frozen at the moment the user opened the chat
+  // popup. Held independently of `selection` so the popup keeps its
+  // context even when the live selection clears (closing the popup,
+  // clicking elsewhere).
+  const [selectionChat, setSelectionChat] = useState<{
+    path: string;
+    text: string;
   } | null>(null);
 
   useEffect(() => {
@@ -228,14 +216,14 @@ export default function WikiView({ target, onOpenChat }: Props) {
   }, [note.data, onOpenChat]);
 
   const startChatAboutSelection = useCallback(() => {
-    if (!note.data || !onOpenChat || !selection) return;
-    window.localStorage.setItem(
-      "sb.chat.draft",
-      buildSelectionChatDraft(note.data.path, selection.text),
-    );
+    if (!note.data || !selection) return;
+    // Freeze the selection text into the popup state, then dismiss the
+    // floating toolbar (clears the live browser selection too — the
+    // user is now interacting with the dialog, not the page).
+    setSelectionChat({ path: note.data.path, text: selection.text });
     setSelection(null);
-    onOpenChat();
-  }, [note.data, onOpenChat, selection]);
+    window.getSelection()?.removeAllRanges();
+  }, [note.data, selection]);
 
   const treeAside = (
     <>
@@ -436,8 +424,9 @@ export default function WikiView({ target, onOpenChat }: Props) {
             above the selection's bounding box, with viewport clamping
             so it stays visible at the edges. mouseDown.preventDefault
             keeps the click from clearing the selection before the
-            handler fires. */}
-        {!editing && selection && onOpenChat && (
+            handler fires. The button opens an in-page chat popup
+            (NOT a switch to the general chat tab). */}
+        {!editing && selection && (
           <div
             style={{
               position: "fixed",
@@ -464,6 +453,24 @@ export default function WikiView({ target, onOpenChat }: Props) {
               {t("wiki.chatAboutSelection")}
             </button>
           </div>
+        )}
+
+        {/* In-page chat popup — discusses just the selected excerpt with
+            the LLM, without leaving the wiki view. Closing it discards
+            the conversation from the UI; the chat session itself still
+            exists in the DB (tagged module_id="obsidian-wiki") and is
+            findable via the Chat history sidebar later. */}
+        {selectionChat && (
+          <WikiSelectionChat
+            path={selectionChat.path}
+            selection={selectionChat.text}
+            treeEntries={tree.data ?? []}
+            onOpenWiki={(p) => {
+              setSelectionChat(null);
+              navigate(p);
+            }}
+            onClose={() => setSelectionChat(null)}
+          />
         )}
       </main>
     </div>
