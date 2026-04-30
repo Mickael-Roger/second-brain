@@ -18,6 +18,7 @@ from app.vault import (
     find_notes,
     list_tree,
     move_note,
+    patch_note,
     read_note,
     replace_in_note,
     search_vault,
@@ -156,6 +157,19 @@ async def _replace_in_note(args: dict[str, Any]):
     except GitConflictError as exc:
         return text_result(str(exc), is_error=True)
     return text_result(f"replaced in {n.path} ({len(n.content)} bytes)")
+
+
+async def _patch(args: dict[str, Any]):
+    ops = args.get("ops")
+    if not isinstance(ops, list):
+        return text_result("`ops` must be a list of operations", is_error=True)
+    try:
+        n = await patch_note(args["path"], ops)
+    except (VaultPathError, FileNotFoundError, ValueError) as exc:
+        return text_result(str(exc), is_error=True)
+    except GitConflictError as exc:
+        return text_result(str(exc), is_error=True)
+    return text_result(f"patched {n.path} ({len(n.content)} bytes)")
 
 
 async def _update_frontmatter(args: dict[str, Any]):
@@ -372,6 +386,64 @@ def register_all(reg: ToolRegistry) -> None:
             "required": ["path", "find", "replace"],
         },
         _replace_in_note,
+    )
+    reg.register(
+        "vault.patch",
+        (
+            "Line-based surgical edit. Apply one or more ops on an existing "
+            "note: DELETE a span of lines, REPLACE a span, or INSERT a block "
+            "after a given line. Line numbers are 1-indexed and refer to the "
+            "ORIGINAL note (before any op is applied) — call `vault.read` "
+            "first to count them. `after=0` inserts at the very top. "
+            "Destructive ranges (delete/replace) MUST NOT overlap each other; "
+            "ops are applied highest-line-first so smaller line numbers stay "
+            "stable across the batch. Use this when you know exact line "
+            "positions. Use `vault.replace_in_note` instead when you only "
+            "know the text to change, not its line. Use `vault.edit_note` "
+            "for full rewrites."
+        ),
+        {
+            "type": "object",
+            "properties": {
+                "path": _PATH,
+                "ops": {
+                    "type": "array",
+                    "minItems": 1,
+                    "description": "List of patch operations applied as one batch.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "op": {
+                                "type": "string",
+                                "enum": ["delete", "replace", "insert"],
+                            },
+                            "from": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "description": "delete/replace: first line, 1-indexed (inclusive).",
+                            },
+                            "to": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "description": "delete/replace: last line, 1-indexed (inclusive).",
+                            },
+                            "after": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "description": "insert: insert AFTER this line; 0 means at the top.",
+                            },
+                            "content": {
+                                "type": "string",
+                                "description": "replace/insert: new text. Lines separated by \\n.",
+                            },
+                        },
+                        "required": ["op"],
+                    },
+                },
+            },
+            "required": ["path", "ops"],
+        },
+        _patch,
     )
     reg.register(
         "vault.update_frontmatter",

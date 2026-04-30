@@ -240,6 +240,120 @@ async def replace_in_note(
     return NoteRead(path=to_relative(abs_path), content=new_content)
 
 
+def _apply_patch_ops(content: str, ops: list[dict]) -> str:
+    """Apply a list of line-based ops on `content` and return the new text.
+
+    Ops reference lines in the ORIGINAL content (1-indexed). To keep that
+    contract, ops are applied highest-line-first so already-applied ops
+    don't shift the indices of the remaining ones.
+    """
+    lines = content.splitlines(keepends=True)
+    n = len(lines)
+
+    occupied: list[tuple[int, int, int]] = []  # (lo, hi, idx) for destructive ops
+    normalized: list[tuple[int, int, str, dict]] = []
+
+    for i, op in enumerate(ops):
+        if not isinstance(op, dict):
+            raise ValueError(f"ops[{i}]: must be an object")
+        kind = op.get("op")
+        if kind in ("delete", "replace"):
+            lo, hi = op.get("from"), op.get("to")
+            if not isinstance(lo, int) or not isinstance(hi, int):
+                raise ValueError(f"ops[{i}] {kind!r}: 'from' and 'to' must be integers")
+            if lo < 1 or hi < lo or hi > n:
+                raise ValueError(
+                    f"ops[{i}] {kind!r}: from={lo} to={hi} out of range "
+                    f"(note has {n} lines)"
+                )
+            if kind == "replace" and not isinstance(op.get("content", ""), str):
+                raise ValueError(f"ops[{i}] 'replace': 'content' must be a string")
+            for a, b, j in occupied:
+                if not (hi < a or lo > b):
+                    raise ValueError(
+                        f"ops[{i}] {kind!r} range {lo}-{hi} overlaps "
+                        f"ops[{j}] range {a}-{b}"
+                    )
+            occupied.append((lo, hi, i))
+            normalized.append((hi, i, kind, op))
+        elif kind == "insert":
+            after = op.get("after")
+            if not isinstance(after, int):
+                raise ValueError(f"ops[{i}] 'insert': 'after' must be an integer")
+            if after < 0 or after > n:
+                raise ValueError(
+                    f"ops[{i}] 'insert': after={after} out of range "
+                    f"(note has {n} lines)"
+                )
+            if not isinstance(op.get("content"), str):
+                raise ValueError(f"ops[{i}] 'insert': 'content' must be a string")
+            normalized.append((after, i, kind, op))
+        else:
+            raise ValueError(f"ops[{i}]: unknown op {kind!r}")
+
+    # Highest line first; within ties, later-listed op runs first.
+    normalized.sort(key=lambda t: (-t[0], -t[1]))
+
+    def _block(text: str) -> list[str]:
+        if not text:
+            return []
+        block = text.splitlines(keepends=True)
+        if not block[-1].endswith("\n"):
+            block[-1] += "\n"
+        return block
+
+    for _, _, kind, op in normalized:
+        if kind == "delete":
+            del lines[op["from"] - 1 : op["to"]]
+        elif kind == "replace":
+            lines[op["from"] - 1 : op["to"]] = _block(op.get("content", ""))
+        elif kind == "insert":
+            pos = op["after"]
+            lines[pos:pos] = _block(op["content"])
+
+    # A line lacking '\n' can only legally be the last one — anything else
+    # would glue two lines together when joined. Patch them up.
+    for k in range(len(lines) - 1):
+        if not lines[k].endswith("\n"):
+            lines[k] += "\n"
+
+    return "".join(lines)
+
+
+async def patch_note(
+    path: str,
+    ops: list[dict],
+    *,
+    message: str | None = None,
+) -> NoteRead:
+    """Line-based surgical edit of an existing note.
+
+    Each op is one of:
+      - {"op": "delete", "from": L1, "to": L2}
+      - {"op": "replace", "from": L1, "to": L2, "content": "..."}
+      - {"op": "insert", "after": L, "content": "..."}
+
+    Line numbers are 1-indexed against the ORIGINAL note (before any op is
+    applied). `after=0` inserts at the very top. Destructive ranges may not
+    overlap. The whole batch is applied atomically through the git guard.
+    """
+    abs_path = resolve_vault_path(path)
+    if not abs_path.is_file():
+        raise FileNotFoundError(f"note not found: {path}")
+    if not isinstance(ops, list) or not ops:
+        raise ValueError("`ops` must be a non-empty list")
+
+    content = abs_path.read_text(encoding="utf-8")
+    new_content = _apply_patch_ops(content, ops)
+    if new_content == content:
+        return NoteRead(path=to_relative(abs_path), content=content)
+
+    msg = message or f"vault.patch {to_relative(abs_path)}"
+    async with get_guard().transaction(msg):
+        await asyncio.to_thread(_write_text, abs_path, new_content)
+    return NoteRead(path=to_relative(abs_path), content=new_content)
+
+
 async def update_frontmatter(
     path: str,
     updates: dict,
