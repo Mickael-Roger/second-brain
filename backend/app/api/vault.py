@@ -12,6 +12,7 @@ from pydantic import BaseModel
 from app.auth import current_user
 from app.db.connection import get_db
 from app.vault import (
+    find_notes,
     list_tree,
     read_note,
     resolve_vault_path,
@@ -107,6 +108,25 @@ def get_search(
     try:
         return [SearchHit(**h) for h in search_vault(q, in_path=path, limit=limit)]
     except VaultPathError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.get("/find", response_model=list[str])
+def get_find(
+    q: str = Query(..., min_length=1),
+    folder: str = Query(default=""),
+    limit: int = Query(default=20, ge=1, le=200),
+    _user: str = Depends(current_user),
+) -> list[str]:
+    """Match notes by NAME (basename + relative path), case-insensitive.
+    The wiki search bar uses this alongside the ripgrep `/search` so a
+    user typing a note's title gets the file at the top of the list,
+    not buried under content matches that happen to mention the word."""
+    try:
+        return find_notes(q, in_folder=folder, limit=limit)
+    except (FileNotFoundError, VaultPathError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc

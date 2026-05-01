@@ -1,9 +1,19 @@
-// Debounced search bar that calls /api/vault/search and lists hits.
+// Debounced search bar for the wiki sidebar.
+//
+// Issues TWO calls in parallel:
+//   - GET /api/vault/find   → notes whose name (basename or path) matches
+//   - GET /api/vault/search → ripgrep'd content matches
+//
+// Name hits appear at the top (a user typing a known title shouldn't
+// have to scroll past content matches to find the file). Content
+// matches follow, with the matched line snippet. Paths surfaced as a
+// name hit AND a content hit are merged so the same file isn't listed
+// twice.
 
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { Search } from "lucide-react";
+import { FileText, Search } from "lucide-react";
 
 import { api, type VaultSearchHit } from "@/lib/api";
 
@@ -40,14 +50,33 @@ export default function SearchBar({ onOpen }: Props) {
   const { t } = useTranslation();
   const [q, setQ] = useState("");
   const debounced = useDebounced(q, 250);
+  const enabled = debounced.trim().length > 0;
 
-  const hits = useQuery({
+  const names = useQuery({
+    queryKey: ["vault-find", debounced],
+    queryFn: () =>
+      api.get<string[]>(`/api/vault/find?q=${encodeURIComponent(debounced)}&limit=20`),
+    enabled,
+    staleTime: 5_000,
+  });
+
+  const contents = useQuery({
     queryKey: ["vault-search", debounced],
     queryFn: () =>
       api.get<VaultSearchHit[]>(`/api/vault/search?q=${encodeURIComponent(debounced)}`),
-    enabled: debounced.trim().length > 0,
+    enabled,
     staleTime: 5_000,
   });
+
+  const namePaths = new Set(names.data ?? []);
+  const contentHits = (contents.data ?? []).filter((h) => !namePaths.has(h.path));
+  const nameHits = names.data ?? [];
+  const total = nameHits.length + contentHits.length;
+
+  function pick(p: string) {
+    onOpen(p);
+    setQ("");
+  }
 
   return (
     <div className="relative">
@@ -61,16 +90,39 @@ export default function SearchBar({ onOpen }: Props) {
           className="w-full bg-transparent text-sm outline-none"
         />
       </div>
-      {debounced.trim() && hits.data && hits.data.length > 0 && (
-        <ul className="absolute left-0 right-0 z-10 max-h-80 overflow-y-auto border-b border-border bg-surface shadow-lg">
-          {hits.data.map((h, i) => (
-            <li key={i}>
+
+      {enabled && total > 0 && (
+        <ul className="absolute left-0 right-0 z-10 max-h-96 overflow-y-auto border-b border-border bg-surface shadow-lg">
+          {nameHits.length > 0 && (
+            <li className="border-b border-border bg-bg/40 px-3 py-1 text-[10px] font-semibold uppercase tracking-wide text-muted">
+              {t("wiki.search.nameMatches")}
+            </li>
+          )}
+          {nameHits.map((p) => (
+            <li key={`n:${p}`}>
               <button
                 type="button"
-                onClick={() => {
-                  onOpen(h.path);
-                  setQ("");
-                }}
+                onClick={() => pick(p)}
+                className="flex w-full items-center gap-2 px-3 py-1.5 text-left hover:bg-bg"
+              >
+                <FileText className="h-3.5 w-3.5 shrink-0 text-muted" />
+                <span className="truncate text-xs text-accent">
+                  {highlight(p, debounced)}
+                </span>
+              </button>
+            </li>
+          ))}
+
+          {contentHits.length > 0 && (
+            <li className="border-b border-border bg-bg/40 px-3 py-1 text-[10px] font-semibold uppercase tracking-wide text-muted">
+              {t("wiki.search.contentMatches")}
+            </li>
+          )}
+          {contentHits.map((h, i) => (
+            <li key={`c:${i}:${h.path}:${h.line_number}`}>
+              <button
+                type="button"
+                onClick={() => pick(h.path)}
                 className="flex w-full flex-col gap-0.5 px-3 py-1.5 text-left hover:bg-bg"
               >
                 <span className="truncate text-xs font-medium text-accent">
@@ -84,6 +136,15 @@ export default function SearchBar({ onOpen }: Props) {
           ))}
         </ul>
       )}
+
+      {enabled &&
+        !names.isLoading &&
+        !contents.isLoading &&
+        total === 0 && (
+          <div className="absolute left-0 right-0 z-10 border-b border-border bg-surface px-3 py-2 text-xs text-muted shadow-lg">
+            {t("wiki.search.noHits")}
+          </div>
+        )}
     </div>
   );
 }

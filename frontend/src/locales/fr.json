@@ -85,6 +85,11 @@
     "backlinks": "Backlinks",
     "noBacklinks": "Aucun backlink.",
     "searchPlaceholder": "Rechercher dans le vault…",
+    "search": {
+      "nameMatches": "Noms de notes",
+      "contentMatches": "Contenu",
+      "noHits": "Aucun résultat."
+    },
     "editing": "Édition de {{path}}",
     "acquiring": "Verrou en cours d'acquisition…",
     "lockBusy": "Une autre session édite cette note.",

@@ -85,6 +85,11 @@
     "backlinks": "Backlinks",
     "noBacklinks": "No backlinks.",
     "searchPlaceholder": "Search the vault…",
+    "search": {
+      "nameMatches": "Note names",
+      "contentMatches": "Content",
+      "noHits": "No results."
+    },
     "editing": "Editing {{path}}",
     "acquiring": "Acquiring lock…",
     "lockBusy": "Another session is editing this note.",
