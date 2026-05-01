@@ -96,7 +96,23 @@
     "selectionChatHint": "Pose ta question sur l'extrait surligné. L'agent a tout le toolset vault.* (read / find / grep / edit / etc.).",
     "selectionChatPlaceholder": "Que veux-tu savoir sur cet extrait ?",
     "selectionChatSend": "Envoyer",
-    "selectionChatBusy": "Réflexion…"
+    "selectionChatBusy": "Réflexion…",
+    "review": {
+      "title": "Révision Wiki",
+      "openReview": "Lancer une révision",
+      "dueToday": "Aucune révision faite aujourd'hui — clique pour en démarrer une.",
+      "skip": "Suivante",
+      "openInWiki": "Ouvrir dans le wiki",
+      "lastSeen": "Vue le {{date}}",
+      "uninteresting": "Sans intérêt",
+      "uninterestingHint": "Ne plus afficher",
+      "soon": "À revoir bientôt",
+      "soonHint": "Dans 1 jour",
+      "roughly": "Connue à peu près",
+      "roughlyHint": "Dans 7 jours",
+      "perfect": "Connue parfaitement",
+      "perfectHint": "Dans 30 jours"
+    }
   },
   "common": {
     "loading": "Chargement…",

@@ -96,7 +96,23 @@
     "selectionChatHint": "Ask anything about the highlighted excerpt. The agent has the full vault.* toolset (read / find / grep / edit / etc.).",
     "selectionChatPlaceholder": "Ask the agent about the excerpt…",
     "selectionChatSend": "Send",
-    "selectionChatBusy": "Thinking…"
+    "selectionChatBusy": "Thinking…",
+    "review": {
+      "title": "Wiki review",
+      "openReview": "Start a review",
+      "dueToday": "No review done today — click to start one.",
+      "skip": "Next",
+      "openInWiki": "Open in wiki",
+      "lastSeen": "Last seen {{date}}",
+      "uninteresting": "Not interesting",
+      "uninterestingHint": "Never show again",
+      "soon": "Review soon",
+      "soonHint": "In 1 day",
+      "roughly": "Roughly know it",
+      "roughlyHint": "In 7 days",
+      "perfect": "Know it perfectly",
+      "perfectHint": "In 30 days"
+    }
   },
   "common": {
     "loading": "Loading…",

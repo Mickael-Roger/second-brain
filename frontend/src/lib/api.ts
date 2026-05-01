@@ -156,3 +156,28 @@ export interface NewsFeedSummary {
   unread: number;
 }
 
+// ---- Wiki review ----
+
+export type WikiReviewRating = "uninteresting" | "soon" | "roughly" | "perfect";
+
+export interface WikiReviewState {
+  last_reviewed_at: string;
+  last_rating: WikiReviewRating;
+  next_due_at: string;
+  excluded: boolean;
+  review_count: number;
+}
+
+export interface WikiReviewStatus {
+  has_reviewed_today: boolean;
+  reviewed_today_count: number;
+  excluded_count: number;
+  total_in_state: number;
+}
+
+export interface WikiReviewNext {
+  path: string;
+  content: string;
+  state: WikiReviewState | null;
+}
+
