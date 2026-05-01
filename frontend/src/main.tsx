@@ -7,6 +7,7 @@ import ErrorBoundary from "./components/layout/ErrorBoundary";
 import { initI18n } from "./lib/i18n";
 import { applyTheme, currentTheme } from "./lib/theme";
 import "./index.css";
+import "katex/dist/katex.min.css";
 
 initI18n();
 // Apply the persisted theme BEFORE the first React render so a

@@ -10,6 +10,7 @@ import { Marked } from "marked";
 import { gfmHeadingId } from "marked-gfm-heading-id";
 import { markedHighlight } from "marked-highlight";
 import hljs from "highlight.js/lib/common";
+import katex from "katex";
 
 // Obsidian wikilinks. The "name" group can now be empty (for [[#Heading]]).
 //                          target            heading              alias
@@ -109,6 +110,121 @@ function titleCase(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
+// ── LaTeX (KaTeX) ────────────────────────────────────────────────────
+//
+// Marked happily mangles math source — it eats backslashes, italicises
+// `_`, splits on `*`, etc. So we render `$$…$$` and `$…$` to HTML up
+// front, stash each rendered chunk under a sentinel marked never
+// touches, then swap the sentinels back in after parsing.
+//
+// We also have to skip math markers that live inside fenced code blocks
+// or inline `code` spans — `console.log("$5")` is not a formula.
+//
+// Sentinels are alphanumeric + `` so marked won't reformat them
+// and they can't collide with anything a user would write. They get
+// dropped into the doc as their own line for block math (so marked
+// treats them as a paragraph, not as text inside another block) and
+// inline for inline math.
+
+const PLACEHOLDER_PREFIX = "SBMATH";
+const PLACEHOLDER_SUFFIX = "SBMATH";
+// One regex per occurrence kind. `[\s\S]` so newlines inside formulas
+// (common in $$…$$ blocks) are part of the match.
+const BLOCK_MATH_RE = /\$\$([\s\S]+?)\$\$/g;
+// Inline math: a SINGLE `$…$`. We require non-whitespace just inside
+// the dollars so prose like "it costs $5 or $10" doesn't get parsed
+// as a formula. We also skip when followed immediately by a digit
+// (currency-like), keeping the false-positive rate low.
+const INLINE_MATH_RE = /(?<![\\$])\$(?!\s)([^\n$]+?)(?<!\s)\$(?!\d)/g;
+
+interface MathExtraction {
+  text: string;
+  // PLACEHOLDER_PREFIX + idx + PLACEHOLDER_SUFFIX → final HTML.
+  placeholders: Map<string, string>;
+}
+
+function extractCodeSpans(md: string, placeholders: Map<string, string>): string {
+  // Pull fenced ```code``` blocks AND inline `code` spans out before
+  // we touch math, since math markers inside code must stay verbatim.
+  // We re-emit the placeholder; the body is reinserted post-marked.
+  let counter = placeholders.size;
+  // Fenced first (greedy match across newlines).
+  let out = md.replace(/```[\s\S]*?```/g, (m) => {
+    const key = `${PLACEHOLDER_PREFIX}CODE${counter++}${PLACEHOLDER_SUFFIX}`;
+    placeholders.set(key, m);
+    return key;
+  });
+  // Inline `code` spans (single line, no nested backticks).
+  out = out.replace(/`[^`\n]+`/g, (m) => {
+    const key = `${PLACEHOLDER_PREFIX}CODE${counter++}${PLACEHOLDER_SUFFIX}`;
+    placeholders.set(key, m);
+    return key;
+  });
+  return out;
+}
+
+function renderKatex(src: string, displayMode: boolean): string {
+  try {
+    return katex.renderToString(src, {
+      displayMode,
+      throwOnError: false,
+      strict: "ignore",
+      output: "htmlAndMathml",
+    });
+  } catch {
+    // KaTeX failed even with throwOnError off — fall back to the raw
+    // source wrapped in a code-style span so the user sees their input.
+    const safe = src
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
+    return displayMode
+      ? `<pre class="katex-error">${safe}</pre>`
+      : `<code class="katex-error">${safe}</code>`;
+  }
+}
+
+function extractMath(md: string): MathExtraction {
+  const placeholders = new Map<string, string>();
+  const protectedSrc = extractCodeSpans(md, placeholders);
+  let counter = placeholders.size;
+
+  // Block math first (would otherwise be matched as two inline runs).
+  let out = protectedSrc.replace(BLOCK_MATH_RE, (_full, body) => {
+    const key = `${PLACEHOLDER_PREFIX}${counter++}${PLACEHOLDER_SUFFIX}`;
+    placeholders.set(key, renderKatex(body, true));
+    // Surround with blank lines so marked treats the placeholder as its
+    // own paragraph rather than inline text.
+    return `\n\n${key}\n\n`;
+  });
+
+  out = out.replace(INLINE_MATH_RE, (_full, body) => {
+    const key = `${PLACEHOLDER_PREFIX}${counter++}${PLACEHOLDER_SUFFIX}`;
+    placeholders.set(key, renderKatex(body, false));
+    return key;
+  });
+
+  return { text: out, placeholders };
+}
+
+function reinjectPlaceholders(
+  html: string,
+  placeholders: Map<string, string>,
+): string {
+  if (placeholders.size === 0) return html;
+  // Marked may wrap a block-math placeholder in <p>…</p>. Strip those
+  // wrappers so the resulting HTML keeps the .katex-display block-level
+  // styling KaTeX provides.
+  let out = html;
+  for (const [key, value] of placeholders) {
+    // First the wrapped form, then the bare form. `.split().join()`
+    // does literal global replace without regex-escaping the key.
+    out = out.split(`<p>${key}</p>`).join(value);
+    out = out.split(key).join(value);
+  }
+  return out;
+}
+
 // One Marked instance, configured once with all extensions.
 const marked = new Marked(
   gfmHeadingId(),
@@ -133,9 +249,14 @@ export function renderMarkdown(md: string): string {
   // matches `[[X]]` which is also a substring of `![[X]]`, so running it
   // first eats the inner part of every embed and the embed rewriter never
   // sees them — images would render with `src="sb:wikilink:…"` and break.
+  // Math extraction runs LAST in the preprocessing chain (so wikilink
+  // rewrites are done with) and is then re-injected after marked runs,
+  // bypassing marked's markdown-tokeniser entirely for formula bodies.
   const piped = rewriteCallouts(rewriteWikilinks(rewriteEmbeds(md)));
-  const html = marked.parse(piped);
-  return typeof html === "string" ? html : "";
+  const { text, placeholders } = extractMath(piped);
+  const html = marked.parse(text);
+  const htmlStr = typeof html === "string" ? html : "";
+  return reinjectPlaceholders(htmlStr, placeholders);
 }
 
 export type WikilinkRef = { target: string; heading: string };
