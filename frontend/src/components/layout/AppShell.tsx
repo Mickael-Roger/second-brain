@@ -7,6 +7,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import {
   BookOpen,
   Brain,
+  GraduationCap,
   LogOut,
   MessageSquare,
   Moon,
@@ -23,10 +24,18 @@ export type ViewId = "chat" | "wiki" | "news";
 interface Props {
   active: ViewId;
   onSelect: (v: ViewId) => void;
+  reviewNeeded?: boolean;
+  onOpenReview?: () => void;
   children: React.ReactNode;
 }
 
-export default function AppShell({ active, onSelect, children }: Props) {
+export default function AppShell({
+  active,
+  onSelect,
+  reviewNeeded,
+  onOpenReview,
+  children,
+}: Props) {
   const { t, i18n } = useTranslation();
   const qc = useQueryClient();
   const [theme, setThemeState] = useState<Theme>(() => currentTheme());
@@ -54,6 +63,31 @@ export default function AppShell({ active, onSelect, children }: Props) {
         <div className="mb-3 flex h-9 w-9 items-center justify-center rounded-lg bg-bg text-accent">
           <Brain className="h-5 w-5" />
         </div>
+
+        {onOpenReview && (
+          <button
+            onClick={onOpenReview}
+            title={
+              reviewNeeded
+                ? t("wiki.review.dueToday")
+                : t("wiki.review.openReview")
+            }
+            aria-label={t("wiki.review.openReview")}
+            className={`relative mb-2 flex h-10 w-10 items-center justify-center rounded-lg transition ${
+              reviewNeeded
+                ? "bg-red-500/15 text-red-400 hover:bg-red-500/25"
+                : "text-muted hover:bg-bg hover:text-text"
+            }`}
+          >
+            <GraduationCap className="h-5 w-5" />
+            {reviewNeeded && (
+              <span
+                aria-hidden="true"
+                className="absolute right-1 top-1 h-2 w-2 animate-pulse rounded-full bg-red-500 ring-2 ring-surface"
+              />
+            )}
+          </button>
+        )}
 
         {items.map((it) => {
           const Icon = it.icon;

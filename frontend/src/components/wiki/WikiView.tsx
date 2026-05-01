@@ -15,7 +15,7 @@ import {
   X,
 } from "lucide-react";
 
-import { api, type TreeEntry, type VaultNote, type WikiReviewStatus } from "@/lib/api";
+import { api, type TreeEntry, type VaultNote } from "@/lib/api";
 import VaultTree from "./VaultTree";
 import NoteRenderer from "./NoteRenderer";
 import Backlinks from "./Backlinks";
@@ -23,8 +23,6 @@ import SearchBar from "./SearchBar";
 import WikiEditor from "./WikiEditor";
 import FolderIndex from "./FolderIndex";
 import WikiSelectionChat from "./WikiSelectionChat";
-import WikiReviewModal from "./WikiReviewModal";
-import { GraduationCap } from "lucide-react";
 
 export interface WikiTarget {
   path: string | null;
@@ -54,7 +52,6 @@ export default function WikiView({ target, onOpenChat }: Props) {
   const [editing, setEditing] = useState(false);
   const [treeOpen, setTreeOpen] = useState(false);
   const [backlinksOpen, setBacklinksOpen] = useState(false);
-  const [reviewOpen, setReviewOpen] = useState(false);
 
   // Browser-style navigation: every entry-point should call `navigate` so
   // back/forward stay coherent. The arrow buttons use `goBack` / `goForward`,
@@ -190,14 +187,6 @@ export default function WikiView({ target, onOpenChat }: Props) {
     queryFn: () => api.get<TreeEntry[]>("/api/vault/tree"),
   });
 
-  // Header badge: "have I done a review today?". Refetched whenever the
-  // review modal records a rating (see WikiReviewModal).
-  const reviewStatus = useQuery({
-    queryKey: ["wiki-review-status"],
-    queryFn: () => api.get<WikiReviewStatus>("/api/wiki-reviews/status"),
-    staleTime: 60_000,
-  });
-
   // Resolve whether activePath is a file or a folder.
   const activeKind = useMemo<"file" | "folder" | null>(() => {
     if (!activePath) return null;
@@ -330,25 +319,6 @@ export default function WikiView({ target, onOpenChat }: Props) {
               <ChevronRight className="h-4 w-4" />
             </button>
           </div>
-          <button
-            type="button"
-            onClick={() => setReviewOpen(true)}
-            title={
-              reviewStatus.data && !reviewStatus.data.has_reviewed_today
-                ? t("wiki.review.dueToday")
-                : t("wiki.review.openReview")
-            }
-            aria-label={t("wiki.review.openReview")}
-            className="relative flex items-center justify-center rounded px-1.5 py-1 text-muted hover:bg-bg hover:text-text"
-          >
-            <GraduationCap className="h-4 w-4" />
-            {reviewStatus.data && !reviewStatus.data.has_reviewed_today && (
-              <span
-                className="absolute right-0.5 top-0.5 h-1.5 w-1.5 rounded-full bg-accent"
-                aria-hidden="true"
-              />
-            )}
-          </button>
           <Crumbs path={activePath} onCrumb={navigate} />
           {activeKind === "file" && note.data && !editing && (
             <>
@@ -500,14 +470,6 @@ export default function WikiView({ target, onOpenChat }: Props) {
               navigate(p);
             }}
             onClose={() => setSelectionChat(null)}
-          />
-        )}
-
-        {reviewOpen && (
-          <WikiReviewModal
-            treeEntries={tree.data ?? []}
-            onOpenWiki={navigate}
-            onClose={() => setReviewOpen(false)}
           />
         )}
       </main>
