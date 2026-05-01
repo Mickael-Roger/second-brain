@@ -20,6 +20,10 @@ interface Props {
   onClose: () => void;
 }
 
+// Each button keeps its dark-theme look (light-300 text on a 10%-tinted
+// fill) and adds a `[.theme-light_&]:…` override that swaps to a much
+// darker text + denser fill so the labels stay readable on the light
+// theme's near-white surface.
 const RATING_BUTTONS: {
   rating: WikiReviewRating;
   labelKey: string;
@@ -31,28 +35,32 @@ const RATING_BUTTONS: {
     labelKey: "wiki.review.uninteresting",
     hintKey: "wiki.review.uninterestingHint",
     className:
-      "border-red-500/50 bg-red-500/10 text-red-300 hover:bg-red-500/20",
+      "border-red-500/60 bg-red-500/10 text-red-300 hover:bg-red-500/20 " +
+      "[.theme-light_&]:border-red-600 [.theme-light_&]:bg-red-500/15 [.theme-light_&]:text-red-800 [.theme-light_&]:hover:bg-red-500/25",
   },
   {
     rating: "soon",
     labelKey: "wiki.review.soon",
     hintKey: "wiki.review.soonHint",
     className:
-      "border-amber-500/50 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20",
+      "border-amber-500/60 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20 " +
+      "[.theme-light_&]:border-amber-600 [.theme-light_&]:bg-amber-500/20 [.theme-light_&]:text-amber-900 [.theme-light_&]:hover:bg-amber-500/30",
   },
   {
     rating: "roughly",
     labelKey: "wiki.review.roughly",
     hintKey: "wiki.review.roughlyHint",
     className:
-      "border-sky-500/50 bg-sky-500/10 text-sky-300 hover:bg-sky-500/20",
+      "border-sky-500/60 bg-sky-500/10 text-sky-300 hover:bg-sky-500/20 " +
+      "[.theme-light_&]:border-sky-600 [.theme-light_&]:bg-sky-500/15 [.theme-light_&]:text-sky-800 [.theme-light_&]:hover:bg-sky-500/25",
   },
   {
     rating: "perfect",
     labelKey: "wiki.review.perfect",
     hintKey: "wiki.review.perfectHint",
     className:
-      "border-emerald-500/50 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20",
+      "border-emerald-500/60 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20 " +
+      "[.theme-light_&]:border-emerald-600 [.theme-light_&]:bg-emerald-500/15 [.theme-light_&]:text-emerald-800 [.theme-light_&]:hover:bg-emerald-500/25",
   },
 ];
 
@@ -207,8 +215,8 @@ export default function WikiReviewModal({
                 title={t(b.hintKey)}
                 className={`flex flex-col items-center justify-center gap-0.5 rounded border px-2 py-2 text-xs transition disabled:cursor-not-allowed disabled:opacity-50 ${b.className}`}
               >
-                <span className="font-medium">{t(b.labelKey)}</span>
-                <span className="text-[10px] opacity-70">{t(b.hintKey)}</span>
+                <span className="font-semibold">{t(b.labelKey)}</span>
+                <span className="text-[10px] opacity-80">{t(b.hintKey)}</span>
               </button>
             ))}
           </div>
