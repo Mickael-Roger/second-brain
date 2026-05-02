@@ -133,6 +133,36 @@ textarea {
   text-underline-offset: 2px;
 }
 .prose-sb a:hover { text-decoration: none; }
+/* Wikilinks pointing at notes that don't exist (yet). Used by the
+   Training drill-down: clicking one opens the "generate this fiche?"
+   modal. Subdued colour + dashed underline signals "not real yet". */
+.prose-sb a.wikilink-dead {
+  color: rgb(var(--muted));
+  text-decoration-style: dashed;
+  font-style: italic;
+}
+.prose-sb a.wikilink-dead:hover {
+  color: rgb(var(--accent));
+  text-decoration-style: solid;
+}
+/* Mermaid diagrams render their SVG centred and with a tasteful gap. */
+.prose-sb .mermaid-block {
+  display: flex;
+  justify-content: center;
+  margin: 1em 0;
+}
+.prose-sb .mermaid-block svg {
+  max-width: 100%;
+  height: auto;
+}
+.prose-sb .mermaid-error,
+.prose-sb pre.mermaid-error {
+  color: rgb(248 113 113);
+  background: rgb(var(--bg));
+  padding: 6px 10px;
+  border-radius: 4px;
+  font-size: 0.85em;
+}
 /* KaTeX block formulas can overflow narrow containers (long aligned
    equations, big matrices). Allow horizontal scroll inside the .katex-display
    wrapper rather than letting the formula push the page wider than it should

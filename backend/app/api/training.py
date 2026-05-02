@@ -15,6 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from app.auth import current_user
+from app.config import get_settings
 from app.training import TrainingExpandError, expand_concept
 from app.vault.guard import GitConflictError
 
@@ -35,6 +36,23 @@ class ExpandResponse(BaseModel):
     path: str
     theme: str
     parent_path: str | None
+
+
+class TrainingConfigResponse(BaseModel):
+    training_folder: str  # vault-relative, no trailing slash
+    image_generation_enabled: bool
+
+
+@router.get("/config", response_model=TrainingConfigResponse)
+def get_config(_user: str = Depends(current_user)) -> TrainingConfigResponse:
+    """Public training config the SPA needs to know about (which folder
+    counts as the training subtree, whether image generation is wired)."""
+    s = get_settings()
+    task = s.llm.tasks.get("training")
+    return TrainingConfigResponse(
+        training_folder=s.obsidian.training_folder.strip("/"),
+        image_generation_enabled=bool(task and task.image_provider),
+    )
 
 
 @router.post("/expand", response_model=ExpandResponse)

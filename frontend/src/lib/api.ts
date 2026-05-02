@@ -181,3 +181,24 @@ export interface WikiReviewNext {
   state: WikiReviewState | null;
 }
 
+// ---- Training ----
+
+export interface TrainingExpandRequest {
+  target_concept: string;
+  parent_path?: string | null;
+  theme?: string | null;
+  web_search?: boolean;
+  language?: string | null;
+}
+
+export interface TrainingExpandResponse {
+  path: string;
+  theme: string;
+  parent_path: string | null;
+}
+
+export interface TrainingConfigResponse {
+  training_folder: string;
+  image_generation_enabled: boolean;
+}
+

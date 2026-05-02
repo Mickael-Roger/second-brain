@@ -16,6 +16,11 @@ interface Props {
   // resolves to /api/vault/file?path=Notes/Tech/foo.png).
   currentPath?: string;
   onOpen: (path: string) => void;
+  // Called when the user clicks a wikilink target that doesn't exist
+  // in the vault. The parent decides whether to ignore (default) or
+  // open a generation flow (Training feature). Returning true tells
+  // the renderer that the click was handled.
+  onMissingWikilink?: (target: string) => boolean;
 }
 
 function slugify(s: string): string {
@@ -133,6 +138,7 @@ export default function NoteRenderer({
   treeEntries,
   currentPath,
   onOpen,
+  onMissingWikilink,
 }: Props) {
   const ref = useRef<HTMLDivElement>(null);
 
@@ -159,6 +165,10 @@ export default function NoteRenderer({
               if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
             }, 60);
           }
+        } else if (onMissingWikilink) {
+          // Dead wikilink — let the parent decide (e.g. open the
+          // training generation modal when we're under Training/).
+          onMissingWikilink(link.target);
         }
         return;
       }
@@ -175,7 +185,7 @@ export default function NoteRenderer({
     };
     node.addEventListener("click", handler);
     return () => node.removeEventListener("click", handler);
-  }, [treeEntries, onOpen]);
+  }, [treeEntries, onOpen, onMissingWikilink]);
 
   // Strip frontmatter from rendered output (it'd render as a degenerate <hr>).
   const html = useMemo(() => {
@@ -183,6 +193,23 @@ export default function NoteRenderer({
     const raw = renderMarkdown(body);
     return rewriteEmbedTargets(raw, currentPath, treeEntries);
   }, [content, currentPath, treeEntries]);
+
+  // After each render, walk the DOM and mark wikilinks that don't
+  // resolve in the tree as "dead". The CSS gives them a subdued dashed
+  // style so the user sees they don't exist yet. The click handler
+  // above forwards them to onMissingWikilink (the Training generator).
+  useEffect(() => {
+    const node = ref.current;
+    if (!node) return;
+    const links = node.querySelectorAll<HTMLAnchorElement>("a[href^='sb:wikilink:']");
+    links.forEach((a) => {
+      const href = a.getAttribute("href") ?? "";
+      const link = isWikilinkHref(href);
+      if (!link) return;
+      const target = resolveWikilinkTarget(link.target, treeEntries);
+      a.classList.toggle("wikilink-dead", target === null);
+    });
+  }, [html, treeEntries]);
 
   // Mermaid rendering pass — finds every <div class="mermaid-block"
   // data-source="<base64>"> the markdown rewriter inserted, decodes the

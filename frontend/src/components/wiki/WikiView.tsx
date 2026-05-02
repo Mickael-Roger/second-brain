@@ -15,7 +15,12 @@ import {
   X,
 } from "lucide-react";
 
-import { api, type TreeEntry, type VaultNote } from "@/lib/api";
+import {
+  api,
+  type TrainingConfigResponse,
+  type TreeEntry,
+  type VaultNote,
+} from "@/lib/api";
 import VaultTree from "./VaultTree";
 import NoteRenderer from "./NoteRenderer";
 import Backlinks from "./Backlinks";
@@ -23,6 +28,7 @@ import SearchBar from "./SearchBar";
 import WikiEditor from "./WikiEditor";
 import FolderIndex from "./FolderIndex";
 import WikiSelectionChat from "./WikiSelectionChat";
+import TrainingExpandModal from "./TrainingExpandModal";
 
 export interface WikiTarget {
   path: string | null;
@@ -186,6 +192,27 @@ export default function WikiView({ target, onOpenChat }: Props) {
     queryKey: ["vault-tree"],
     queryFn: () => api.get<TreeEntry[]>("/api/vault/tree"),
   });
+
+  // Training config — knows which subtree is the training folder so we
+  // can enable the "generate fiche" modal only on dead wikilinks inside
+  // it. Loaded once and cached forever (config changes need a restart).
+  const trainingCfg = useQuery({
+    queryKey: ["training-config"],
+    queryFn: () => api.get<TrainingConfigResponse>("/api/training/config"),
+    staleTime: Infinity,
+  });
+  const trainingFolder = (trainingCfg.data?.training_folder ?? "Training")
+    .replace(/^\/+|\/+$/g, "");
+  const isUnderTraining = (p: string | null | undefined): boolean =>
+    !!p && (p === trainingFolder || p.startsWith(`${trainingFolder}/`));
+
+  // The dead wikilink the user just clicked — opens the training modal
+  // when set. Holds the target concept (the bracket text, no path / no
+  // .md) and the parent fiche path the click came from.
+  const [trainingPrompt, setTrainingPrompt] = useState<{
+    target: string;
+    parent: string;
+  } | null>(null);
 
   // Resolve whether activePath is a file or a folder.
   const activeKind = useMemo<"file" | "folder" | null>(() => {
@@ -383,6 +410,16 @@ export default function WikiView({ target, onOpenChat }: Props) {
                     treeEntries={tree.data ?? []}
                     currentPath={note.data.path}
                     onOpen={navigate}
+                    onMissingWikilink={(target) => {
+                      // Only intercept dead links when the parent fiche
+                      // lives under the configured training folder.
+                      // Anywhere else, dead wikilinks are just user
+                      // typos / forward references — not generation
+                      // signals.
+                      if (!note.data || !isUnderTraining(note.data.path)) return false;
+                      setTrainingPrompt({ target, parent: note.data.path });
+                      return true;
+                    }}
                   />
                 </div>
               ) : null
@@ -470,6 +507,21 @@ export default function WikiView({ target, onOpenChat }: Props) {
               navigate(p);
             }}
             onClose={() => setSelectionChat(null)}
+          />
+        )}
+
+        {trainingPrompt && (
+          <TrainingExpandModal
+            targetConcept={trainingPrompt.target}
+            parentPath={trainingPrompt.parent}
+            onClose={() => setTrainingPrompt(null)}
+            onGenerated={(path) => {
+              setTrainingPrompt(null);
+              // The new fiche is on disk; refresh the tree so the
+              // wikilink resolves and navigate the user to it.
+              qc.invalidateQueries({ queryKey: ["vault-tree"] });
+              navigate(path);
+            }}
           />
         )}
       </main>
