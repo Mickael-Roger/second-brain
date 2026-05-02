@@ -44,7 +44,9 @@
     "customFilesTouched_other": "Touched:",
     "capturing": "Saving…",
     "captureOk": "Saved to {{path}}",
-    "captureFailed": "Capture failed: {{err}}"
+    "captureFailed": "Capture failed: {{err}}",
+    "previousArticle": "Previous",
+    "nextArticle": "Next"
   },
   "login": {
     "title": "Sign in",

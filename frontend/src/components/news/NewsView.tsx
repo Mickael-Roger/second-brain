@@ -16,6 +16,7 @@ import {
   BookmarkPlus,
   BookText,
   ChevronDown,
+  ChevronLeft,
   ChevronRight,
   Eye,
   ExternalLink,
@@ -143,6 +144,20 @@ export default function NewsView({ onOpenChat }: Props) {
   // mobile-only controls are hidden.
   const showDetailMobile = selectedId !== null;
 
+  // Prev/next ids relative to the currently displayed article list — same
+  // ordering as the middle column. Boundaries return null so the buttons
+  // disable cleanly.
+  const articleList = articles.data ?? [];
+  const currentIdx = selectedId
+    ? articleList.findIndex((a) => a.id === selectedId)
+    : -1;
+  const prevId =
+    currentIdx > 0 ? articleList[currentIdx - 1].id : null;
+  const nextId =
+    currentIdx >= 0 && currentIdx < articleList.length - 1
+      ? articleList[currentIdx + 1].id
+      : null;
+
   return (
     <div className="flex h-full flex-col">
       <header className="flex flex-wrap items-center gap-3 border-b border-border bg-surface px-4 py-3">
@@ -237,6 +252,8 @@ export default function NewsView({ onOpenChat }: Props) {
             }
             togglePending={toggleRead.isPending}
             onChat={startChatAbout}
+            onPrev={prevId ? () => setSelectedId(prevId) : undefined}
+            onNext={nextId ? () => setSelectedId(nextId) : undefined}
           />
         </div>
       </div>
@@ -536,6 +553,10 @@ interface DetailPaneProps {
   toggleRead: (id: string, target: boolean) => void;
   togglePending: boolean;
   onChat: (a: NewsArticleDetail) => void;
+  // Undefined when at the corresponding boundary of the list, so the
+  // arrow button can render disabled.
+  onPrev?: () => void;
+  onNext?: () => void;
 }
 
 type ViewMode = "summary" | "html";
@@ -549,6 +570,8 @@ function DetailPane({
   toggleRead,
   togglePending,
   onChat,
+  onPrev,
+  onNext,
 }: DetailPaneProps) {
   const { t } = useTranslation();
   const [viewMode, setViewMode] = useState<ViewMode>("summary");
@@ -665,6 +688,36 @@ function DetailPane({
         )}
 
         <header className="space-y-1">
+          {(onPrev || onNext) && (
+            <div className="flex items-center justify-between pb-1">
+              <button
+                type="button"
+                onClick={onPrev}
+                disabled={!onPrev}
+                aria-label={t("news.previousArticle")}
+                title={t("news.previousArticle")}
+                className="flex items-center gap-1 rounded-lg border border-border bg-bg px-2 py-1 text-xs text-muted hover:border-accent hover:text-text disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:border-border disabled:hover:text-muted"
+              >
+                <ChevronLeft className="h-4 w-4" />
+                <span className="hidden sm:inline">
+                  {t("news.previousArticle")}
+                </span>
+              </button>
+              <button
+                type="button"
+                onClick={onNext}
+                disabled={!onNext}
+                aria-label={t("news.nextArticle")}
+                title={t("news.nextArticle")}
+                className="flex items-center gap-1 rounded-lg border border-border bg-bg px-2 py-1 text-xs text-muted hover:border-accent hover:text-text disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:border-border disabled:hover:text-muted"
+              >
+                <span className="hidden sm:inline">
+                  {t("news.nextArticle")}
+                </span>
+                <ChevronRight className="h-4 w-4" />
+              </button>
+            </div>
+          )}
           <h2 className="text-lg font-semibold text-text">{article.title}</h2>
           <p className="text-xs text-muted">{subtitle}</p>
           <div className="flex flex-wrap items-center gap-2 pt-1">

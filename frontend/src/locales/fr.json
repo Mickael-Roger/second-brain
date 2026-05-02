@@ -44,7 +44,9 @@
     "customFilesTouched_other": "Modifiés :",
     "capturing": "Enregistrement…",
     "captureOk": "Enregistré dans {{path}}",
-    "captureFailed": "Échec : {{err}}"
+    "captureFailed": "Échec : {{err}}",
+    "previousArticle": "Précédent",
+    "nextArticle": "Suivant"
   },
   "login": {
     "title": "Connexion",
