@@ -110,6 +110,34 @@ function titleCase(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
+// ── Mermaid ──────────────────────────────────────────────────────────
+//
+// Replace ` ```mermaid …``` ` blocks with a `<div class="mermaid-block"
+// data-source="<base64>">` placeholder BEFORE marked sees them. The
+// NoteRenderer mounts mermaid lazily and renders an SVG into each block
+// after the HTML is in the DOM. Doing the swap here (rather than
+// hooking marked) keeps the renderer free of mermaid-specific code in
+// non-mermaid notes.
+//
+// We base64 the source so embedded `<`/`"`/newlines survive the round
+// through innerHTML untouched.
+const MERMAID_FENCE_RE = /```mermaid\s*\n([\s\S]*?)```/g;
+
+function rewriteMermaid(md: string): string {
+  return md.replace(MERMAID_FENCE_RE, (_full, body) => {
+    const src = String(body).trim();
+    let encoded: string;
+    try {
+      encoded = btoa(unescape(encodeURIComponent(src)));
+    } catch {
+      // Should not happen — fall back to escaped <pre> so the user sees their input.
+      const safe = src.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+      return `\n\n<pre class="mermaid-error">${safe}</pre>\n\n`;
+    }
+    return `\n\n<div class="mermaid-block" data-source="${encoded}"></div>\n\n`;
+  });
+}
+
 // ── LaTeX (KaTeX) ────────────────────────────────────────────────────
 //
 // Marked happily mangles math source — it eats backslashes, italicises
@@ -260,7 +288,10 @@ export function renderMarkdown(md: string): string {
   // marked-highlight can syntax-highlight them — we just mask the `$`
   // characters inside them (so the math regex below leaves them alone)
   // and unmask in the final HTML.
-  const piped = rewriteCallouts(rewriteWikilinks(rewriteEmbeds(md)));
+  // Mermaid first: pull ```mermaid blocks out before any other rewrite
+  // touches them (their content can contain `[[`, `$$`, etc. that the
+  // wikilink / math regexes would otherwise mangle).
+  const piped = rewriteCallouts(rewriteWikilinks(rewriteEmbeds(rewriteMermaid(md))));
   const masked = maskDollarsInCode(piped);
   const { text, placeholders } = extractMath(masked);
   const html = marked.parse(text);

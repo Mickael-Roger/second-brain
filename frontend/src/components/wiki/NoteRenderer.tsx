@@ -184,6 +184,51 @@ export default function NoteRenderer({
     return rewriteEmbedTargets(raw, currentPath, treeEntries);
   }, [content, currentPath, treeEntries]);
 
+  // Mermaid rendering pass — finds every <div class="mermaid-block"
+  // data-source="<base64>"> the markdown rewriter inserted, decodes the
+  // source, and replaces the div's contents with the rendered SVG.
+  // Mermaid is loaded lazily so notes without diagrams pay no cost.
+  useEffect(() => {
+    const node = ref.current;
+    if (!node) return;
+    const blocks = node.querySelectorAll<HTMLDivElement>("div.mermaid-block[data-source]");
+    if (blocks.length === 0) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const { default: mermaid } = await import("mermaid");
+        if (cancelled) return;
+        mermaid.initialize({ startOnLoad: false, theme: "dark", securityLevel: "strict" });
+        for (let i = 0; i < blocks.length; i++) {
+          const el = blocks[i];
+          const encoded = el.getAttribute("data-source") ?? "";
+          let src = "";
+          try {
+            src = decodeURIComponent(escape(atob(encoded)));
+          } catch {
+            el.textContent = "[mermaid: invalid source]";
+            continue;
+          }
+          const id = `mmd-${Date.now().toString(36)}-${i}`;
+          try {
+            const { svg } = await mermaid.render(id, src);
+            if (cancelled) return;
+            el.innerHTML = svg;
+          } catch (err) {
+            el.textContent = `[mermaid error: ${(err as Error)?.message ?? "unknown"}]`;
+          }
+        }
+      } catch (err) {
+        // Mermaid failed to load — leave the placeholders empty rather than crash.
+        // eslint-disable-next-line no-console
+        console.error("mermaid load failed", err);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [html]);
+
   return (
     <div
       ref={ref}
