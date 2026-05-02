@@ -67,6 +67,25 @@ llm:
       models:
         - llama-3.1-70b-instruct
 
+  # ── Per-task LLM overrides ───────────────────────────────────────────
+  # Each task can pin its own provider/model and toggle native
+  # capabilities (web search via the provider, image generation). When
+  # omitted, the task uses `default` above with no special capabilities.
+  # Capability flags are advisory: a task only exposes the relevant
+  # tooling when its flag is true.
+  tasks:
+    training:
+      provider: openai            # provider declared above
+      model: gpt-4o               # optional — provider's first model otherwise
+      web_search: true            # provider's native web search (deep-research)
+      image_provider: openai      # provider that exposes the images endpoint
+      image_model: gpt-image-2    # image model (stored under Training/<theme>/_assets/)
+    # Example: pin Organize to a cheaper model so the nightly pass
+    # doesn't burn your premium tokens.
+    # organize:
+    #   provider: openai
+    #   model: gpt-4o-mini
+
 # ---------------------------------------------------------------------------
 # Obsidian — your vault is the brain's only memory.
 #
@@ -85,6 +104,13 @@ obsidian:
   index_file: INDEX.md
   user_file: USER.md
   preferences_file: PREFERENCES.md
+  # Optional system prompt for the on-demand Training fiche generator.
+  # When the file is missing, the brain falls back to a built-in default.
+  training_prompt_file: TRAINING.md
+  # Folder under the vault root where Training fiches live. Generated
+  # fiches are written under it; the wiki view treats dead wikilinks
+  # inside this subtree as "click to generate".
+  training_folder: Training
   journal:
     folder: Journal
     # Today's note sits at "{folder}/{date}.md". The nightly job moves prior
@@ -111,6 +137,13 @@ organize:
   schedule: "0 3 * * *"      # cron expression (UTC)
   mode: dry-run              # dry-run | apply — start dry-run for the first month
   modified_since: last_run   # last_run | always_full
+  # Vault-relative path prefixes the nightly pass NEVER selects nor
+  # mutates. Anything starting with one of these strings is skipped.
+  # Useful for subtrees that own their own structure / lifecycle —
+  # `Training/` fiches in particular have a strict format the agent
+  # must not refactor.
+  exclude_paths:
+    - Training/
 
 # ---------------------------------------------------------------------------
 # News — pulls articles from your RSS aggregator (FreshRSS via the

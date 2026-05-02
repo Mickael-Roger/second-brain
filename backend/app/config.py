@@ -74,10 +74,29 @@ class LLMProviderConfig(BaseModel):
         return self.models[0]
 
 
+class LLMTaskConfig(BaseModel):
+    """Per-task override of the default LLM provider/model + capability flags.
+
+    Tasks (e.g. ``training``, ``organize``) can pin a specific
+    provider/model and toggle capabilities such as native web search or
+    image generation. Anything not set falls back to ``llm.default``
+    (provider + its default model). The capability flags are advisory:
+    a task can choose to expose web-search / image-gen tools or call
+    them on the side only when the corresponding flag is true.
+    """
+
+    provider: str | None = None
+    model: str | None = None
+    web_search: bool = False
+    image_provider: str | None = None  # e.g. "openai" — None disables image gen
+    image_model: str = "gpt-image-2"
+
+
 class LLMSection(BaseModel):
     default: str
     max_tool_rounds: int = 10
     providers: dict[str, LLMProviderConfig]
+    tasks: dict[str, LLMTaskConfig] = Field(default_factory=dict)
 
     @field_validator("providers")
     @classmethod
@@ -92,6 +111,27 @@ class LLMSection(BaseModel):
                 f"llm.default = '{self.default}' is not in llm.providers"
             )
         return self.providers[self.default]
+
+    def resolve_task(self, task_name: str) -> tuple[str, str | None, LLMTaskConfig]:
+        """Return (provider_name, model, task_config) for a named task.
+
+        Falls back cleanly: if the task isn't declared, returns the
+        global default. If the task pins only a provider, the provider's
+        default model is used. The returned ``LLMTaskConfig`` always
+        carries the capability flags (defaults when no override).
+        """
+        cfg = self.tasks.get(task_name) or LLMTaskConfig()
+        provider_name = cfg.provider or self.default
+        if provider_name not in self.providers:
+            raise ValueError(
+                f"llm.tasks.{task_name}.provider = '{provider_name}' is not in llm.providers"
+            )
+        model = cfg.model
+        if model is not None and model not in self.providers[provider_name].models:
+            raise ValueError(
+                f"llm.tasks.{task_name}.model = '{model}' is not in providers.{provider_name}.models"
+            )
+        return provider_name, model, cfg
 
 
 class ObsidianGitSection(BaseModel):
@@ -121,6 +161,14 @@ class ObsidianSection(BaseModel):
     # System prompt for the nightly Organize task. Optional — missing file
     # falls back to the built-in default in app.jobs.organize.
     organize_prompt_file: str = "ORGANIZE.md"
+    # System prompt for the on-demand Training fiche generation task.
+    # Optional — missing file falls back to the built-in default in
+    # app.training.
+    training_prompt_file: str = "TRAINING.md"
+    # Folder under the vault root where Training fiches live. The
+    # generation endpoint creates fiches under this folder; the wiki UI
+    # treats dead wikilinks inside this subtree as "generate me".
+    training_folder: str = "Training"
     journal: ObsidianJournalSection = ObsidianJournalSection()
     git: ObsidianGitSection = ObsidianGitSection()
 
@@ -130,6 +178,12 @@ class OrganizeSection(BaseModel):
     schedule: str = "0 3 * * *"  # cron: nightly at 03:00
     mode: Literal["dry-run", "apply"] = "dry-run"
     modified_since: Literal["last_run", "always_full"] = "last_run"
+    # Vault-relative path prefixes the organize pass must never select as
+    # candidates AND never mutate (read or write). Useful for dedicated
+    # subtrees with their own structure / lifecycle (e.g. ``Training/``
+    # whose fiches have a strict format the agent shouldn't refactor).
+    # Match is by simple prefix on the vault-relative path.
+    exclude_paths: list[str] = Field(default_factory=list)
 
 
 class FreshRSSSourceConfig(BaseModel):
