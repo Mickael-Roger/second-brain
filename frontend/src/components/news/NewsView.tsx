@@ -12,6 +12,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  ArrowLeft,
   BookmarkPlus,
   BookText,
   ChevronDown,
@@ -20,11 +21,13 @@ import {
   ExternalLink,
   Mail,
   MailOpen,
+  Menu,
   MessageSquare,
   Newspaper,
   Pencil,
   Play,
   Rss,
+  X,
 } from "lucide-react";
 
 import {
@@ -54,6 +57,9 @@ export default function NewsView({ onOpenChat }: Props) {
   const [unreadOnly, setUnreadOnly] = useState(true);
   const [selection, setSelection] = useState<Selection>({ kind: "all" });
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  // Mobile-only: feeds live in a slide-over drawer (left). Desktop has them
+  // permanently visible in the first grid column.
+  const [feedsOpen, setFeedsOpen] = useState(false);
 
   // No more period selector — list endpoints default to 30d (the
   // article retention window), which means the UI shows everything
@@ -130,6 +136,13 @@ export default function NewsView({ onOpenChat }: Props) {
     onOpenChat();
   }
 
+  // On mobile, only one pane is on-screen at a time.
+  //   - selectedId === null  → article list (with a hamburger that opens feeds)
+  //   - selectedId !== null  → article detail (with a back arrow)
+  // On desktop (md+), all three panes are visible side-by-side and these
+  // mobile-only controls are hidden.
+  const showDetailMobile = selectedId !== null;
+
   return (
     <div className="flex h-full flex-col">
       <header className="flex flex-wrap items-center gap-3 border-b border-border bg-surface px-4 py-3">
@@ -153,38 +166,117 @@ export default function NewsView({ onOpenChat }: Props) {
         </div>
       )}
 
-      <div className="grid flex-1 grid-cols-[16rem_22rem_1fr] divide-x divide-border overflow-hidden">
-        <FeedSidebar
-          feeds={feeds.data ?? []}
-          loading={feeds.isLoading}
-          unreadOnly={unreadOnly}
-          selection={selection}
-          onSelect={(s) => {
-            setSelection(s);
-            setSelectedId(null);
-          }}
-        />
+      <div className="flex flex-1 min-h-0 flex-col overflow-hidden md:grid md:grid-cols-[16rem_22rem_1fr] md:divide-x md:divide-border">
+        {/* Feeds: permanent column on desktop, drawer on mobile. */}
+        <div className="hidden md:block">
+          <FeedSidebar
+            feeds={feeds.data ?? []}
+            loading={feeds.isLoading}
+            unreadOnly={unreadOnly}
+            selection={selection}
+            onSelect={(s) => {
+              setSelection(s);
+              setSelectedId(null);
+            }}
+          />
+        </div>
 
-        <ArticleList
-          articles={articles.data ?? []}
-          loading={articles.isLoading}
-          selectedId={selectedId}
-          unreadOnly={unreadOnly}
-          onUnreadToggle={setUnreadOnly}
-          onSelect={setSelectedId}
-        />
+        {/* Article list: full-screen on mobile (when no article is open),
+            permanent middle column on desktop. */}
+        <div className={`${showDetailMobile ? "hidden" : "flex"} h-full min-h-0 flex-col md:flex`}>
+          <div className="flex items-center gap-2 border-b border-border bg-surface px-3 py-2 md:hidden">
+            <button
+              type="button"
+              onClick={() => setFeedsOpen(true)}
+              aria-label={t("news.feedsHeader")}
+              className="flex h-8 w-8 items-center justify-center rounded text-muted hover:bg-bg hover:text-text"
+            >
+              <Menu className="h-4 w-4" />
+            </button>
+            <span className="flex-1 truncate text-sm">
+              {selection.kind === "all"
+                ? t("news.allFeeds")
+                : selection.kind === "category"
+                  ? selection.group || t("news.uncategorized")
+                  : feeds.data?.find((f) => f.feed_id === selection.feedId)
+                      ?.feed_title ?? ""}
+            </span>
+          </div>
+          <ArticleList
+            articles={articles.data ?? []}
+            loading={articles.isLoading}
+            selectedId={selectedId}
+            unreadOnly={unreadOnly}
+            onUnreadToggle={setUnreadOnly}
+            onSelect={setSelectedId}
+          />
+        </div>
 
-        <DetailPane
-          articleId={selectedId}
-          article={selected.data}
-          loading={selected.isLoading}
-          toggleRead={(id, target) =>
-            toggleRead.mutate({ articleId: id, isRead: target })
-          }
-          togglePending={toggleRead.isPending}
-          onChat={startChatAbout}
-        />
+        {/* Detail: full-screen on mobile (when an article is open), permanent
+            right column on desktop. */}
+        <div className={`${showDetailMobile ? "flex" : "hidden"} h-full min-h-0 flex-col md:flex`}>
+          <div className="flex items-center gap-2 border-b border-border bg-surface px-3 py-2 md:hidden">
+            <button
+              type="button"
+              onClick={() => setSelectedId(null)}
+              aria-label="back"
+              className="flex h-8 w-8 items-center justify-center rounded text-muted hover:bg-bg hover:text-text"
+            >
+              <ArrowLeft className="h-4 w-4" />
+            </button>
+            <span className="flex-1 truncate text-sm">
+              {selected.data?.title ?? ""}
+            </span>
+          </div>
+          <DetailPane
+            articleId={selectedId}
+            article={selected.data}
+            loading={selected.isLoading}
+            toggleRead={(id, target) =>
+              toggleRead.mutate({ articleId: id, isRead: target })
+            }
+            togglePending={toggleRead.isPending}
+            onChat={startChatAbout}
+          />
+        </div>
       </div>
+
+      {/* Mobile feeds drawer (left slide-over). */}
+      {feedsOpen && (
+        <div
+          className="fixed inset-0 z-40 bg-black/60 md:hidden"
+          onClick={() => setFeedsOpen(false)}
+        >
+          <aside
+            className="flex h-full w-72 flex-col border-r border-border bg-surface"
+            onClick={(e) => e.stopPropagation()}
+            style={{ paddingTop: "env(safe-area-inset-top)" }}
+          >
+            <div className="flex items-center justify-between border-b border-border px-3 py-2">
+              <span className="text-sm font-medium">{t("news.feedsHeader")}</span>
+              <button
+                type="button"
+                onClick={() => setFeedsOpen(false)}
+                className="text-muted"
+                aria-label={t("common.cancel")}
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <FeedSidebar
+              feeds={feeds.data ?? []}
+              loading={feeds.isLoading}
+              unreadOnly={unreadOnly}
+              selection={selection}
+              onSelect={(s) => {
+                setSelection(s);
+                setSelectedId(null);
+                setFeedsOpen(false);
+              }}
+            />
+          </aside>
+        </div>
+      )}
     </div>
   );
 }

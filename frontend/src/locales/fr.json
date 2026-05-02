@@ -60,7 +60,9 @@
     "logout": "Se déconnecter",
     "search": "Rechercher…",
     "themeToLight": "Passer au thème clair",
-    "themeToDark": "Passer au thème sombre"
+    "themeToDark": "Passer au thème sombre",
+    "settings": "Paramètres",
+    "menu": "Menu"
   },
   "chat": {
     "placeholder": "Parlez à votre second cerveau…",

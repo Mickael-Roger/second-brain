@@ -60,7 +60,9 @@
     "logout": "Sign out",
     "search": "Search…",
     "themeToLight": "Switch to light mode",
-    "themeToDark": "Switch to dark mode"
+    "themeToDark": "Switch to dark mode",
+    "settings": "Settings",
+    "menu": "Menu"
   },
   "chat": {
     "placeholder": "Message your second brain…",
