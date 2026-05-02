@@ -137,5 +137,9 @@
     "reload": "Recharger",
     "dismiss": "Plus tard",
     "offlineReady": "Application prête hors-ligne"
+  },
+  "speech": {
+    "start": "Dicter",
+    "stop": "Arrêter la dictée"
   }
 }

@@ -14,6 +14,7 @@ import { Send, X } from "lucide-react";
 import { useChatStream } from "@/lib/chat";
 import type { ContentBlock, TreeEntry } from "@/lib/api";
 import MessageList from "@/components/chat/MessageList";
+import MicButton from "@/components/MicButton";
 
 const MAX_SELECTION_CHARS = 1500;
 
@@ -177,6 +178,15 @@ export default function WikiSelectionChat({
               placeholder={t("wiki.selectionChatPlaceholder")}
               className="flex-1 resize-none rounded-md border border-border bg-bg px-2 py-1.5 text-sm focus:border-accent focus:outline-none"
               disabled={busy}
+            />
+            <MicButton
+              disabled={busy}
+              iconSize={4}
+              onTranscript={(chunk) =>
+                setInput((prev) =>
+                  prev && !prev.endsWith(" ") ? `${prev} ${chunk}` : `${prev}${chunk}`,
+                )
+              }
             />
             <button
               type="button"

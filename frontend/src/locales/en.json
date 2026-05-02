@@ -137,5 +137,9 @@
     "reload": "Reload",
     "dismiss": "Later",
     "offlineReady": "App ready offline"
+  },
+  "speech": {
+    "start": "Dictate",
+    "stop": "Stop dictation"
   }
 }

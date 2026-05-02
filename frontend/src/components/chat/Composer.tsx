@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { Image as ImageIcon, Send, Square, X } from "lucide-react";
 
 import type { ContentBlock } from "@/lib/api";
+import MicButton from "@/components/MicButton";
 
 interface Props {
   onSend: (blocks: ContentBlock[]) => void;
@@ -141,6 +142,14 @@ export default function Composer({ onSend, onStop, busy }: Props) {
             placeholder={t("chat.placeholder")}
             disabled={busy}
             className="flex-1 max-h-[10rem] min-h-[1.5rem] resize-none overflow-y-auto py-1 outline-none"
+          />
+          <MicButton
+            disabled={busy}
+            onTranscript={(chunk) =>
+              setText((prev) =>
+                prev && !prev.endsWith(" ") ? `${prev} ${chunk}` : `${prev}${chunk}`,
+              )
+            }
           />
           {busy ? (
             <button
