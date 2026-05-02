@@ -1,18 +1,16 @@
-"""anki.* — read access + add for the LLM.
+"""anki.* — flashcard tools backed by the AnkiConnect plugin.
 
-Exposes a deliberately small surface:
-  - anki.list_decks  — browse decks
-  - anki.list_notes  — browse notes (filter by deck and/or text search)
-  - anki.read_note   — full content of one note
-  - anki.add_note    — add a flashcard (basic or basic_reverse)
+Exposes five tools for the LLM:
+  - anki.sync        — trigger AnkiWeb sync from the running desktop.
+  - anki.list_decks  — list every deck.
+  - anki.list_cards  — list cards (front/back/state), optional deck filter.
+  - anki.add_card    — add one card (mode: normal | reverse).
+  - anki.list_due    — list cards currently due for review.
 
-Decks are not created here; the user manages decks in Anki desktop /
-AnkiWeb and they appear locally after sync_download. The LLM cannot
-update or delete notes — those flows live entirely in the user's
-hands (Anki desktop, AnkiWeb, or vault file edits).
-
-Tools require anki.enabled = true in config.yml; when disabled they
-return a clear error rather than silently failing.
+All tools require `anki.enabled = true` in config.yml AND a running
+Anki desktop with the AnkiConnect add-on installed at the configured
+host:port. If either is missing the tool returns a clear error
+instead of silently failing.
 """
 
 from __future__ import annotations
@@ -21,13 +19,15 @@ import logging
 from typing import Any
 
 from app.anki import (
-    NOTETYPE_BASIC,
-    NOTETYPE_BASIC_REVERSE,
-    add_note,
-    get_note,
+    MODE_NORMAL,
+    MODE_REVERSE,
+    AnkiCardInfo,
+    AnkiConnectError,
+    add_card,
+    list_cards,
     list_decks,
-    list_notes,
-    open_anki,
+    list_due_cards,
+    sync,
 )
 from app.config import get_settings
 
@@ -36,7 +36,10 @@ from .registry import ToolRegistry, text_result
 log = logging.getLogger(__name__)
 
 
-_NOTETYPE_CHOICES = (NOTETYPE_BASIC, NOTETYPE_BASIC_REVERSE)
+_MODES = (MODE_NORMAL, MODE_REVERSE)
+_PREVIEW_LEN = 100
+_DEFAULT_LIMIT = 50
+_MAX_LIMIT = 500
 
 
 def _ensure_enabled() -> str | None:
@@ -45,127 +48,123 @@ def _ensure_enabled() -> str | None:
     return None
 
 
-def _format_tags(tags: list[str]) -> str:
-    return " ".join(tags) if tags else "(none)"
+def _normalize_tags(raw: Any) -> list[str]:
+    if not raw:
+        return []
+    if isinstance(raw, str):
+        return [t for t in raw.split() if t]
+    return [str(t).strip() for t in raw if str(t).strip()]
+
+
+def _truncate(s: str, n: int = _PREVIEW_LEN) -> str:
+    s = s.replace("\n", " ").strip()
+    return s if len(s) <= n else s[: n - 1] + "…"
+
+
+def _format_card(c: AnkiCardInfo) -> str:
+    return (
+        f"- [{c.card_id}] ({c.state}, deck={c.deck_name}, ivl={c.interval}d) "
+        f"{_truncate(c.front)} | {_truncate(c.back)}"
+    )
+
+
+def _coerce_limit(args: dict[str, Any]) -> int:
+    raw = args.get("limit", _DEFAULT_LIMIT)
+    try:
+        return max(1, min(int(raw), _MAX_LIMIT))
+    except (TypeError, ValueError):
+        return _DEFAULT_LIMIT
 
 
 # ── Handlers ─────────────────────────────────────────────────────────
 
 
+async def _sync(_args: dict[str, Any]):
+    if (err := _ensure_enabled()):
+        return text_result(err, is_error=True)
+    try:
+        await sync()
+    except AnkiConnectError as exc:
+        return text_result(str(exc), is_error=True)
+    return text_result("Anki sync triggered on the desktop client.")
+
+
 async def _list_decks(_args: dict[str, Any]):
     if (err := _ensure_enabled()):
         return text_result(err, is_error=True)
-    conn = open_anki()
     try:
-        decks = list_decks(conn)
-    finally:
-        conn.close()
+        decks = await list_decks()
+    except AnkiConnectError as exc:
+        return text_result(str(exc), is_error=True)
     if not decks:
         return text_result("(no decks)")
-    lines = ["Decks:"]
-    for d in decks:
-        lines.append(
-            f"- [{d.id}] {d.name}: {d.card_count} card(s), "
-            f"{d.due_count} due, {d.new_count} new"
-        )
+    lines = ["Decks:"] + [f"- {d.name} (id={d.id})" for d in decks]
     return text_result("\n".join(lines))
 
 
-async def _list_notes(args: dict[str, Any]):
+async def _list_cards(args: dict[str, Any]):
     if (err := _ensure_enabled()):
         return text_result(err, is_error=True)
-    deck_id_raw = args.get("deck_id")
-    deck_id = int(deck_id_raw) if deck_id_raw is not None else None
-    search = args.get("search")
-    limit = max(1, min(int(args.get("limit", 50)), 500))
-    conn = open_anki()
+    deck = args.get("deck")
+    deck = str(deck).strip() if deck else None
+    limit = _coerce_limit(args)
     try:
-        notes = list_notes(conn, deck_id=deck_id, search=search, limit=limit)
-    finally:
-        conn.close()
-    if not notes:
-        return text_result("(no notes match)")
-    lines: list[str] = []
-    for n in notes:
-        front = n.fields[0] if n.fields else ""
-        back = n.fields[1] if len(n.fields) > 1 else ""
-        lines.append(
-            f"- [{n.id}] ({n.notetype}, deck={n.deck_id}, cards={len(n.cards)}) "
-            f"{front[:80]} | {back[:80]}"
-        )
-    return text_result("\n".join(lines))
+        cards = await list_cards(deck=deck, limit=limit)
+    except AnkiConnectError as exc:
+        return text_result(str(exc), is_error=True)
+    if not cards:
+        scope = f"deck '{deck}'" if deck else "any deck"
+        return text_result(f"(no cards in {scope})")
+    header = f"Cards ({len(cards)}{' / limit reached' if len(cards) >= limit else ''}):"
+    return text_result("\n".join([header] + [_format_card(c) for c in cards]))
 
 
-async def _read_note(args: dict[str, Any]):
+async def _add_card(args: dict[str, Any]):
     if (err := _ensure_enabled()):
         return text_result(err, is_error=True)
-    try:
-        note_id = int(args["note_id"])
-    except (KeyError, TypeError, ValueError):
-        return text_result("`note_id` is required (integer).", is_error=True)
-    conn = open_anki()
-    try:
-        n = get_note(conn, note_id)
-    finally:
-        conn.close()
-    if n is None:
-        return text_result(f"note {note_id} not found", is_error=True)
-    front = n.fields[0] if n.fields else ""
-    back = n.fields[1] if len(n.fields) > 1 else ""
-    parts = [
-        f"Note [{n.id}]",
-        f"Notetype: {n.notetype}",
-        f"Deck: {n.deck_id}",
-        f"Cards: {len(n.cards)} (ids: {', '.join(str(c.id) for c in n.cards)})",
-        f"Tags: {_format_tags(n.tags)}",
-        "",
-        f"Front:\n{front}",
-        "",
-        f"Back:\n{back}",
-    ]
-    return text_result("\n".join(parts))
-
-
-async def _add_note(args: dict[str, Any]):
-    if (err := _ensure_enabled()):
-        return text_result(err, is_error=True)
-    try:
-        deck_id = int(args["deck_id"])
-    except (KeyError, TypeError, ValueError):
-        return text_result("`deck_id` is required (integer).", is_error=True)
-    notetype = str(args.get("notetype", NOTETYPE_BASIC))
-    if notetype not in _NOTETYPE_CHOICES:
-        return text_result(
-            f"`notetype` must be one of {_NOTETYPE_CHOICES}", is_error=True,
-        )
+    deck = str(args.get("deck", "")).strip()
     front = str(args.get("front", "")).strip()
     back = str(args.get("back", "")).strip()
+    mode = str(args.get("mode", MODE_NORMAL)).strip().lower()
+
+    if not deck:
+        return text_result("`deck` is required (deck name).", is_error=True)
     if not front or not back:
         return text_result(
             "Both `front` and `back` are required and non-empty.", is_error=True,
         )
-    raw_tags = args.get("tags") or []
-    if isinstance(raw_tags, str):
-        tags = [t for t in raw_tags.split() if t]
-    else:
-        tags = [str(t).strip() for t in raw_tags if str(t).strip()]
-
-    conn = open_anki()
-    try:
-        n = add_note(
-            conn, deck_id=deck_id, notetype=notetype,
-            fields=[front, back], tags=tags,
+    if mode not in _MODES:
+        return text_result(
+            f"`mode` must be one of {list(_MODES)} (got {mode!r}).", is_error=True,
         )
-    except KeyError:
-        return text_result(f"deck {deck_id} not found", is_error=True)
-    except ValueError as exc:
+
+    tags = _normalize_tags(args.get("tags"))
+    try:
+        note_id = await add_card(deck=deck, front=front, back=back, mode=mode, tags=tags)
+    except AnkiConnectError as exc:
         return text_result(str(exc), is_error=True)
-    finally:
-        conn.close()
+    cards_made = 2 if mode == MODE_REVERSE else 1
     return text_result(
-        f"Added note [{n.id}] in deck {n.deck_id} "
-        f"({n.notetype}, {len(n.cards)} card(s))."
+        f"Added note {note_id} in deck '{deck}' "
+        f"({mode}, {cards_made} card{'s' if cards_made > 1 else ''})."
     )
+
+
+async def _list_due(args: dict[str, Any]):
+    if (err := _ensure_enabled()):
+        return text_result(err, is_error=True)
+    deck = args.get("deck")
+    deck = str(deck).strip() if deck else None
+    limit = _coerce_limit(args)
+    try:
+        cards = await list_due_cards(deck=deck, limit=limit)
+    except AnkiConnectError as exc:
+        return text_result(str(exc), is_error=True)
+    if not cards:
+        scope = f"deck '{deck}'" if deck else "any deck"
+        return text_result(f"(nothing due in {scope})")
+    header = f"Due cards ({len(cards)}{' / limit reached' if len(cards) >= limit else ''}):"
+    return text_result("\n".join([header] + [_format_card(c) for c in cards]))
 
 
 # ── Registration ─────────────────────────────────────────────────────
@@ -173,77 +172,92 @@ async def _add_note(args: dict[str, Any]):
 
 def register_all(reg: ToolRegistry) -> None:
     reg.register(
+        "anki.sync",
+        "Trigger an AnkiWeb sync from the running Anki desktop client. "
+        "Use this after adding cards so they propagate to the user's "
+        "phone/web. Returns once Anki has accepted the sync request.",
+        {"type": "object", "properties": {}},
+        _sync,
+    )
+    reg.register(
         "anki.list_decks",
-        "List all Anki decks in the local collection. Returns deck id, "
-        "name, and card counts (total / due today / new). Decks are "
-        "managed externally (Anki desktop / AnkiWeb); to create a deck, "
-        "make it there and wait for the next sync.",
+        "List every deck the user has in Anki. Returns deck name + id. "
+        "Use the deck *name* when calling other tools (anki.list_cards, "
+        "anki.add_card, anki.list_due).",
         {"type": "object", "properties": {}},
         _list_decks,
     )
     reg.register(
-        "anki.list_notes",
-        "List Anki notes, optionally filtered by deck and/or text "
-        "search across the front/back fields. Returns one line per note "
-        "with id, notetype, deck id, card count, and a truncated preview.",
+        "anki.list_cards",
+        "List cards with their front, back, and current state "
+        "(new / learning / review / relearning / suspended / buried). "
+        "Pass `deck` to restrict to one deck, otherwise lists across all "
+        "decks. Use this to inspect what's in the collection.",
         {
             "type": "object",
             "properties": {
-                "deck_id": {
-                    "type": "integer",
-                    "description": "Restrict to one deck. Omit for all decks.",
-                },
-                "search": {
+                "deck": {
                     "type": "string",
-                    "description": "Substring to match against any field.",
+                    "description": "Deck name to restrict to. Omit for all decks.",
                 },
                 "limit": {
                     "type": "integer",
-                    "default": 50, "minimum": 1, "maximum": 500,
+                    "default": _DEFAULT_LIMIT,
+                    "minimum": 1,
+                    "maximum": _MAX_LIMIT,
                 },
             },
         },
-        _list_notes,
+        _list_cards,
     )
     reg.register(
-        "anki.read_note",
-        "Read one Anki note's full content: notetype, deck, tags, "
-        "and the Front/Back fields verbatim.",
+        "anki.add_card",
+        "Add one flashcard. `mode` is 'normal' (one card front→back) "
+        "or 'reverse' (two cards: front→back AND back→front, using "
+        "Anki's built-in 'Basic (and reversed card)' note type). "
+        "The deck must already exist — call anki.list_decks first if "
+        "unsure. `tags` is optional.",
         {
             "type": "object",
             "properties": {
-                "note_id": {"type": "integer", "description": "Note id from anki.list_notes."},
-            },
-            "required": ["note_id"],
-        },
-        _read_note,
-    )
-    reg.register(
-        "anki.add_note",
-        "Add a flashcard to a deck. `notetype` is either 'basic' "
-        "(creates one card front→back) or 'basic_reverse' (creates "
-        "two cards, front→back AND back→front). Both `front` and "
-        "`back` must be non-empty. `tags` is optional. The deck must "
-        "already exist (use anki.list_decks to find its id).",
-        {
-            "type": "object",
-            "properties": {
-                "deck_id": {"type": "integer", "description": "Target deck id."},
-                "notetype": {
-                    "type": "string",
-                    "enum": list(_NOTETYPE_CHOICES),
-                    "default": NOTETYPE_BASIC,
-                    "description": "'basic' = one card; 'basic_reverse' = two cards.",
-                },
+                "deck": {"type": "string", "description": "Target deck name."},
                 "front": {"type": "string", "description": "Front field (the prompt)."},
                 "back":  {"type": "string", "description": "Back field (the answer)."},
+                "mode": {
+                    "type": "string",
+                    "enum": list(_MODES),
+                    "default": MODE_NORMAL,
+                    "description": "'normal' = one card; 'reverse' = two cards.",
+                },
                 "tags": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "Optional tags. Accepts a list or a space-separated string.",
+                    "description": "Optional tags. Accepts a list or space-separated string.",
                 },
             },
-            "required": ["deck_id", "front", "back"],
+            "required": ["deck", "front", "back"],
         },
-        _add_note,
+        _add_card,
+    )
+    reg.register(
+        "anki.list_due",
+        "List cards currently due for review (Anki's `is:due` filter). "
+        "Pass `deck` to restrict to one deck, otherwise covers everything. "
+        "Returns the same front/back/state shape as anki.list_cards.",
+        {
+            "type": "object",
+            "properties": {
+                "deck": {
+                    "type": "string",
+                    "description": "Deck name to restrict to. Omit for all decks.",
+                },
+                "limit": {
+                    "type": "integer",
+                    "default": _DEFAULT_LIMIT,
+                    "minimum": 1,
+                    "maximum": _MAX_LIMIT,
+                },
+            },
+        },
+        _list_due,
     )

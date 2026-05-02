@@ -578,24 +578,6 @@ async def run_organize(
     settings = get_settings()
     started = datetime.now(timezone.utc)
 
-    # Pre-step: import Raw/Anki/*.md flashcards into the local Anki
-    # collection. Runs before the LLM organize pass so archived files
-    # don't appear as candidates this run.
-    if settings.anki.enabled:
-        try:
-            from app.anki import import_from_vault
-
-            anki_result = await import_from_vault()
-            if anki_result.did_run:
-                log.info(
-                    "anki vault import: %d created, %d skipped, %d archived",
-                    len(anki_result.created),
-                    len(anki_result.skipped),
-                    len(anki_result.archived),
-                )
-        except Exception:
-            log.exception("anki vault import failed (non-fatal)")
-
     conn = open_connection()
     try:
         candidates, last_run = _select_candidates(conn, scope=scope, since=since)

@@ -134,21 +134,22 @@ news:
       excluded_group_ids: []   # e.g. ["4", "12"]
 
 # ---------------------------------------------------------------------------
-# Anki — flashcards with AnkiWeb sync. Local collection lives at
-# <data_dir>/anki/collection.anki2 (Anki schema-18 SQLite). Sync is a
-# pure-Python full upload/download: you click "Sync" and pick the
-# direction. There is no incremental merge — pick the side that is
-# newer and overwrite the other side.
+# Anki — driven through the AnkiConnect plugin
+# (https://ankiweb.net/shared/info/2055492159). Install it in your Anki
+# desktop, keep Anki running while the brain is running, and the brain
+# talks to the plugin's JSON-RPC HTTP endpoint for everything (decks,
+# cards, sync trigger, note creation). There is no local mirror.
 #
-# Built-in note types: `basic` (Front → Back) and `basic_reverse`
-# (Front → Back AND Back → Front). No media (images/audio) yet.
+# Set `api_key` only if you've configured one in AnkiConnect's settings.
+# Built-in note types used here: `Basic` (Front → Back) and
+# `Basic (and reversed card)` (creates two cards).
 # ---------------------------------------------------------------------------
 anki:
-  enabled: false                     # flip to true once `ankiweb` is filled in
-  ankiweb:
-    username: you@example.com
-    password: REPLACE_ME
-    base_url: https://sync.ankiweb.net/
+  enabled: false                     # flip to true once Anki + AnkiConnect are running
+  host: 127.0.0.1
+  port: 8765
+  api_key: null                      # only if AnkiConnect's apiKey is set
+  timeout_seconds: 10.0
 
 # ---------------------------------------------------------------------------
 # SMTP — outbound only. Used for the nightly Organize report.

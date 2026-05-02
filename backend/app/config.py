@@ -162,27 +162,25 @@ class NewsSection(BaseModel):
     sources: NewsSourcesSection = NewsSourcesSection()
 
 
-class AnkiWebConfig(BaseModel):
-    """AnkiWeb account credentials.
+class AnkiSection(BaseModel):
+    """Anki integration via the AnkiConnect plugin.
 
-    Stored in plaintext in `config.yml` — same operator-trust posture as
-    every other secret in this file (LLM keys, SMTP password, etc.).
+    AnkiConnect runs inside the user's Anki desktop and exposes a
+    JSON-RPC HTTP endpoint (default http://127.0.0.1:8765). The brain
+    talks to it for every Anki operation; there is no local mirror.
+    `api_key` is optional — set it only if AnkiConnect is configured
+    with the `apiKey` field in its plugin settings.
     """
 
-    username: str
-    password: str
-    base_url: str = "https://sync.ankiweb.net/"
-
-
-class AnkiSection(BaseModel):
     enabled: bool = False
-    ankiweb: AnkiWebConfig | None = None
+    host: str = "127.0.0.1"
+    port: int = 8765
+    api_key: str | None = None
+    timeout_seconds: float = 10.0
 
-    @model_validator(mode="after")
-    def _check(self) -> "AnkiSection":
-        if self.enabled and self.ankiweb is None:
-            raise ValueError("anki.enabled = true but anki.ankiweb is missing")
-        return self
+    @property
+    def url(self) -> str:
+        return f"http://{self.host}:{self.port}"
 
 
 class SMTPSection(BaseModel):

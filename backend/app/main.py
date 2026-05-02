@@ -53,17 +53,6 @@ async def lifespan(_: FastAPI):
         conn.close()
     start_scheduler()
 
-    # Bootstrap the Anki collection.anki2 if anki is enabled. Idempotent
-    # (a no-op when the file already has Anki's `col` table).
-    settings_for_anki = get_settings()
-    if settings_for_anki.anki.enabled:
-        try:
-            from app.anki import ensure_collection
-
-            ensure_collection()
-        except Exception:
-            log.exception("anki: ensure_collection failed at startup (non-fatal)")
-
     # Kick off an immediate news backfill in the background so the
     # app starts populating articles right away — including all
     # unread items, regardless of age — without waiting for the
