@@ -360,6 +360,26 @@ Each step ships something usable.
 
 ---
 
+## 10b. Training fiches (drill-down learning)
+
+A click-to-explore learning surface. Triggered from the wiki view: a
+dead wikilink under `Training/` opens a "generate this fiche?" modal
+that calls `POST /api/training/expand`. The endpoint pulls the
+breadcrumb (parent fiche + theme `Index.md`) and runs an LLM with the
+training task config (`llm.tasks.training` — own provider/model,
+opt-in web search, opt-in image generation via `image.generate`). The
+LLM produces complete fiche markdown — frontmatter, sections, mermaid
+diagrams, LaTeX, an `## À explorer` list of next-step wikilinks — and
+the service writes it under `Training/<Theme>/<concept>.md` in one git
+commit. No new SPA view; everything renders in the existing Wiki.
+
+`organize.exclude_paths` keeps the nightly Organize agent away from
+`Training/`, so the fiches' strict format isn't refactored away.
+
+The default system prompt lives in `backend/app/training/prompts.py`;
+copy `TRAINING.example.md` into the vault and point
+`obsidian.training_prompt_file` at it to override.
+
 ## 11. Non-goals (explicit)
 
 - Multi-user / RBAC.
@@ -388,6 +408,10 @@ GET    /api/chats                         ?q=
 GET    /api/chats/{id}
 PATCH  /api/chats/{id}                    { title? archived? }
 DELETE /api/chats/{id}
+
+# Training
+POST   /api/training/expand               { target_concept, parent_path?, theme?, web_search?, language? }
+                                          → { path, theme, parent_path }
 
 # Vault
 GET    /api/vault/tree                    → folder tree (paths + types)
