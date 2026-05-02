@@ -195,6 +195,22 @@ async def _delete(args: dict[str, Any]):
     return text_result(f"deleted {args['path']}")
 
 
+async def _trash(args: dict[str, Any]):
+    src = str(args["path"]).strip().lstrip("/")
+    if not src:
+        return text_result("`path` is required.", is_error=True)
+    if src.startswith("Trash/") or src == "Trash":
+        return text_result(f"{src} is already in Trash/", is_error=True)
+    dst = f"Trash/{src}"
+    try:
+        n = await move_note(src, dst, message=f"vault.trash {src}")
+    except (VaultPathError, FileNotFoundError, FileExistsError) as exc:
+        return text_result(str(exc), is_error=True)
+    except GitConflictError as exc:
+        return text_result(str(exc), is_error=True)
+    return text_result(f"trashed → {n.path}")
+
+
 # ── schemas + registration ───────────────────────────────────────────
 
 
@@ -493,4 +509,20 @@ def register_all(reg: ToolRegistry) -> None:
             "required": ["path"],
         },
         _delete,
+    )
+    reg.register(
+        "vault.trash",
+        (
+            "Soft-delete a note by moving it under Trash/ while keeping its "
+            "original folder layout (e.g. 'Tech/RAG.md' → 'Trash/Tech/RAG.md'). "
+            "Prefer this to `vault.delete` so the user can recover later. "
+            "Fails if the note is already inside Trash/ or if a file with "
+            "the same trashed path already exists."
+        ),
+        {
+            "type": "object",
+            "properties": {"path": _PATH},
+            "required": ["path"],
+        },
+        _trash,
     )
