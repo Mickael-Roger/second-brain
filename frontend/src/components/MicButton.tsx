@@ -91,6 +91,18 @@ export default function MicButton({
 
   function start() {
     if (listening || !Ctor) return;
+    // Defensive: if a stale recogniser is still around (Firefox can leave
+    // a session dangling when neither onend nor onerror fires), abort it
+    // before opening a new one — otherwise the browser may refuse the
+    // second start() with InvalidStateError.
+    if (recRef.current) {
+      try {
+        recRef.current.abort();
+      } catch {
+        /* already dead */
+      }
+      recRef.current = null;
+    }
     const rec = new Ctor();
     // currentLanguage returns "fr" / "en"; SpeechRecognition wants a
     // BCP47 tag with a region. The default region picks something
@@ -98,16 +110,31 @@ export default function MicButton({
     const lang = currentLanguage() === "fr" ? "fr-FR" : "en-US";
     rec.lang = lang;
     rec.continuous = false;
-    rec.interimResults = false;
+    // interimResults=true is needed for Firefox: its implementation
+    // sometimes ends a session without ever flipping a result to
+    // isFinal, so we keep the latest interim around as a fallback to
+    // commit in onend. Chrome behaves the same either way — we still
+    // only forward to onTranscript when a result is marked final.
+    rec.interimResults = true;
+
+    let pendingInterim = "";
+
     rec.onresult = (e) => {
-      // With continuous=false + interimResults=false, only final
-      // results dispatch — concatenate everything that arrived since
-      // resultIndex without filtering.
-      let chunk = "";
+      let finalText = "";
       for (let i = e.resultIndex; i < e.results.length; i++) {
-        chunk += e.results[i][0].transcript;
+        const r = e.results[i];
+        if (r.isFinal) {
+          finalText += r[0].transcript;
+        } else {
+          // Most-recent interim wins — the spec says each result
+          // refines in place across events.
+          pendingInterim = r[0].transcript;
+        }
       }
-      if (chunk.trim()) onTranscript(chunk);
+      if (finalText.trim()) {
+        onTranscript(finalText);
+        pendingInterim = "";
+      }
     };
     rec.onerror = (e) => {
       // Surface error codes (no-speech, audio-capture, not-allowed,
@@ -118,6 +145,13 @@ export default function MicButton({
       setListening(false);
     };
     rec.onend = () => {
+      // Firefox safety net — commit whatever interim we held when no
+      // final result was ever dispatched. Chrome reaches this branch
+      // with pendingInterim already empty.
+      if (pendingInterim.trim()) {
+        onTranscript(pendingInterim);
+        pendingInterim = "";
+      }
       setListening(false);
       recRef.current = null;
     };
@@ -132,7 +166,19 @@ export default function MicButton({
   }
 
   function stop() {
-    recRef.current?.stop();
+    // Reset state optimistically: Firefox sometimes doesn't fire onend
+    // after stop(), which would leave the button stuck in its listening
+    // pulse forever. We use stop() (not abort()) so any in-flight final
+    // result still has a chance to land via the existing onresult
+    // handler before the session tears down.
+    const rec = recRef.current;
+    recRef.current = null;
+    setListening(false);
+    try {
+      rec?.stop();
+    } catch {
+      /* already dead */
+    }
   }
 
   const iconClass = iconSize === 4 ? "h-4 w-4" : "h-5 w-5";
