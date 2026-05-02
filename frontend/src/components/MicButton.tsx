@@ -1,16 +1,21 @@
-// Push-to-talk button that streams browser-native speech recognition into
-// the parent's text field via `onTranscript`. Renders nothing when the
-// browser doesn't expose the Web Speech API (Firefox today, plus older
-// embedded webviews) so the surrounding composer stays clean.
+// Push-to-talk button that pipes browser-native speech recognition into the
+// parent's text field via `onTranscript`. Renders nothing when the browser
+// doesn't expose the Web Speech API.
 //
 // Behaviour:
-//   - First click  → request mic permission and start listening (continuous).
-//   - Second click → stop. The component does NOT auto-send; the caller's
-//                    onTranscript handler appends finalised speech to its
-//                    own text state, leaving the user free to edit / hit send.
-//   - Final results only — interim transcripts would flicker the textarea
-//                          with half-formed words. The mic icon's pulse
-//                          indicates we're listening.
+//   - Click → request mic permission, listen for one utterance.
+//   - The recogniser auto-stops after the user's pause and fires the final
+//     transcript once. To dictate more, the user clicks again.
+//   - Click while listening → stop early (whatever was finalised so far is
+//     still appended).
+//   - The component does NOT auto-send; the caller's onTranscript handler
+//     appends to its own text state and the user reviews / hits send.
+//
+// Why single-utterance instead of continuous: with `continuous: true` +
+// `interimResults: false`, several browsers (Chrome notably) fail to mark
+// any result as final and the input stays empty. The single-utterance
+// pattern is the canonical Web Speech use and works across Chrome, Edge,
+// Safari, and recent Firefox.
 
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -92,17 +97,24 @@ export default function MicButton({
     // reasonable rather than letting the browser fall back to en-US.
     const lang = currentLanguage() === "fr" ? "fr-FR" : "en-US";
     rec.lang = lang;
-    rec.continuous = true;
+    rec.continuous = false;
     rec.interimResults = false;
     rec.onresult = (e) => {
+      // With continuous=false + interimResults=false, only final
+      // results dispatch — concatenate everything that arrived since
+      // resultIndex without filtering.
       let chunk = "";
       for (let i = e.resultIndex; i < e.results.length; i++) {
-        const r = e.results[i];
-        if (r.isFinal) chunk += r[0].transcript;
+        chunk += e.results[i][0].transcript;
       }
-      if (chunk) onTranscript(chunk);
+      if (chunk.trim()) onTranscript(chunk);
     };
-    rec.onerror = () => {
+    rec.onerror = (e) => {
+      // Surface error codes (no-speech, audio-capture, not-allowed,
+      // network, …) so a missing-mic / denied-permission case isn't
+      // silent in DevTools.
+      // eslint-disable-next-line no-console
+      console.warn("[MicButton] speech recognition error:", e?.error);
       setListening(false);
     };
     rec.onend = () => {
