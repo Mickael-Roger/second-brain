@@ -132,6 +132,14 @@
     "edit": "Éditer",
     "language": "Langue"
   },
+  "training": {
+    "modalTitle": "Générer cette fiche ?",
+    "modalLead": "Le brain va générer une fiche pour le concept :",
+    "modalParent": "Depuis",
+    "useWebSearch": "Utiliser la recherche web (si le provider la supporte)",
+    "generate": "Générer",
+    "generating": "Génération…"
+  },
   "pwa": {
     "updateAvailable": "Nouvelle version disponible",
     "reload": "Recharger",

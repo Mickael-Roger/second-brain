@@ -132,6 +132,14 @@
     "edit": "Edit",
     "language": "Language"
   },
+  "training": {
+    "modalTitle": "Generate this fiche?",
+    "modalLead": "The brain will generate a fiche on the concept:",
+    "modalParent": "From",
+    "useWebSearch": "Use web search (if the provider supports it)",
+    "generate": "Generate",
+    "generating": "Generating…"
+  },
   "pwa": {
     "updateAvailable": "New version available",
     "reload": "Reload",
