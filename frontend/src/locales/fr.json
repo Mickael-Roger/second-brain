@@ -127,5 +127,11 @@
     "save": "Enregistrer",
     "edit": "Éditer",
     "language": "Langue"
+  },
+  "pwa": {
+    "updateAvailable": "Nouvelle version disponible",
+    "reload": "Recharger",
+    "dismiss": "Plus tard",
+    "offlineReady": "Application prête hors-ligne"
   }
 }

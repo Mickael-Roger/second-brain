@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import App from "./App";
 import ErrorBoundary from "./components/layout/ErrorBoundary";
+import UpdatePrompt from "./components/layout/UpdatePrompt";
 import { initI18n } from "./lib/i18n";
 import { applyTheme, currentTheme } from "./lib/theme";
 import "./index.css";
@@ -23,6 +24,7 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
     <QueryClientProvider client={queryClient}>
       <ErrorBoundary>
         <App />
+        <UpdatePrompt />
       </ErrorBoundary>
     </QueryClientProvider>
   </React.StrictMode>,

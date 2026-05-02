@@ -127,5 +127,11 @@
     "save": "Save",
     "edit": "Edit",
     "language": "Language"
+  },
+  "pwa": {
+    "updateAvailable": "New version available",
+    "reload": "Reload",
+    "dismiss": "Later",
+    "offlineReady": "App ready offline"
   }
 }
