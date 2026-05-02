@@ -101,6 +101,24 @@ _SCHEMA_PROTECTED_FILES = frozenset({
 })
 
 
+def _config_excluded_prefixes() -> tuple[str, ...]:
+    """Vault-relative path prefixes the user has excluded from organize
+    via ``organize.exclude_paths``. Trailing-slash-normalised so that
+    ``Training`` and ``Training/`` both match files under the folder
+    without also catching a ``Trainingsplan.md`` at the root."""
+    raw = get_settings().organize.exclude_paths
+    out: list[str] = []
+    for item in raw:
+        s = (item or "").strip().lstrip("/")
+        if not s:
+            continue
+        if not s.endswith("/") and "." not in s.rsplit("/", 1)[-1]:
+            # treat as a folder prefix
+            s = s + "/"
+        out.append(s)
+    return tuple(out)
+
+
 def _is_excluded(rel: str) -> bool:
     """True when a vault-relative .md path is on the hard-exclusion list."""
     if rel in EXCLUDED_FILES:
@@ -108,7 +126,9 @@ def _is_excluded(rel: str) -> bool:
     top = rel.split("/", 1)[0]
     if top in EXCLUDED_TOP_DIRS:
         return True
-    return any(rel.startswith(prefix) for prefix in EXCLUDED_PREFIXES)
+    if any(rel.startswith(prefix) for prefix in EXCLUDED_PREFIXES):
+        return True
+    return any(rel.startswith(prefix) for prefix in _config_excluded_prefixes())
 
 
 def _is_todays_flat_journal(rel: str) -> bool:
@@ -379,6 +399,14 @@ def _writable(path: str, op: str) -> str | None:
             "Trash and create new files there, but never edit, "
             "append to, replace within, delete, or move out of Trash."
         )
+    for prefix in _config_excluded_prefixes():
+        if path.startswith(prefix):
+            return (
+                f"`{path}` is under a configured `organize.exclude_paths` "
+                f"prefix (`{prefix}`). The agent must not read, edit, "
+                "create, move or delete anything under this subtree — "
+                "it owns its own structure and lifecycle."
+            )
     if path.startswith("Raw/WebClipper/"):
         # WebClipper clips are input data. The only legitimate action
         # is moving them OUT (to Trash). Editing in place is the
