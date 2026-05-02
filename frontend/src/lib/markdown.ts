@@ -143,24 +143,29 @@ interface MathExtraction {
   placeholders: Map<string, string>;
 }
 
-function extractCodeSpans(md: string, placeholders: Map<string, string>): string {
-  // Pull fenced ```code``` blocks AND inline `code` spans out before
-  // we touch math, since math markers inside code must stay verbatim.
-  // We re-emit the placeholder; the body is reinserted post-marked.
-  let counter = placeholders.size;
-  // Fenced first (greedy match across newlines).
-  let out = md.replace(/```[\s\S]*?```/g, (m) => {
-    const key = `${PLACEHOLDER_PREFIX}CODE${counter++}${PLACEHOLDER_SUFFIX}`;
-    placeholders.set(key, m);
-    return key;
-  });
+// Single private-use Unicode codepoint — won't appear in real notes,
+// passes through marked / hljs untouched, and we swap it back to "$"
+// in the final HTML pass. We only need to hide dollars from the math
+// regexes; the code blocks themselves still go through marked (and
+// thus marked-highlight), unlike the previous approach which extracted
+// whole code blocks and broke syntax highlighting.
+const DOLLAR_SENTINEL = "";
+
+function maskDollarsInCode(md: string): string {
+  // Fenced ```code``` blocks (greedy lazy across newlines).
+  let out = md.replace(/```[\s\S]*?```/g, (m) =>
+    m.replace(/\$/g, DOLLAR_SENTINEL),
+  );
   // Inline `code` spans (single line, no nested backticks).
-  out = out.replace(/`[^`\n]+`/g, (m) => {
-    const key = `${PLACEHOLDER_PREFIX}CODE${counter++}${PLACEHOLDER_SUFFIX}`;
-    placeholders.set(key, m);
-    return key;
-  });
+  out = out.replace(/`[^`\n]+`/g, (m) =>
+    m.replace(/\$/g, DOLLAR_SENTINEL),
+  );
   return out;
+}
+
+function unmaskDollars(html: string): string {
+  if (!html.includes(DOLLAR_SENTINEL)) return html;
+  return html.split(DOLLAR_SENTINEL).join("$");
 }
 
 function renderKatex(src: string, displayMode: boolean): string {
@@ -186,11 +191,10 @@ function renderKatex(src: string, displayMode: boolean): string {
 
 function extractMath(md: string): MathExtraction {
   const placeholders = new Map<string, string>();
-  const protectedSrc = extractCodeSpans(md, placeholders);
-  let counter = placeholders.size;
+  let counter = 0;
 
   // Block math first (would otherwise be matched as two inline runs).
-  let out = protectedSrc.replace(BLOCK_MATH_RE, (_full, body) => {
+  let out = md.replace(BLOCK_MATH_RE, (_full, body) => {
     const key = `${PLACEHOLDER_PREFIX}${counter++}${PLACEHOLDER_SUFFIX}`;
     placeholders.set(key, renderKatex(body, true));
     // Surround with blank lines so marked treats the placeholder as its
@@ -252,11 +256,17 @@ export function renderMarkdown(md: string): string {
   // Math extraction runs LAST in the preprocessing chain (so wikilink
   // rewrites are done with) and is then re-injected after marked runs,
   // bypassing marked's markdown-tokeniser entirely for formula bodies.
+  // Code blocks, however, must stay in the markdown stream so marked /
+  // marked-highlight can syntax-highlight them — we just mask the `$`
+  // characters inside them (so the math regex below leaves them alone)
+  // and unmask in the final HTML.
   const piped = rewriteCallouts(rewriteWikilinks(rewriteEmbeds(md)));
-  const { text, placeholders } = extractMath(piped);
+  const masked = maskDollarsInCode(piped);
+  const { text, placeholders } = extractMath(masked);
   const html = marked.parse(text);
   const htmlStr = typeof html === "string" ? html : "";
-  return reinjectPlaceholders(htmlStr, placeholders);
+  const reinjected = reinjectPlaceholders(htmlStr, placeholders);
+  return unmaskDollars(reinjected);
 }
 
 export type WikilinkRef = { target: string; heading: string };
