@@ -29,6 +29,7 @@ import {
 import { logout } from "@/lib/auth";
 import { setLanguage, currentLanguage } from "@/lib/i18n";
 import { currentTheme, setTheme, type Theme } from "@/lib/theme";
+import Logo from "@/components/layout/Logo";
 
 export type ViewId = "chat" | "wiki" | "news" | "training";
 
@@ -180,12 +181,9 @@ export default function AppShell({
         className="flex shrink-0 items-center gap-2 border-b border-border bg-surface px-3 py-2 md:hidden"
         style={{ paddingTop: "max(0.5rem, env(safe-area-inset-top))" }}
       >
-        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-bg text-accent">
-          <Brain className="h-4 w-4" />
-        </div>
-        <span className="flex-1 truncate text-sm font-semibold">
-          {t("app.title")}
-        </span>
+        <Logo className="h-8 w-auto" />
+        <span className="sr-only">{t("app.title")}</span>
+        <div className="flex-1" />
         {onOpenReview && (
           <button
             type="button"

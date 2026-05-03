@@ -6,9 +6,12 @@
 // re-applied on boot before React mounts to avoid the brief
 // dark→light flash on a light-mode visit.
 
+import { useEffect, useState } from "react";
+
 export type Theme = "light" | "dark";
 
 const STORAGE_KEY = "sb.theme";
+const CHANGE_EVENT = "sb:theme-change";
 
 export function applyTheme(theme: Theme): void {
   if (typeof document === "undefined") return;
@@ -27,6 +30,20 @@ export function currentTheme(): Theme {
 export function setTheme(theme: Theme): void {
   if (typeof window !== "undefined") {
     window.localStorage.setItem(STORAGE_KEY, theme);
+    window.dispatchEvent(new CustomEvent<Theme>(CHANGE_EVENT, { detail: theme }));
   }
   applyTheme(theme);
+}
+
+export function useTheme(): Theme {
+  const [theme, setThemeState] = useState<Theme>(() => currentTheme());
+  useEffect(() => {
+    const onChange = (e: Event) => {
+      const detail = (e as CustomEvent<Theme>).detail;
+      if (detail === "light" || detail === "dark") setThemeState(detail);
+    };
+    window.addEventListener(CHANGE_EVENT, onChange);
+    return () => window.removeEventListener(CHANGE_EVENT, onChange);
+  }, []);
+  return theme;
 }

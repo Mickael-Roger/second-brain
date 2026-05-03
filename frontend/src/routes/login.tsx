@@ -1,10 +1,10 @@
 import { FormEvent, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Brain } from "lucide-react";
 
 import { ApiError } from "@/lib/api";
 import { login } from "@/lib/auth";
 import { setLanguage, currentLanguage } from "@/lib/i18n";
+import Logo from "@/components/layout/Logo";
 
 interface Props {
   onSuccess: () => void;
@@ -41,11 +41,10 @@ export default function LoginPage({ onSuccess }: Props) {
         onSubmit={onSubmit}
         className="w-full max-w-sm space-y-5 rounded-2xl border border-border bg-surface p-8 shadow-lg"
       >
-        <div className="flex items-center gap-3">
-          <Brain className="h-8 w-8 text-accent" />
-          <h1 className="text-2xl font-semibold">{t("app.title")}</h1>
+        <div className="flex justify-center">
+          <Logo className="h-24 w-auto select-none" />
         </div>
-        <h2 className="text-lg text-muted">{t("login.title")}</h2>
+        <h2 className="text-center text-lg text-muted">{t("login.title")}</h2>
 
         <label className="block">
           <span className="text-sm text-muted">{t("login.username")}</span>
