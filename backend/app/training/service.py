@@ -69,8 +69,15 @@ _TITLE_RE = re.compile(r"^\s*#\s+(.+?)\s*$", re.MULTILINE)
 
 
 def _slugify(text: str) -> str:
-    s = re.sub(r"[^\w\s-]", "", (text or "").strip(), flags=re.UNICODE)
-    s = re.sub(r"[\s_-]+", "-", s).strip("-")
+    """Filename-safe basename for a fiche.
+
+    Spaces and casing are preserved on purpose: the parent fiche's
+    ``[[Concept]]`` wikilinks resolve by exact basename match, so
+    a fiche generated from ``[[Image Classification]]`` MUST land at
+    ``Image Classification.md`` — collapsing spaces to dashes would
+    leave the wikilink dead even after the file was created."""
+    s = re.sub(r"[\\/:\*\?\"<>\|]", "", (text or "").strip())
+    s = re.sub(r"\s+", " ", s).strip()
     return s[:80] or "fiche"
 
 
