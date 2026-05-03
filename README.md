@@ -1,3 +1,10 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="./assets/logo_black.png">
+    <img alt="Second Brain" src="./assets/logo_white.png" width="220">
+  </picture>
+</p>
+
 # Second Brain
 
 Mono-user self-hosted personal "second brain". See [PROJECT.md](./PROJECT.md) for the full specification.
