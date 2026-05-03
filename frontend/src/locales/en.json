@@ -129,6 +129,7 @@
     "delete": "Delete",
     "rename": "Rename",
     "cancel": "Cancel",
+    "close": "Close",
     "save": "Save",
     "edit": "Edit",
     "language": "Language"
@@ -152,13 +153,24 @@
       "updated": "Updated {{date}}",
       "open": "Open"
     },
-    "newTheme": {
+    "kickoff": {
       "title": "Start a new training theme",
-      "lead": "Describe the theme you want to learn. The brain will create the Index.md and seed an \"## À explorer\" list of sub-concepts.",
+      "titleWithSubject": "Kickoff: {{subject}}",
+      "untitled": "(no subject)",
+      "lead": "Describe the theme you want to learn. The brain will ask you a few clarifying questions, then write your expectations and the Index.md overview.",
       "subjectLabel": "Theme subject",
       "subjectPlaceholder": "e.g. Kubernetes networking, Renaissance painting, distributed consensus…",
-      "submit": "Start in chat",
-      "submitHint": "Switches to the chat view with a pre-filled prompt — review it, then send."
+      "startHint": "Pressing Start opens a short Q&A — answer in a few short lines.",
+      "start": "Start",
+      "starting": "Asking the first questions…",
+      "replyPlaceholder": "Answer the question…",
+      "forceFinalize": "Finalize now",
+      "forceFinalizeHint": "Skip remaining questions — the brain commits with what it has.",
+      "generating": "Generating the overview…",
+      "generatingHint": "Writing Expectations.md and the theme Index.md. This takes 30–60s.",
+      "doneTitle": "Theme \"{{theme}}\" is ready",
+      "doneLead": "The Index.md has been generated and committed. You can drill down from there at any time.",
+      "openIndex": "Open Index"
     }
   },
   "pwa": {

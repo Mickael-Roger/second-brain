@@ -9,14 +9,13 @@ import { useQuery } from "@tanstack/react-query";
 import { GraduationCap, Loader2, Plus, Sparkles } from "lucide-react";
 
 import { api, type TrainingThemeListResponse } from "@/lib/api";
-import NewThemeModal from "./NewThemeModal";
+import TrainingKickoffModal from "./TrainingKickoffModal";
 
 interface Props {
   onOpenWiki: (path: string | null) => void;
-  onOpenChat: () => void;
 }
 
-export default function TrainingView({ onOpenWiki, onOpenChat }: Props) {
+export default function TrainingView({ onOpenWiki }: Props) {
   const { t, i18n } = useTranslation();
   const [newOpen, setNewOpen] = useState(false);
 
@@ -130,11 +129,11 @@ export default function TrainingView({ onOpenWiki, onOpenChat }: Props) {
       </div>
 
       {newOpen && (
-        <NewThemeModal
+        <TrainingKickoffModal
           onClose={() => setNewOpen(false)}
-          onStartInChat={() => {
+          onOpenIndex={(path) => {
             setNewOpen(false);
-            onOpenChat();
+            onOpenWiki(path);
           }}
         />
       )}

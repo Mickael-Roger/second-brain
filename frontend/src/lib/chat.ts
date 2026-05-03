@@ -12,15 +12,32 @@ import {
 } from "./api";
 import { streamSse } from "./sse";
 
+export interface ToolResultEvent {
+  tool_use_id: string;
+  is_error: boolean;
+  // Concatenated text content of the tool result (we ignore non-text
+  // blocks here — the consumer can re-fetch the full message if it
+  // needs richer parsing).
+  text: string;
+}
+
 export interface UseChatStreamOptions {
   // Existing chat to load, or null to start fresh on first send.
   chatId?: string | null;
   // Tags new chats so they live under a specific module (e.g. "obsidian").
   moduleId?: string | null;
+  // Server-side whitelisted system prompt key (e.g. "training-kickoff").
+  // When set, the backend swaps the system prompt and restricts the
+  // tool surface accordingly.
+  systemPromptId?: string | null;
   // "provider/model" — split before sending. undefined = backend default.
   selection?: string;
   // Called when a new chat row is created server-side.
   onChatCreated?: (id: string) => void;
+  // Fired whenever the stream emits a tool_result event. Consumers
+  // (e.g. the kickoff modal) use this to detect completion of a
+  // specific tool call without having to parse the full transcript.
+  onToolResult?: (ev: ToolResultEvent) => void;
 }
 
 export interface UseChatStream {
@@ -36,8 +53,10 @@ export interface UseChatStream {
 export function useChatStream({
   chatId,
   moduleId,
+  systemPromptId,
   selection,
   onChatCreated,
+  onToolResult,
 }: UseChatStreamOptions): UseChatStream {
   const qc = useQueryClient();
 
@@ -102,6 +121,7 @@ export function useChatStream({
         {
           chat_id: chatId ?? undefined,
           module_id: moduleId ?? undefined,
+          system_prompt_id: systemPromptId ?? undefined,
           provider: provider || undefined,
           model: model || undefined,
           content: blocks,
@@ -130,9 +150,26 @@ export function useChatStream({
                 setPendingToolUse({ name: d.name, input: d.input });
                 break;
               }
-              case "tool_result":
+              case "tool_result": {
                 setPendingToolUse(null);
+                if (onToolResult) {
+                  const d = ev.data as {
+                    tool_use_id: string;
+                    is_error: boolean;
+                    content: ContentBlock[];
+                  };
+                  const text = (d.content ?? [])
+                    .filter((b): b is { type: "text"; text: string } => b.type === "text")
+                    .map((b) => b.text)
+                    .join("");
+                  onToolResult({
+                    tool_use_id: d.tool_use_id,
+                    is_error: !!d.is_error,
+                    text,
+                  });
+                }
                 break;
+              }
               case "message_done": {
                 const d = ev.data as ChatMessage;
                 setMessages((m) => [...m, d]);

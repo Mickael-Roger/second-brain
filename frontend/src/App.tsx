@@ -72,10 +72,7 @@ export default function App() {
         ) : view === "news" ? (
           <NewsView onOpenChat={() => setView("chat")} />
         ) : view === "training" ? (
-          <TrainingView
-            onOpenWiki={openWiki}
-            onOpenChat={() => setView("chat")}
-          />
+          <TrainingView onOpenWiki={openWiki} />
         ) : (
           <WikiView
             target={wikiTarget}

@@ -129,6 +129,7 @@
     "delete": "Supprimer",
     "rename": "Renommer",
     "cancel": "Annuler",
+    "close": "Fermer",
     "save": "Enregistrer",
     "edit": "Éditer",
     "language": "Langue"
@@ -152,13 +153,24 @@
       "updated": "Mis à jour {{date}}",
       "open": "Ouvrir"
     },
-    "newTheme": {
+    "kickoff": {
       "title": "Démarrer un nouveau thème",
-      "lead": "Décris le thème que tu veux explorer. Le brain va créer l'Index.md et amorcer une liste \"## À explorer\" de sous-concepts.",
+      "titleWithSubject": "Kickoff : {{subject}}",
+      "untitled": "(sans sujet)",
+      "lead": "Décris le thème que tu veux explorer. Le brain te posera quelques questions de clarification, puis rédigera tes attendus et la vue d'avion (Index.md).",
       "subjectLabel": "Sujet du thème",
       "subjectPlaceholder": "ex. Réseau Kubernetes, peinture Renaissance, consensus distribué…",
-      "submit": "Démarrer dans le chat",
-      "submitHint": "Bascule sur la vue chat avec un prompt pré-rempli — relis-le puis envoie."
+      "startHint": "Le clic Démarrer ouvre une mini-conversation — réponds en quelques lignes.",
+      "start": "Démarrer",
+      "starting": "Première questions en cours…",
+      "replyPlaceholder": "Réponds à la question…",
+      "forceFinalize": "Finaliser maintenant",
+      "forceFinalizeHint": "Passe le reste des questions — le brain finalise avec ce qu'il a.",
+      "generating": "Génération de la vue d'avion…",
+      "generatingHint": "Écriture d'Expectations.md et de l'Index.md du thème. ~30 à 60 s.",
+      "doneTitle": "Thème « {{theme}} » prêt",
+      "doneLead": "L'Index.md a été généré et commité. Tu peux drill-down à partir de là quand tu veux.",
+      "openIndex": "Ouvrir l'Index"
     }
   },
   "pwa": {
