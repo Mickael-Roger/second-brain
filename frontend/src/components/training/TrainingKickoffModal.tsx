@@ -67,13 +67,19 @@ export default function TrainingKickoffModal({ onClose, onOpenIndex }: Props) {
   const [input, setInput] = useState("");
   const [result, setResult] = useState<KickoffResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Chat id of the kickoff session — set by useChatStream's onChatCreated
+  // on the first send. WITHOUT this, every subsequent reply would create
+  // a brand-new chat server-side and the LLM would lose the transcript,
+  // looping back to the same opening questions.
+  const [chatId, setChatId] = useState<string | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const subjectRef = useRef<HTMLInputElement | null>(null);
 
   const { messages, streamingText, pendingToolUse, busy, send } = useChatStream({
-    chatId: null,
+    chatId,
     moduleId: "training-kickoff",
     systemPromptId: "training-kickoff",
+    onChatCreated: setChatId,
     onToolResult: (ev) => {
       // The kickoff session sees only one tool — finalize_kickoff.
       // On success its text payload is the JSON {theme, …}; on
