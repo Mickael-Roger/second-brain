@@ -11,11 +11,14 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import AsyncIterator
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
+from app.api.sse_utils import sse_event, with_heartbeat
 from app.auth import current_user
 from app.config import get_settings
 from app.training import TrainingExpandError, expand_concept
@@ -33,12 +36,6 @@ class ExpandRequest(BaseModel):
     theme: str | None = None
     web_search: bool = False
     language: str | None = None
-
-
-class ExpandResponse(BaseModel):
-    path: str
-    theme: str
-    parent_path: str | None
 
 
 class TrainingConfigResponse(BaseModel):
@@ -147,29 +144,55 @@ def get_themes(_user: str = Depends(current_user)) -> ThemeListResponse:
     return ThemeListResponse(training_folder=folder, themes=items)
 
 
-@router.post("/expand", response_model=ExpandResponse)
+@router.post("/expand")
 async def post_expand(
     payload: ExpandRequest,
     _user: str = Depends(current_user),
-) -> ExpandResponse:
-    try:
-        result = await expand_concept(
-            target_concept=payload.target_concept,
-            parent_path=payload.parent_path,
-            theme=payload.theme,
-            web_search=payload.web_search,
-            language=payload.language,
+) -> StreamingResponse:
+    """Stream the fiche generation as SSE.
+
+    The work is silent for 30-90s on the wire (the backend is
+    LLM-bound + writing to disk), and a plain JSON POST gets killed
+    by Tailscale Funnel / nginx / any reverse-proxy with an idle
+    timeout under that. Streaming + ``with_heartbeat`` keeps the
+    connection warm; the client awaits a single ``done`` event
+    (or ``error``)."""
+
+    async def event_gen() -> AsyncIterator[bytes]:
+        try:
+            result = await expand_concept(
+                target_concept=payload.target_concept,
+                parent_path=payload.parent_path,
+                theme=payload.theme,
+                web_search=payload.web_search,
+                language=payload.language,
+            )
+        except TrainingExpandError as exc:
+            yield sse_event("error", {"status": 400, "error": str(exc)})
+            return
+        except GitConflictError as exc:
+            yield sse_event("error", {"status": 409, "error": str(exc)})
+            return
+        except RuntimeError as exc:
+            log.exception("training expand failed")
+            yield sse_event("error", {"status": 503, "error": str(exc)})
+            return
+        except Exception as exc:  # surface unknown failures rather than dropping the stream
+            log.exception("training expand crashed")
+            yield sse_event("error", {"status": 500, "error": str(exc)})
+            return
+
+        yield sse_event(
+            "done",
+            {
+                "path": result.path,
+                "theme": result.theme,
+                "parent_path": result.parent_path,
+            },
         )
-    except TrainingExpandError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except GitConflictError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    except RuntimeError as exc:
-        # Vault not configured, image provider missing, etc.
-        log.exception("training expand failed")
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    return ExpandResponse(
-        path=result.path,
-        theme=result.theme,
-        parent_path=result.parent_path,
+
+    return StreamingResponse(
+        with_heartbeat(event_gen()),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )

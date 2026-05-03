@@ -191,12 +191,6 @@ export interface TrainingExpandRequest {
   language?: string | null;
 }
 
-export interface TrainingExpandResponse {
-  path: string;
-  theme: string;
-  parent_path: string | null;
-}
-
 export interface TrainingConfigResponse {
   training_folder: string;
   image_generation_enabled: boolean;

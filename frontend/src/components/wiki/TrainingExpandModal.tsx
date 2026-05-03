@@ -1,13 +1,16 @@
 // Modal that appears when the user clicks a dead wikilink inside a
 // Training fiche. Confirms generation, optionally enables web search,
-// then calls POST /api/training/expand. On success, the parent
-// navigates to the freshly-created fiche.
+// then opens an SSE stream to /api/training/expand and waits for the
+// `done` event. On success, the parent navigates to the freshly-
+// created fiche. The endpoint is silent for 30-90s on the wire while
+// the LLM works — heartbeats keep the connection alive across
+// reverse-proxies (Tailscale Funnel was killing it after ~60s).
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Loader2, Sparkles, X } from "lucide-react";
 
-import { api, type TrainingExpandResponse } from "@/lib/api";
+import { streamSse } from "@/lib/sse";
 
 interface Props {
   targetConcept: string;
@@ -26,6 +29,7 @@ export default function TrainingExpandModal({
   const [webSearch, setWebSearch] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
 
   // Esc closes the modal — but only when we're not in the middle of a
   // generation request (the user could lose their fiche).
@@ -37,20 +41,58 @@ export default function TrainingExpandModal({
     return () => window.removeEventListener("keydown", onKey);
   }, [busy, onClose]);
 
+  // If the modal unmounts while a generation is in flight, abort the
+  // SSE so the orphaned connection doesn't keep the server busy
+  // (the backend will still finish writing the fiche — that work is
+  // not aborted server-side, only the response stream we're reading).
+  useEffect(() => {
+    return () => {
+      abortRef.current?.abort();
+    };
+  }, []);
+
   const submit = async () => {
     setBusy(true);
     setError(null);
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
+
+    let resolved = false;
     try {
-      const res = await api.post<TrainingExpandResponse>("/api/training/expand", {
-        target_concept: targetConcept,
-        parent_path: parentPath,
-        web_search: webSearch,
-      });
-      onGenerated(res.path);
+      await streamSse(
+        "/api/training/expand",
+        {
+          target_concept: targetConcept,
+          parent_path: parentPath,
+          web_search: webSearch,
+        },
+        {
+          signal: ctrl.signal,
+          onEvent: (ev) => {
+            if (ev.event === "done") {
+              const d = ev.data as { path: string };
+              resolved = true;
+              onGenerated(d.path);
+            } else if (ev.event === "error") {
+              const d = ev.data as { error: string; status?: number };
+              resolved = true;
+              setError(d.error ?? "request failed");
+            }
+          },
+        },
+      );
+      if (!resolved) {
+        // Stream ended without a done/error — should never happen, but
+        // surface it rather than swallow it.
+        setError("server closed the stream without a result");
+      }
     } catch (err) {
-      setError((err as Error)?.message ?? "request failed");
+      if ((err as Error).name !== "AbortError") {
+        setError((err as Error)?.message ?? "request failed");
+      }
     } finally {
       setBusy(false);
+      abortRef.current = null;
     }
   };
 
