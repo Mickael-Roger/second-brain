@@ -62,7 +62,7 @@ class FetchSummary:
     error: str | None = None
 
 
-_FAVICON_MAX_BYTES = 8192
+_FAVICON_MAX_BYTES = 52224
 
 
 def _normalise_favicon(raw: str | None) -> str | None:
