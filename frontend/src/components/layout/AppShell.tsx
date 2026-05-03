@@ -14,14 +14,14 @@ import { useTranslation } from "react-i18next";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   BookOpen,
+  BookOpenCheck,
   Brain,
-  CalendarCheck,
   GraduationCap,
   LogOut,
   Menu,
   MessageSquare,
   Moon,
-  Newspaper,
+  Rss,
   Sun,
   X,
 } from "lucide-react";
@@ -69,7 +69,7 @@ export default function AppShell({
     { id: "chat", icon: MessageSquare, label: t("nav.chat") },
     { id: "wiki", icon: BookOpen, label: t("nav.wiki") },
     { id: "training", icon: GraduationCap, label: t("nav.training") },
-    { id: "news", icon: Newspaper, label: t("nav.news") },
+    { id: "news", icon: Rss, label: t("nav.news") },
   ];
 
   return (
@@ -95,7 +95,7 @@ export default function AppShell({
                 : "text-muted hover:bg-bg hover:text-text"
             }`}
           >
-            <CalendarCheck className="h-5 w-5" />
+            <BookOpenCheck className="h-5 w-5" />
             {reviewNeeded && (
               <span
                 aria-hidden="true"
@@ -195,7 +195,7 @@ export default function AppShell({
                 : "text-muted hover:bg-bg"
             }`}
           >
-            <CalendarCheck className="h-5 w-5" />
+            <BookOpenCheck className="h-5 w-5" />
             {reviewNeeded && (
               <span
                 aria-hidden="true"
