@@ -16,6 +16,8 @@ from pydantic import BaseModel, Field
 from app.auth import current_user
 from app.chat import persistence
 from app.chat.orchestrator import run_chat
+from app.chat.system_prompts import get_spec as get_system_prompt_spec
+from app.config import get_settings
 from app.db.connection import get_db
 from app.db.models import Chat
 from app.llm import get_llm_router
@@ -47,6 +49,10 @@ class ChatRequest(BaseModel):
     module_id: str | None = None
     provider: str | None = None
     model: str | None = None
+    # Server-side whitelist key. When set, swaps the system prompt and
+    # restricts the tool surface to whatever that prompt declares it
+    # uses. Free-form prompts are NOT accepted from the client.
+    system_prompt_id: str | None = None
     content: list[ContentBlockIn]
 
 
@@ -207,6 +213,15 @@ async def chat_stream(
     if not payload.content:
         raise HTTPException(status_code=400, detail="content is required")
 
+    prompt_spec = None
+    if payload.system_prompt_id:
+        prompt_spec = get_system_prompt_spec(payload.system_prompt_id)
+        if prompt_spec is None:
+            raise HTTPException(
+                status_code=400,
+                detail=f"unknown system_prompt_id: {payload.system_prompt_id!r}",
+            )
+
     router_ = get_llm_router()
     provider_name = payload.provider or router_.default_name()
     model_name = payload.model or router_.default_model_for(provider_name)
@@ -244,14 +259,20 @@ async def chat_stream(
             from app.tools import get_registry
 
             registry = get_registry()
+            tool_defs = registry.defs()
+            system_prompt_text: str | None = None
+            if prompt_spec is not None:
+                tool_defs = [d for d in tool_defs if d.name in prompt_spec.allowed_tools]
+                system_prompt_text = prompt_spec.build(get_settings().app.language)
             async for ev in run_chat(
                 conn,
                 chat=chat,
                 user_message=user_message,
                 provider_name=provider_name,
                 model=model_name,
-                tools=registry.defs(),
+                tools=tool_defs,
                 dispatcher=registry,
+                system_prompt=system_prompt_text,
             ):
                 if ev.type == "text_delta":
                     yield _sse("text_delta", {"text": ev.text or ""})

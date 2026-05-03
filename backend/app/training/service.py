@@ -134,6 +134,7 @@ def _build_user_message(
     parent_content: str | None,
     theme_index_content: str | None,
     web_search_requested: bool,
+    extra_context: str | None = None,
 ) -> str:
     parts: list[str] = []
     parts.append(
@@ -164,6 +165,16 @@ def _build_user_message(
         parts.append(
             "## Theme index\n\n"
             "```markdown\n" + _truncate(theme_index_content, _MAX_BREADCRUMB_CHARS) + "\n```"
+        )
+    if extra_context:
+        parts.append(
+            "## Stated expectations\n\n"
+            "The user already clarified the scope, depth and goals of this "
+            "theme during a kickoff conversation. Calibrate the overview to "
+            "those expectations — choose the angle, the level of abstraction "
+            "and the `À explorer` sub-concepts so they MATCH what the user "
+            "asked for, not a generic intro.\n\n"
+            "```markdown\n" + _truncate(extra_context, _MAX_BREADCRUMB_CHARS) + "\n```"
         )
     return "\n\n".join(parts)
 
@@ -253,6 +264,7 @@ async def expand_concept(
     theme: str | None = None,
     web_search: bool = False,
     language: str | None = None,
+    extra_context: str | None = None,
 ) -> TrainingExpandResult:
     """Generate a fiche for ``target_concept`` and write it to the vault.
 
@@ -260,6 +272,11 @@ async def expand_concept(
     clicked from. When None, the fiche is treated as a theme root and
     ``theme`` MUST be supplied — the resulting Index.md lives under
     ``<training_folder>/<theme>/Index.md``.
+
+    ``extra_context`` is free-form markdown injected into the user
+    message under a ``## Stated expectations`` heading. Used by the
+    kickoff flow to pass the clarified scope/goals into the overview
+    fiche generation so the LLM calibrates the angle accordingly.
     """
     target_concept = (target_concept or "").strip()
     if not target_concept:
@@ -309,6 +326,7 @@ async def expand_concept(
         parent_content=parent_content,
         theme_index_content=theme_index_content,
         web_search_requested=web_search and bool(task.web_search),
+        extra_context=extra_context,
     )
 
     history: list[Message] = [Message(role="user", content=[TextBlock(text=user_text)])]
@@ -380,15 +398,21 @@ async def expand_concept(
         # Materialise the fiche on disk (still under batch_session so no
         # per-write commit fires).
         body = _strip_outer_fence(final_text or "").strip()
-        slug = _slugify(target_concept)
         folder_rel = f"{settings.obsidian.training_folder.strip('/')}/{theme}"
-        candidate = f"{folder_rel}/{slug}.md"
+        # Theme-root call (no parent_path) produces the canonical
+        # ``Index.md`` for the theme; child concepts are slugged.
+        if parent_path is None:
+            candidate = f"{folder_rel}/Index.md"
+        else:
+            slug = _slugify(target_concept)
+            candidate = f"{folder_rel}/{slug}.md"
 
-        # Avoid clobbering: if the slug exists, append a date suffix.
+        # Avoid clobbering: if the file exists, append a date suffix.
         abs_path = resolve_vault_path(candidate)
         if abs_path.exists():
             stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
-            candidate = f"{folder_rel}/{slug}-{stamp}.md"
+            stem = candidate[:-3]  # strip .md
+            candidate = f"{stem}-{stamp}.md"
         note_rel = candidate
 
         abs_target = resolve_vault_path(note_rel)
