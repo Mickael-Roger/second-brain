@@ -15,6 +15,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import {
   BookOpen,
   Brain,
+  CalendarCheck,
   GraduationCap,
   LogOut,
   Menu,
@@ -29,7 +30,7 @@ import { logout } from "@/lib/auth";
 import { setLanguage, currentLanguage } from "@/lib/i18n";
 import { currentTheme, setTheme, type Theme } from "@/lib/theme";
 
-export type ViewId = "chat" | "wiki" | "news";
+export type ViewId = "chat" | "wiki" | "news" | "training";
 
 interface Props {
   active: ViewId;
@@ -66,6 +67,7 @@ export default function AppShell({
   const items: { id: ViewId; icon: typeof MessageSquare; label: string }[] = [
     { id: "chat", icon: MessageSquare, label: t("nav.chat") },
     { id: "wiki", icon: BookOpen, label: t("nav.wiki") },
+    { id: "training", icon: GraduationCap, label: t("nav.training") },
     { id: "news", icon: Newspaper, label: t("nav.news") },
   ];
 
@@ -92,7 +94,7 @@ export default function AppShell({
                 : "text-muted hover:bg-bg hover:text-text"
             }`}
           >
-            <GraduationCap className="h-5 w-5" />
+            <CalendarCheck className="h-5 w-5" />
             {reviewNeeded && (
               <span
                 aria-hidden="true"
@@ -195,7 +197,7 @@ export default function AppShell({
                 : "text-muted hover:bg-bg"
             }`}
           >
-            <GraduationCap className="h-5 w-5" />
+            <CalendarCheck className="h-5 w-5" />
             {reviewNeeded && (
               <span
                 aria-hidden="true"

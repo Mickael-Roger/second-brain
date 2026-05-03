@@ -5,7 +5,8 @@
   "nav": {
     "chat": "Discussion",
     "wiki": "Wiki",
-    "news": "Actualités"
+    "news": "Actualités",
+    "training": "Training"
   },
   "news": {
     "title": "Actualités",
@@ -138,7 +139,27 @@
     "modalParent": "Depuis",
     "useWebSearch": "Utiliser la recherche web (si le provider la supporte)",
     "generate": "Générer",
-    "generating": "Génération…"
+    "generating": "Génération…",
+    "dashboard": {
+      "title": "Training",
+      "subtitle": "Tes thèmes en cours et les fiches que tu as explorées.",
+      "newTheme": "Nouveau thème",
+      "empty": "Aucun thème de training pour le moment. Démarres-en un pour créer son Index.md.",
+      "loading": "Chargement des thèmes…",
+      "loadError": "Impossible de charger les thèmes.",
+      "ficheCount_one": "{{count}} fiche",
+      "ficheCount_other": "{{count}} fiches",
+      "updated": "Mis à jour {{date}}",
+      "open": "Ouvrir"
+    },
+    "newTheme": {
+      "title": "Démarrer un nouveau thème",
+      "lead": "Décris le thème que tu veux explorer. Le brain va créer l'Index.md et amorcer une liste \"## À explorer\" de sous-concepts.",
+      "subjectLabel": "Sujet du thème",
+      "subjectPlaceholder": "ex. Réseau Kubernetes, peinture Renaissance, consensus distribué…",
+      "submit": "Démarrer dans le chat",
+      "submitHint": "Bascule sur la vue chat avec un prompt pré-rempli — relis-le puis envoie."
+    }
   },
   "pwa": {
     "updateAvailable": "Nouvelle version disponible",

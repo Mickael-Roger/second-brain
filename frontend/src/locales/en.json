@@ -5,7 +5,8 @@
   "nav": {
     "chat": "Chat",
     "wiki": "Wiki",
-    "news": "News"
+    "news": "News",
+    "training": "Training"
   },
   "news": {
     "title": "News",
@@ -138,7 +139,27 @@
     "modalParent": "From",
     "useWebSearch": "Use web search (if the provider supports it)",
     "generate": "Generate",
-    "generating": "Generating…"
+    "generating": "Generating…",
+    "dashboard": {
+      "title": "Training",
+      "subtitle": "Your active themes and the fiches you've drilled into.",
+      "newTheme": "New theme",
+      "empty": "No training theme yet. Start a new one to seed an Index.md.",
+      "loading": "Loading themes…",
+      "loadError": "Failed to load themes.",
+      "ficheCount_one": "{{count}} fiche",
+      "ficheCount_other": "{{count}} fiches",
+      "updated": "Updated {{date}}",
+      "open": "Open"
+    },
+    "newTheme": {
+      "title": "Start a new training theme",
+      "lead": "Describe the theme you want to learn. The brain will create the Index.md and seed an \"## À explorer\" list of sub-concepts.",
+      "subjectLabel": "Theme subject",
+      "subjectPlaceholder": "e.g. Kubernetes networking, Renaissance painting, distributed consensus…",
+      "submit": "Start in chat",
+      "submitHint": "Switches to the chat view with a pre-filled prompt — review it, then send."
+    }
   },
   "pwa": {
     "updateAvailable": "New version available",

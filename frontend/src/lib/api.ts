@@ -202,3 +202,16 @@ export interface TrainingConfigResponse {
   image_generation_enabled: boolean;
 }
 
+export interface TrainingThemeSummary {
+  theme: string;
+  index_path: string;
+  overview: string;
+  fiche_count: number;
+  updated_at: string;
+}
+
+export interface TrainingThemeListResponse {
+  training_folder: string;
+  themes: TrainingThemeSummary[];
+}
+
