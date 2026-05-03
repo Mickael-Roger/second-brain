@@ -70,11 +70,22 @@ export default function TrainingExpandModal({
           signal: ctrl.signal,
           onEvent: (ev) => {
             if (ev.event === "done") {
-              const d = ev.data as { path: string };
-              resolved = true;
-              onGenerated(d.path);
+              const d = ev.data as { path?: unknown } | null | undefined;
+              const path = d && typeof (d as { path?: unknown }).path === "string"
+                ? ((d as { path: string }).path)
+                : null;
+              if (path) {
+                resolved = true;
+                onGenerated(path);
+              } else {
+                resolved = true;
+                console.error("training/expand: malformed done event", ev);
+                setError(
+                  "server returned a malformed done event (no string path) — see console",
+                );
+              }
             } else if (ev.event === "error") {
-              const d = ev.data as { error: string; status?: number };
+              const d = (ev.data ?? {}) as { error?: string };
               resolved = true;
               setError(d.error ?? "request failed");
             }
