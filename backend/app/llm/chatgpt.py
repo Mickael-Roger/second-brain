@@ -178,10 +178,15 @@ class ChatGPTProvider:
     name: str
     model: str
 
-    def __init__(self, *, name: str, model: str, timeout: float = 300.0) -> None:
+    def __init__(self, *, name: str, model: str, timeout: float = 600.0) -> None:
         self.name = name
         self.model = model
-        self._timeout = timeout
+        # Granular timeout — see OpenAICompatProvider for the rationale.
+        # ``timeout`` here is the read-silence budget; thinking models
+        # and tool-driven inner streams (training kickoff) need it long.
+        self._timeout = httpx.Timeout(
+            connect=10.0, read=timeout, write=60.0, pool=60.0
+        )
 
     def _headers(self) -> dict[str, str]:
         access_token, account_id = chatgpt_auth.get_valid_access_token(self.name)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from collections.abc import AsyncIterator
@@ -110,6 +111,54 @@ def _to_blocks(content: list[ContentBlockIn]) -> list:
 
 def _sse(event_type: str, data: dict) -> bytes:
     return f"event: {event_type}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n".encode("utf-8")
+
+
+# SSE comment line — clients ignore it but it keeps the underlying TCP
+# connection from looking idle to proxies/NAT/browsers, which can
+# otherwise drop us during long quiet periods (e.g. while a server-side
+# tool like training.finalize_kickoff runs an inner LLM stream that
+# takes 30-90s without yielding any outer events).
+_HEARTBEAT_INTERVAL_SEC = 15.0
+_HEARTBEAT_BYTES = b": keepalive\n\n"
+
+
+async def _with_heartbeat(
+    events: AsyncIterator[bytes],
+    interval: float = _HEARTBEAT_INTERVAL_SEC,
+) -> AsyncIterator[bytes]:
+    """Wrap an SSE byte stream so that we emit a heartbeat comment
+    whenever no real event has flowed for ``interval`` seconds.
+
+    A producer task pumps the upstream generator into a queue; the
+    consumer waits on the queue with ``asyncio.wait_for(..., interval)``
+    and yields a heartbeat each time the wait fires."""
+    queue: asyncio.Queue[bytes | None] = asyncio.Queue()
+
+    async def producer() -> None:
+        try:
+            async for ev in events:
+                await queue.put(ev)
+        finally:
+            await queue.put(None)  # sentinel — end of stream
+
+    task = asyncio.create_task(producer())
+    try:
+        while True:
+            try:
+                item = await asyncio.wait_for(queue.get(), timeout=interval)
+            except asyncio.TimeoutError:
+                yield _HEARTBEAT_BYTES
+                continue
+            if item is None:
+                return
+            yield item
+    finally:
+        if not task.done():
+            task.cancel()
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):
+                pass
 
 
 # ---- Routes --------------------------------------------------------------
@@ -291,7 +340,7 @@ async def chat_stream(
             yield _sse("error", {"error": str(exc)})
 
     return StreamingResponse(
-        event_gen(),
+        _with_heartbeat(event_gen()),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )

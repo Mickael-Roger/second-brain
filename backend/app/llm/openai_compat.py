@@ -149,13 +149,20 @@ class OpenAICompatProvider:
         base_url: str,
         api_key: str,
         model: str,
-        timeout: float = 120.0,
+        timeout: float = 600.0,
     ) -> None:
         self.name = name
         self.model = model
         self._base_url = base_url.rstrip("/")
         self._api_key = api_key
-        self._timeout = timeout
+        # Granular timeout: keep ``connect``/``write``/``pool`` short so
+        # genuine network-layer issues fail fast, but allow up to
+        # ``timeout`` seconds of READ silence — long enough for slow
+        # reasoning models, cold starts, and the inner LLM call that
+        # the training kickoff fires from inside finalize_kickoff.
+        self._timeout = httpx.Timeout(
+            connect=10.0, read=timeout, write=60.0, pool=60.0
+        )
 
     async def stream(
         self,
