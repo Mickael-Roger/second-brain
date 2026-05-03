@@ -144,18 +144,33 @@ export default function NewsView({ onOpenChat }: Props) {
   // mobile-only controls are hidden.
   const showDetailMobile = selectedId !== null;
 
-  // Prev/next ids relative to the currently displayed article list — same
-  // ordering as the middle column. Boundaries return null so the buttons
-  // disable cleanly.
-  const articleList = articles.data ?? [];
+  // Prev/next ids walk a SNAPSHOT of the article list, not the live
+  // query data. Reason: `unreadOnly` is on by default, so marking the
+  // currently-open article as read makes it disappear from the live
+  // list — `findIndex` would return -1 and the prev/next buttons
+  // would vanish mid-reading, which is exactly the opposite of what
+  // the user wants. We refresh the snapshot only when the live list
+  // still contains the currently-open article (typical case: the
+  // user picks a fresh article from the list, or switches feed).
+  // When the open article drops out of the live list (mark-as-read
+  // in unread-only mode), the snapshot is left intact so the user
+  // can keep walking from where they were.
+  const [navList, setNavList] = useState<NewsArticleSummary[]>([]);
+  useEffect(() => {
+    if (selectedId === null) return;
+    const live = articles.data ?? [];
+    if (live.some((a) => a.id === selectedId)) {
+      setNavList(live);
+    }
+  }, [selectedId, articles.data]);
+
   const currentIdx = selectedId
-    ? articleList.findIndex((a) => a.id === selectedId)
+    ? navList.findIndex((a) => a.id === selectedId)
     : -1;
-  const prevId =
-    currentIdx > 0 ? articleList[currentIdx - 1].id : null;
+  const prevId = currentIdx > 0 ? navList[currentIdx - 1].id : null;
   const nextId =
-    currentIdx >= 0 && currentIdx < articleList.length - 1
-      ? articleList[currentIdx + 1].id
+    currentIdx >= 0 && currentIdx < navList.length - 1
+      ? navList[currentIdx + 1].id
       : null;
 
   return (
