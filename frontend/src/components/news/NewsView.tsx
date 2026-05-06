@@ -8,7 +8,7 @@
 //            "chat about this" button that hands the article context
 //            off to the Chat tab.
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -173,6 +173,55 @@ export default function NewsView({ onOpenChat }: Props) {
       ? navList[currentIdx + 1].id
       : null;
 
+  // Resizable divider between the article list and the detail pane
+  // (desktop only). Persisted to localStorage so the chosen width
+  // sticks across reloads. The 16rem feeds sidebar stays fixed; only
+  // the middle column is resizable.
+  const LIST_WIDTH_KEY = "sb.news.listWidth";
+  const LIST_WIDTH_DEFAULT = 352; // 22rem
+  const LIST_WIDTH_MIN = 220;
+  const LIST_WIDTH_MAX = 720;
+  const [listWidth, setListWidth] = useState<number>(() => {
+    if (typeof window === "undefined") return LIST_WIDTH_DEFAULT;
+    const stored = window.localStorage.getItem(LIST_WIDTH_KEY);
+    const n = stored ? parseInt(stored, 10) : NaN;
+    if (!Number.isFinite(n)) return LIST_WIDTH_DEFAULT;
+    return Math.max(LIST_WIDTH_MIN, Math.min(LIST_WIDTH_MAX, n));
+  });
+  useEffect(() => {
+    window.localStorage.setItem(LIST_WIDTH_KEY, String(listWidth));
+  }, [listWidth]);
+
+  const panesRef = useRef<HTMLDivElement>(null);
+  const draggingRef = useRef(false);
+  useEffect(() => {
+    function onMove(e: MouseEvent) {
+      if (!draggingRef.current || !panesRef.current) return;
+      const rect = panesRef.current.getBoundingClientRect();
+      // 16rem (= 256px) feeds sidebar sits to the left of the list.
+      const next = e.clientX - rect.left - 256;
+      setListWidth(Math.max(LIST_WIDTH_MIN, Math.min(LIST_WIDTH_MAX, next)));
+    }
+    function onUp() {
+      if (!draggingRef.current) return;
+      draggingRef.current = false;
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    }
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+    return () => {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+    };
+  }, []);
+  function startResize(e: React.MouseEvent) {
+    e.preventDefault();
+    draggingRef.current = true;
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+  }
+
   return (
     <div className="flex h-full flex-col">
       <header className="flex flex-wrap items-center gap-3 border-b border-border bg-surface px-4 py-3">
@@ -196,9 +245,12 @@ export default function NewsView({ onOpenChat }: Props) {
         </div>
       )}
 
-      <div className="flex flex-1 min-h-0 flex-col overflow-hidden md:grid md:grid-cols-[16rem_22rem_1fr] md:divide-x md:divide-border">
+      <div
+        ref={panesRef}
+        className="flex flex-1 min-h-0 flex-col overflow-hidden md:flex-row"
+      >
         {/* Feeds: permanent column on desktop, drawer on mobile. */}
-        <div className="hidden md:block">
+        <div className="hidden md:block md:w-64 md:shrink-0 md:border-r md:border-border">
           <FeedSidebar
             feeds={feeds.data ?? []}
             loading={feeds.isLoading}
@@ -212,8 +264,12 @@ export default function NewsView({ onOpenChat }: Props) {
         </div>
 
         {/* Article list: full-screen on mobile (when no article is open),
-            permanent middle column on desktop. */}
-        <div className={`${showDetailMobile ? "hidden" : "flex"} h-full min-h-0 flex-col md:flex`}>
+            permanent middle column on desktop. Width is user-resizable
+            via the divider on its right edge (desktop only). */}
+        <div
+          style={{ ["--news-list-w" as string]: `${listWidth}px` }}
+          className={`${showDetailMobile ? "hidden" : "flex"} h-full min-h-0 flex-col md:flex md:shrink-0 md:w-[var(--news-list-w)]`}
+        >
           <div className="flex items-center gap-2 border-b border-border bg-surface px-3 py-2 md:hidden">
             <button
               type="button"
@@ -242,9 +298,21 @@ export default function NewsView({ onOpenChat }: Props) {
           />
         </div>
 
+        {/* Resize handle between article list and detail pane (desktop
+            only). 4px wide hit target with a thin visible line. */}
+        <div
+          onMouseDown={startResize}
+          onDoubleClick={() => setListWidth(LIST_WIDTH_DEFAULT)}
+          role="separator"
+          aria-orientation="vertical"
+          aria-label={t("news.resizeList")}
+          title={t("news.resizeList")}
+          className="hidden md:flex md:w-1 md:shrink-0 md:cursor-col-resize md:items-stretch md:bg-border md:hover:bg-accent md:active:bg-accent"
+        />
+
         {/* Detail: full-screen on mobile (when an article is open), permanent
             right column on desktop. */}
-        <div className={`${showDetailMobile ? "flex" : "hidden"} h-full min-h-0 flex-col md:flex`}>
+        <div className={`${showDetailMobile ? "flex" : "hidden"} h-full min-h-0 flex-col md:flex md:flex-1 md:min-w-0`}>
           <div className="flex items-center gap-2 border-b border-border bg-surface px-3 py-2 md:hidden">
             <button
               type="button"
