@@ -66,9 +66,15 @@ export default function NewsView({ onOpenChat }: Props) {
   // article retention window), which means the UI shows everything
   // currently in the DB. Manual fetch goes incremental (same as the
   // every-5-min cron) for speed.
+  //
+  // Polled every 60s + on window-focus so the sidebar counts and the
+  // article list pick up the every-5-min server-side fetch without a
+  // hard reload.
   const feeds = useQuery<NewsFeedSummary[]>({
     queryKey: ["news-feeds"],
     queryFn: () => api.get<NewsFeedSummary[]>("/api/news/feeds"),
+    refetchInterval: 60_000,
+    refetchOnWindowFocus: true,
   });
 
   const articles = useQuery<NewsArticleSummary[]>({
@@ -81,6 +87,8 @@ export default function NewsView({ onOpenChat }: Props) {
       const suffix = qs.toString() ? `?${qs.toString()}` : "";
       return api.get<NewsArticleSummary[]>(`/api/news/articles${suffix}`);
     },
+    refetchInterval: 60_000,
+    refetchOnWindowFocus: true,
   });
 
   const selected = useQuery<NewsArticleDetail>({

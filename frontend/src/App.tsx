@@ -29,11 +29,17 @@ export default function App() {
 
   // Wiki-review status drives the review badge in the global nav rail.
   // The query is enabled only when the user is logged in (gated below).
+  // Polled in the background and on window-focus so the badge turns red
+  // (or unreds itself) without a manual refresh — e.g. when the day rolls
+  // over, or when the user finishes the review in another tab.
   const reviewStatus = useQuery({
     queryKey: ["wiki-review-status"],
     queryFn: () => api.get<WikiReviewStatus>("/api/wiki-reviews/status"),
     enabled: !!me.data,
     staleTime: 60_000,
+    refetchInterval: 60_000,
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: true,
   });
 
   // Vault tree (cached) — the modal needs it for NoteRenderer wikilink
