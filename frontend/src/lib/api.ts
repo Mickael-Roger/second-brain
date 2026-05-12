@@ -137,6 +137,8 @@ export interface NewsArticleSummary {
   title: string;
   published_at: string;
   is_read: boolean;
+  is_starred: boolean;
+  labels: string[];
 }
 
 export interface NewsArticleDetail extends NewsArticleSummary {
@@ -154,6 +156,35 @@ export interface NewsFeedSummary {
   favicon: string | null;
   total: number;
   unread: number;
+}
+
+export interface NewsFeedCreate {
+  url: string;
+  title?: string;
+  category?: string;
+}
+
+export interface NewsFeedUpdate {
+  title?: string;
+  category?: string;
+  detach?: boolean;
+}
+
+export interface NewsFeedDetail {
+  feed_id: string;
+  title: string | null;
+  feed_group: string | null;
+  site_url: string | null;
+}
+
+export interface NewsLabelsResponse {
+  article_id: string;
+  labels: string[];
+}
+
+export interface NewsMarkStarredResponse {
+  article_id: string;
+  is_starred: boolean;
 }
 
 // ---- Wiki review ----

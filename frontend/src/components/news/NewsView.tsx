@@ -27,7 +27,12 @@ import {
   Newspaper,
   Pencil,
   Play,
+  Plus,
   Rss,
+  Settings,
+  Star,
+  Tag,
+  Trash2,
   X,
 } from "lucide-react";
 
@@ -36,6 +41,7 @@ import {
   ApiError,
   type NewsArticleDetail,
   type NewsArticleSummary,
+  type NewsFeedDetail,
   type NewsFeedSummary,
 } from "@/lib/api";
 
@@ -129,6 +135,57 @@ export default function NewsView({ onOpenChat }: Props) {
       qc.invalidateQueries({ queryKey: ["news-article", articleId] });
     },
   });
+
+  const toggleStar = useMutation({
+    mutationFn: ({
+      articleId,
+      isStarred,
+    }: {
+      articleId: string;
+      isStarred: boolean;
+    }) =>
+      api.post<{ article_id: string; is_starred: boolean }>(
+        `/api/news/articles/${encodeURIComponent(articleId)}/${
+          isStarred ? "star" : "unstar"
+        }`,
+      ),
+    onSuccess: (_data, { articleId }) => {
+      qc.invalidateQueries({ queryKey: ["news-articles"] });
+      qc.invalidateQueries({ queryKey: ["news-article", articleId] });
+    },
+  });
+
+  const addLabel = useMutation({
+    mutationFn: ({ articleId, label }: { articleId: string; label: string }) =>
+      api.post<{ article_id: string; labels: string[] }>(
+        `/api/news/articles/${encodeURIComponent(articleId)}/labels`,
+        { label },
+      ),
+    onSuccess: (_d, { articleId }) => {
+      qc.invalidateQueries({ queryKey: ["news-article", articleId] });
+      qc.invalidateQueries({ queryKey: ["news-articles"] });
+      qc.invalidateQueries({ queryKey: ["news-labels"] });
+    },
+  });
+
+  const removeLabel = useMutation({
+    mutationFn: ({ articleId, label }: { articleId: string; label: string }) =>
+      api.delete<{ article_id: string; labels: string[] }>(
+        `/api/news/articles/${encodeURIComponent(articleId)}/labels/${encodeURIComponent(label)}`,
+      ),
+    onSuccess: (_d, { articleId }) => {
+      qc.invalidateQueries({ queryKey: ["news-article", articleId] });
+      qc.invalidateQueries({ queryKey: ["news-articles"] });
+    },
+  });
+
+  const labels = useQuery<string[]>({
+    queryKey: ["news-labels"],
+    queryFn: () => api.get<string[]>("/api/news/labels"),
+    staleTime: 30_000,
+  });
+
+  const [manageOpen, setManageOpen] = useState(false);
 
   function startChatAbout(a: NewsArticleDetail) {
     // Don't paste the article body / summary into the prompt — keeps the
@@ -238,6 +295,17 @@ export default function NewsView({ onOpenChat }: Props) {
 
         <button
           type="button"
+          onClick={() => setManageOpen(true)}
+          aria-label={t("news.manage")}
+          title={t("news.manage")}
+          className="flex items-center gap-1 rounded-lg border border-border bg-bg px-3 py-1.5 text-sm hover:border-accent"
+        >
+          <Settings className="h-3.5 w-3.5" />
+          <span className="hidden sm:inline">{t("news.manage")}</span>
+        </button>
+
+        <button
+          type="button"
           onClick={() => fetchNow.mutate()}
           disabled={fetchNow.isPending}
           className="flex items-center gap-1 rounded-lg border border-border bg-bg px-3 py-1.5 text-sm hover:border-accent disabled:opacity-50"
@@ -342,12 +410,29 @@ export default function NewsView({ onOpenChat }: Props) {
               toggleRead.mutate({ articleId: id, isRead: target })
             }
             togglePending={toggleRead.isPending}
+            toggleStar={(id, target) =>
+              toggleStar.mutate({ articleId: id, isStarred: target })
+            }
+            starPending={toggleStar.isPending}
+            labelSuggestions={labels.data ?? []}
+            onAddLabel={(id, label) => addLabel.mutate({ articleId: id, label })}
+            onRemoveLabel={(id, label) =>
+              removeLabel.mutate({ articleId: id, label })
+            }
+            labelMutating={addLabel.isPending || removeLabel.isPending}
             onChat={startChatAbout}
             onPrev={prevId ? () => setSelectedId(prevId) : undefined}
             onNext={nextId ? () => setSelectedId(nextId) : undefined}
           />
         </div>
       </div>
+
+      {manageOpen && (
+        <ManageModal
+          feeds={feeds.data ?? []}
+          onClose={() => setManageOpen(false)}
+        />
+      )}
 
       {/* Mobile feeds drawer (left slide-over). */}
       {feedsOpen && (
@@ -623,6 +708,13 @@ function ArticleList({
                 >
                   {a.title}
                 </span>
+                {a.is_starred && (
+                  <Star
+                    className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-500"
+                    fill="currentColor"
+                    aria-hidden
+                  />
+                )}
               </div>
               <span className="ml-6 text-[10px] text-muted">
                 {(a.feed_title ?? a.source) + " · " + a.published_at.slice(0, 10)}
@@ -643,6 +735,12 @@ interface DetailPaneProps {
   loading: boolean;
   toggleRead: (id: string, target: boolean) => void;
   togglePending: boolean;
+  toggleStar: (id: string, target: boolean) => void;
+  starPending: boolean;
+  labelSuggestions: string[];
+  onAddLabel: (id: string, label: string) => void;
+  onRemoveLabel: (id: string, label: string) => void;
+  labelMutating: boolean;
   onChat: (a: NewsArticleDetail) => void;
   // Undefined when at the corresponding boundary of the list, so the
   // arrow button can render disabled.
@@ -660,6 +758,12 @@ function DetailPane({
   loading,
   toggleRead,
   togglePending,
+  toggleStar,
+  starPending,
+  labelSuggestions,
+  onAddLabel,
+  onRemoveLabel,
+  labelMutating,
   onChat,
   onPrev,
   onNext,
@@ -674,6 +778,8 @@ function DetailPane({
   >(null);
   const [customOpen, setCustomOpen] = useState(false);
   const [customText, setCustomText] = useState("");
+  const [labelInputOpen, setLabelInputOpen] = useState(false);
+  const [labelDraft, setLabelDraft] = useState("");
 
   // Switching articles resets the local content-tab + capture state.
   const currentId = article?.id ?? null;
@@ -682,6 +788,8 @@ function DetailPane({
     setCaptureMessage(null);
     setCustomOpen(false);
     setCustomText("");
+    setLabelInputOpen(false);
+    setLabelDraft("");
   }, [currentId]);
 
   async function runCapture(kind: CaptureKind, id: string) {
@@ -842,6 +950,28 @@ function DetailPane({
             </button>
             <button
               type="button"
+              onClick={() => toggleStar(article.id, !article.is_starred)}
+              disabled={starPending}
+              aria-pressed={article.is_starred}
+              title={article.is_starred ? t("news.unstar") : t("news.star")}
+              className={`inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-xs disabled:opacity-50 ${
+                article.is_starred
+                  ? "border-amber-500 bg-amber-500/10 text-amber-500 hover:bg-amber-500/20"
+                  : "border-border bg-bg hover:border-accent"
+              }`}
+            >
+              <Star
+                className="h-3 w-3"
+                fill={article.is_starred ? "currentColor" : "none"}
+              />
+              {starPending
+                ? t("news.starring")
+                : article.is_starred
+                  ? t("news.unstar")
+                  : t("news.star")}
+            </button>
+            <button
+              type="button"
               onClick={() => onChat(article)}
               className="inline-flex items-center gap-1 rounded-lg border border-accent bg-accent/10 px-2 py-1 text-xs text-accent hover:bg-accent/20"
             >
@@ -898,6 +1028,17 @@ function DetailPane({
                 : t("news.captureCustom")}
             </button>
           </div>
+          <LabelChips
+            article={article}
+            suggestions={labelSuggestions}
+            mutating={labelMutating}
+            inputOpen={labelInputOpen}
+            setInputOpen={setLabelInputOpen}
+            draft={labelDraft}
+            setDraft={setLabelDraft}
+            onAdd={onAddLabel}
+            onRemove={onRemoveLabel}
+          />
           {customOpen && (
             <div className="space-y-2 rounded-lg border border-border bg-bg p-2">
               <label
@@ -1106,6 +1247,495 @@ function FeedIcon({
         <span className="absolute -right-0.5 -top-0.5 h-1.5 w-1.5 rounded-full bg-accent ring-1 ring-bg" />
       )}
     </span>
+  );
+}
+
+// ─── Label chips (per-article tags) ─────────────────────────────────
+
+function LabelChips({
+  article,
+  suggestions,
+  mutating,
+  inputOpen,
+  setInputOpen,
+  draft,
+  setDraft,
+  onAdd,
+  onRemove,
+}: {
+  article: NewsArticleDetail;
+  suggestions: string[];
+  mutating: boolean;
+  inputOpen: boolean;
+  setInputOpen: (v: boolean) => void;
+  draft: string;
+  setDraft: (v: string) => void;
+  onAdd: (id: string, label: string) => void;
+  onRemove: (id: string, label: string) => void;
+}) {
+  const { t } = useTranslation();
+  const filteredSuggestions = useMemo(() => {
+    const d = draft.trim().toLowerCase();
+    if (!d) return [];
+    const have = new Set(article.labels.map((l) => l.toLowerCase()));
+    return suggestions
+      .filter((s) => !have.has(s.toLowerCase()))
+      .filter((s) => s.toLowerCase().includes(d))
+      .slice(0, 6);
+  }, [draft, suggestions, article.labels]);
+
+  function submit(value: string) {
+    const v = value.trim();
+    if (!v) return;
+    onAdd(article.id, v);
+    setDraft("");
+    setInputOpen(false);
+  }
+
+  return (
+    <div className="flex flex-wrap items-center gap-1.5 pt-2">
+      <Tag className="h-3 w-3 text-muted" aria-hidden />
+      <span className="text-[11px] uppercase tracking-wide text-muted">
+        {t("news.labels")}
+      </span>
+      {article.labels.map((label) => (
+        <span
+          key={label}
+          className="inline-flex items-center gap-1 rounded-full border border-border bg-bg px-2 py-0.5 text-[11px] text-text/85"
+        >
+          {label}
+          <button
+            type="button"
+            onClick={() => onRemove(article.id, label)}
+            disabled={mutating}
+            aria-label={`remove ${label}`}
+            className="text-muted hover:text-red-500 disabled:opacity-50"
+          >
+            <X className="h-3 w-3" />
+          </button>
+        </span>
+      ))}
+      {inputOpen ? (
+        <div className="relative">
+          <input
+            type="text"
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                submit(draft);
+              } else if (e.key === "Escape") {
+                setInputOpen(false);
+                setDraft("");
+              }
+            }}
+            placeholder={t("news.labelPlaceholder")}
+            maxLength={64}
+            autoFocus
+            className="rounded-full border border-accent bg-bg px-2 py-0.5 text-[11px] focus:outline-none"
+          />
+          {filteredSuggestions.length > 0 && (
+            <ul className="absolute z-10 mt-1 max-h-40 overflow-y-auto rounded-md border border-border bg-surface text-[11px] shadow">
+              {filteredSuggestions.map((s) => (
+                <li key={s}>
+                  <button
+                    type="button"
+                    onClick={() => submit(s)}
+                    className="block w-full px-2 py-1 text-left hover:bg-bg"
+                  >
+                    {s}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={() => setInputOpen(true)}
+          disabled={mutating}
+          className="inline-flex items-center gap-1 rounded-full border border-dashed border-border px-2 py-0.5 text-[11px] text-muted hover:border-accent hover:text-text disabled:opacity-50"
+        >
+          <Plus className="h-3 w-3" />
+          {t("news.addLabel")}
+        </button>
+      )}
+    </div>
+  );
+}
+
+// ─── Manage modal (feeds + categories) ──────────────────────────────
+
+type ManageTab = "feeds" | "categories";
+
+function ManageModal({
+  feeds,
+  onClose,
+}: {
+  feeds: NewsFeedSummary[];
+  onClose: () => void;
+}) {
+  const { t } = useTranslation();
+  const qc = useQueryClient();
+  const [tab, setTab] = useState<ManageTab>("feeds");
+  const [error, setError] = useState<string | null>(null);
+
+  // Local categories list — distinct values across feeds. Used both
+  // for the categories tab and as the dropdown source on the feeds
+  // tab so they stay consistent without an extra round-trip.
+  const categories = useMemo(() => {
+    const s = new Set<string>();
+    for (const f of feeds) if (f.feed_group) s.add(f.feed_group);
+    return Array.from(s).sort((a, b) => a.localeCompare(b));
+  }, [feeds]);
+
+  const invalidate = () => {
+    qc.invalidateQueries({ queryKey: ["news-feeds"] });
+    qc.invalidateQueries({ queryKey: ["news-articles"] });
+  };
+
+  function readError(err: unknown): string {
+    if (err instanceof ApiError) {
+      if (
+        typeof err.detail === "object" && err.detail && "detail" in err.detail
+      ) {
+        return String((err.detail as { detail: unknown }).detail);
+      }
+      return String(err.detail ?? err.message);
+    }
+    return String((err as Error)?.message ?? err);
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+      onClick={onClose}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="flex max-h-[90vh] w-full max-w-2xl flex-col rounded-xl border border-border bg-surface shadow-xl"
+      >
+        <header className="flex items-center justify-between border-b border-border px-4 py-3">
+          <h2 className="text-base font-semibold">{t("news.manageTitle")}</h2>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label={t("common.close")}
+            className="text-muted hover:text-text"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </header>
+        <div className="flex gap-1 border-b border-border px-4">
+          {(["feeds", "categories"] as ManageTab[]).map((id) => (
+            <button
+              key={id}
+              type="button"
+              onClick={() => {
+                setTab(id);
+                setError(null);
+              }}
+              className={`-mb-px border-b-2 px-3 py-2 text-xs font-medium uppercase tracking-wide ${
+                tab === id
+                  ? "border-accent text-accent"
+                  : "border-transparent text-muted hover:text-text"
+              }`}
+            >
+              {t(id === "feeds" ? "news.manageTabFeeds" : "news.manageTabCategories")}
+            </button>
+          ))}
+        </div>
+
+        {error && (
+          <div className="border-b border-red-500/30 bg-red-500/10 px-4 py-2 text-xs text-red-500">
+            {error}
+          </div>
+        )}
+
+        <div className="flex-1 overflow-y-auto p-4">
+          {tab === "feeds" ? (
+            <ManageFeedsTab
+              feeds={feeds}
+              categories={categories}
+              onError={setError}
+              onMutated={invalidate}
+              readError={readError}
+            />
+          ) : (
+            <ManageCategoriesTab
+              categories={categories}
+              onError={setError}
+              onMutated={invalidate}
+              readError={readError}
+            />
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ManageFeedsTab({
+  feeds,
+  categories,
+  onError,
+  onMutated,
+  readError,
+}: {
+  feeds: NewsFeedSummary[];
+  categories: string[];
+  onError: (s: string | null) => void;
+  onMutated: () => void;
+  readError: (e: unknown) => string;
+}) {
+  const { t } = useTranslation();
+  const [newUrl, setNewUrl] = useState("");
+  const [newTitle, setNewTitle] = useState("");
+  const [newCategory, setNewCategory] = useState("");
+  const [newCategoryDraft, setNewCategoryDraft] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  async function subscribe() {
+    const url = newUrl.trim();
+    if (!url || busy) return;
+    setBusy(true);
+    onError(null);
+    try {
+      const category =
+        newCategory === "__new__"
+          ? newCategoryDraft.trim() || undefined
+          : newCategory || undefined;
+      await api.post<NewsFeedDetail>("/api/news/feeds", {
+        url,
+        title: newTitle.trim() || undefined,
+        category,
+      });
+      setNewUrl("");
+      setNewTitle("");
+      setNewCategory("");
+      setNewCategoryDraft("");
+      onMutated();
+    } catch (e) {
+      onError(readError(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function unsubscribe(feedId: string) {
+    if (busy) return;
+    if (!window.confirm(t("news.unsubscribeConfirm"))) return;
+    setBusy(true);
+    onError(null);
+    try {
+      await api.delete(`/api/news/feeds/${encodeURIComponent(feedId)}`);
+      onMutated();
+    } catch (e) {
+      onError(readError(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function moveFeed(feedId: string, newCat: string) {
+    setBusy(true);
+    onError(null);
+    try {
+      await api.patch<NewsFeedDetail>(
+        `/api/news/feeds/${encodeURIComponent(feedId)}`,
+        newCat === ""
+          ? { detach: true }
+          : { category: newCat },
+      );
+      onMutated();
+    } catch (e) {
+      onError(readError(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="space-y-4">
+      <section className="space-y-2 rounded-lg border border-border bg-bg p-3">
+        <p className="text-xs font-semibold uppercase tracking-wide text-muted">
+          {t("news.addFeed")}
+        </p>
+        <input
+          type="url"
+          value={newUrl}
+          onChange={(e) => setNewUrl(e.target.value)}
+          placeholder={t("news.feedUrl")}
+          className="w-full rounded-md border border-border bg-surface px-2 py-1 text-sm focus:border-accent focus:outline-none"
+        />
+        <div className="flex flex-wrap items-center gap-2">
+          <input
+            type="text"
+            value={newTitle}
+            onChange={(e) => setNewTitle(e.target.value)}
+            placeholder={t("news.feedTitleOptional")}
+            className="min-w-0 flex-1 rounded-md border border-border bg-surface px-2 py-1 text-sm focus:border-accent focus:outline-none"
+          />
+          <select
+            value={newCategory}
+            onChange={(e) => setNewCategory(e.target.value)}
+            className="rounded-md border border-border bg-surface px-2 py-1 text-sm focus:border-accent focus:outline-none"
+          >
+            <option value="">{t("news.noCategory")}</option>
+            {categories.map((c) => (
+              <option key={c} value={c}>
+                {c}
+              </option>
+            ))}
+            <option value="__new__">{t("news.newCategory")}</option>
+          </select>
+          {newCategory === "__new__" && (
+            <input
+              type="text"
+              value={newCategoryDraft}
+              onChange={(e) => setNewCategoryDraft(e.target.value)}
+              placeholder={t("news.newCategoryName")}
+              maxLength={64}
+              className="rounded-md border border-border bg-surface px-2 py-1 text-sm focus:border-accent focus:outline-none"
+            />
+          )}
+          <button
+            type="button"
+            onClick={subscribe}
+            disabled={busy || !newUrl.trim()}
+            className="rounded-md border border-accent bg-accent/10 px-3 py-1 text-sm text-accent hover:bg-accent/20 disabled:opacity-50"
+          >
+            {busy ? t("news.subscribing") : t("news.addFeed")}
+          </button>
+        </div>
+      </section>
+
+      <section>
+        {feeds.length === 0 ? (
+          <p className="text-sm text-muted">{t("news.manageEmptyFeeds")}</p>
+        ) : (
+          <ul className="divide-y divide-border rounded-lg border border-border">
+            {feeds.map((f) => (
+              <li
+                key={f.feed_id}
+                className="flex flex-wrap items-center gap-2 px-3 py-2"
+              >
+                <FeedIcon
+                  favicon={f.favicon}
+                  alt={f.feed_title}
+                  isRead
+                  size={14}
+                />
+                <span className="min-w-0 flex-1 truncate text-sm" title={f.feed_title}>
+                  {f.feed_title}
+                </span>
+                <select
+                  value={f.feed_group ?? ""}
+                  onChange={(e) => moveFeed(f.feed_id, e.target.value)}
+                  disabled={busy}
+                  className="rounded-md border border-border bg-bg px-2 py-0.5 text-xs"
+                >
+                  <option value="">{t("news.noCategory")}</option>
+                  {categories.map((c) => (
+                    <option key={c} value={c}>
+                      {c}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  onClick={() => unsubscribe(f.feed_id)}
+                  disabled={busy}
+                  aria-label={t("news.unsubscribe")}
+                  title={t("news.unsubscribe")}
+                  className="rounded-md border border-border bg-bg p-1 text-muted hover:border-red-500 hover:text-red-500 disabled:opacity-50"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+    </div>
+  );
+}
+
+function ManageCategoriesTab({
+  categories,
+  onError,
+  onMutated,
+  readError,
+}: {
+  categories: string[];
+  onError: (s: string | null) => void;
+  onMutated: () => void;
+  readError: (e: unknown) => string;
+}) {
+  const { t } = useTranslation();
+  const [busy, setBusy] = useState(false);
+
+  async function rename(old: string) {
+    const next = window.prompt(t("news.renameCategory"), old);
+    if (!next || next === old) return;
+    setBusy(true);
+    onError(null);
+    try {
+      await api.patch(
+        `/api/news/categories/${encodeURIComponent(old)}`,
+        { name: next.trim() },
+      );
+      onMutated();
+    } catch (e) {
+      onError(readError(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function remove(name: string) {
+    if (!window.confirm(t("news.deleteCategoryConfirm"))) return;
+    setBusy(true);
+    onError(null);
+    try {
+      await api.delete(`/api/news/categories/${encodeURIComponent(name)}`);
+      onMutated();
+    } catch (e) {
+      onError(readError(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (categories.length === 0) {
+    return <p className="text-sm text-muted">{t("news.manageEmptyCategories")}</p>;
+  }
+  return (
+    <ul className="divide-y divide-border rounded-lg border border-border">
+      {categories.map((c) => (
+        <li key={c} className="flex items-center gap-2 px-3 py-2">
+          <span className="flex-1 truncate text-sm">{c}</span>
+          <button
+            type="button"
+            onClick={() => rename(c)}
+            disabled={busy}
+            className="rounded-md border border-border bg-bg px-2 py-0.5 text-xs hover:border-accent disabled:opacity-50"
+          >
+            {t("news.renameCategory")}
+          </button>
+          <button
+            type="button"
+            onClick={() => remove(c)}
+            disabled={busy}
+            className="rounded-md border border-border bg-bg px-2 py-0.5 text-xs hover:border-red-500 hover:text-red-500 disabled:opacity-50"
+          >
+            {t("news.deleteCategory")}
+          </button>
+        </li>
+      ))}
+    </ul>
   );
 }
 
