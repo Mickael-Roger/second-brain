@@ -220,8 +220,13 @@ class GReaderClient:
             await self._fetch_csrf()
         url = f"{self.base_url}/api/greader.php{path}"
         for attempt in (1, 2, 3):
-            form = _flatten_form(params)
-            form.append(("T", self._csrf_token or ""))
+            # httpx 0.28 requires `data=` to be a Mapping; a list of
+            # tuples gets misrouted into encode_content() and produces a
+            # sync IteratorByteStream that AsyncClient refuses to send.
+            # Dict values that are lists are expanded into repeated form
+            # keys by httpx itself, so passing the dict directly works.
+            form: dict[str, str | list[str]] = dict(params)
+            form["T"] = self._csrf_token or ""
             resp = await self._client.post(
                 url, data=form, headers=self._auth_headers()
             )
@@ -737,21 +742,6 @@ class GReaderClient:
 
 
 # ── Module-level helpers ────────────────────────────────────────────
-
-
-def _flatten_form(
-    params: dict[str, str | list[str]],
-) -> list[tuple[str, str]]:
-    """httpx ``data=`` doesn't accept ``{key: list[str]}`` shaped
-    payloads for repeated form keys; build a tuple list explicitly."""
-    out: list[tuple[str, str]] = []
-    for k, v in params.items():
-        if isinstance(v, list):
-            for one in v:
-                out.append((k, str(one)))
-        else:
-            out.append((k, str(v)))
-    return out
 
 
 def _long_id_to_hex(raw: str) -> str:
