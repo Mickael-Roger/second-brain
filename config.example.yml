@@ -146,25 +146,30 @@ organize:
     - Training/
 
 # ---------------------------------------------------------------------------
-# News — pulls articles from your RSS aggregator (FreshRSS via the
-# Fever-compatible API) on a cron schedule. Articles' metadata sits in
-# SQLite; full bodies live on disk under <data_dir>/news_summaries/.
+# News — pulls articles from FreshRSS via its native Google-Reader-
+# compatible API on a cron schedule. Article metadata sits in SQLite;
+# full bodies live on disk under <data_dir>/news/.
 # ---------------------------------------------------------------------------
 news:
   enabled: false                     # flip to true once `sources.freshrss` is filled in
   fetch_schedule: "*/5 * * * *"      # cron (UTC) — pull new items every 5 minutes
   sources:
     freshrss:
-      base_url: "https://freshrss.example.com/api/fever.php"
-      # api_key is md5(username:password). Pre-compute once:
-      #   echo -n "youruser:yourpassword" | md5sum
-      api_key: "REPLACE_WITH_MD5_HASH"
+      # FreshRSS root URL. No path suffix needed; the client appends
+      # /api/greader.php/... itself. A legacy /api/fever.php suffix is
+      # stripped automatically so existing configs still resolve.
+      base_url: "https://freshrss.example.com"
+      # FreshRSS account credentials. Best practice: set a dedicated
+      # API password in FreshRSS (Settings → Authentication → API
+      # password) and put that here, not your web UI password.
+      username: "youruser"
+      password: "REPLACE_WITH_API_PASSWORD"
       max_items_per_run: 500
-      # FreshRSS folder/group ids to skip on every fetch. Articles
-      # from feeds in these folders are never stored. Find a folder's
-      # id by editing the category in FreshRSS — it's in the URL.
-      # Stringify the ids; leave empty to ingest everything.
-      excluded_group_ids: []   # e.g. ["4", "12"]
+      # FreshRSS category (folder) NAMES to skip on every fetch.
+      # Articles from feeds in these categories are never stored.
+      # Names — not numeric ids — because GReader is name-based.
+      # Leave empty to ingest everything.
+      excluded_categories: []   # e.g. ["Noise", "Off-topic"]
 
 # ---------------------------------------------------------------------------
 # Anki — driven through the AnkiConnect plugin

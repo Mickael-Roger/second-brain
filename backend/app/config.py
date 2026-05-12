@@ -187,23 +187,31 @@ class OrganizeSection(BaseModel):
 
 
 class FreshRSSSourceConfig(BaseModel):
-    """Fever-API-compatible FreshRSS endpoint.
+    """FreshRSS Google-Reader-compatible endpoint.
 
-    `api_key` is the pre-computed `md5(username:password)` token Fever
-    expects in the POST body — pre-compute it once, paste it in. We do
-    NOT take username/password here; storing the hash directly avoids
-    hashing logic at startup and keeps the config self-describing.
+    Auth is the GReader two-token dance: ClientLogin gives us an
+    ``Auth`` token (~7d, refreshed lazily) and write actions also
+    need a ``T=`` CSRF token (~30 min, refreshed lazily). We just
+    take the user's FreshRSS credentials here and let the client
+    handle the rest.
+
+    Set a dedicated API password in FreshRSS:
+    Settings → Authentication → API password.
     """
 
-    base_url: str                       # e.g. https://freshrss.example.com/api/fever.php
-    api_key: str                        # md5(username:password)
+    # FreshRSS root, e.g. ``https://freshrss.example.com``.
+    # A legacy ``…/api/fever.php`` suffix is stripped by the client
+    # so existing setups keep resolving while users migrate.
+    base_url: str
+    username: str
+    password: str
     max_items_per_run: int = 500
-    # FreshRSS folder/group ids to skip on every fetch — articles whose
-    # feed lives in these folders are never stored. The Fever group ids
-    # are integers (stringified here) visible in FreshRSS's URL when
-    # editing a category. Useful for muting noisy or off-topic folders
-    # without unsubscribing from the feeds in FreshRSS itself.
-    excluded_group_ids: list[str] = Field(default_factory=list)
+    # Category names (FreshRSS folders) to skip on every fetch — every
+    # article whose feed lives in one of these categories is dropped.
+    # We use names instead of numeric ids because the GReader API
+    # namespace is name-based; renames in FreshRSS therefore need a
+    # matching config update.
+    excluded_categories: list[str] = Field(default_factory=list)
 
 
 class NewsSourcesSection(BaseModel):

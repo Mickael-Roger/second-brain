@@ -43,9 +43,9 @@ log = logging.getLogger(__name__)
 
 class ArticleSummaryDTO(BaseModel):
     """Article header — what the per-feed list shows. Slim by design:
-    list rendering only needs id, title, feed bits, date, read flag,
-    favicon. Body / image / url are loaded lazily from JSON in the
-    detail endpoint."""
+    list rendering only needs id, title, feed bits, date, read/star
+    flags, labels, favicon. Body / image / url are loaded lazily from
+    JSON in the detail endpoint."""
 
     id: str
     source: str
@@ -56,6 +56,8 @@ class ArticleSummaryDTO(BaseModel):
     title: str
     published_at: str
     is_read: bool
+    is_starred: bool
+    labels: list[str]
 
 
 class ArticleDetailDTO(ArticleSummaryDTO):
@@ -102,6 +104,8 @@ def _article_summary_dto(a: StoredArticle) -> ArticleSummaryDTO:
         title=a.title,
         published_at=a.published_at,
         is_read=a.is_read,
+        is_starred=a.is_starred,
+        labels=list(a.labels),
     )
 
 

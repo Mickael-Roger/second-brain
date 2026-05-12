@@ -27,7 +27,7 @@ log = logging.getLogger(__name__)
 @dataclass(slots=True)
 class ArticleRecord:
     """Full per-article record persisted to disk. Fields mirror the
-    FeverItem we got from the upstream API plus the bits we computed
+    GReaderItem we got from the upstream API plus the bits we computed
     at fetch time (image extraction, html→text)."""
 
     id: str                      # source + ":" + external_id
@@ -123,3 +123,26 @@ def article_exists(article_id: str) -> bool:
     """Cheap existence check — used by the fetch path to decide
     whether to write the JSON file (we only write on first sight)."""
     return _path_for(article_id).is_file()
+
+
+def rename_article(old_id: str, new_id: str) -> None:
+    """Rename the on-disk JSON when an article's id changes (currently
+    only the Fever→GReader decimal→hex re-encode). No-op if the source
+    file is missing or the destination already exists."""
+    if old_id == new_id:
+        return
+    src = _path_for(old_id)
+    dst = _path_for(new_id)
+    if not src.is_file():
+        return
+    if dst.is_file():
+        try:
+            src.unlink()
+        except OSError:
+            log.exception("could not delete stale article JSON %s", old_id)
+        return
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        src.rename(dst)
+    except OSError:
+        log.exception("could not rename article JSON %s → %s", old_id, new_id)
