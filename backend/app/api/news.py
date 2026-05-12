@@ -1,15 +1,32 @@
 """News endpoints.
 
-  - GET  /api/news/feeds                       feed list with counts
-  - GET  /api/news/articles                    article list (per feed/category, optionally unread-only)
-  - GET  /api/news/articles/{id}               one article (header from SQLite, body from JSON)
-  - POST /api/news/articles/{id}/read          flip local + push to FreshRSS
-  - POST /api/news/fetch                       manual trigger (incremental by default)
-  - GET  /api/news/runs                        recent fetch runs (debug)
+Reads:
+  - GET    /api/news/feeds                         feed list with counts
+  - GET    /api/news/articles                      article list (per feed/category/label/starred)
+  - GET    /api/news/articles/{id}                 one article (header + body)
+  - GET    /api/news/labels                        user-defined labels
+  - GET    /api/news/categories                    distinct feed categories
+  - GET    /api/news/runs                          recent fetch runs (debug)
 
-The list endpoint stays metadata-only (cheap to scroll). The detail
-endpoint joins in the JSON-on-disk record so we can show the full
-body / image / source link.
+Item-state writes (local flip + upstream push):
+  - POST   /api/news/articles/{id}/read
+  - POST   /api/news/articles/{id}/unread
+  - POST   /api/news/articles/{id}/star
+  - POST   /api/news/articles/{id}/unstar
+  - POST   /api/news/articles/{id}/labels          {"label": str}
+  - DELETE /api/news/articles/{id}/labels/{label}
+
+Feed CRUD (synchronous round-trip to FreshRSS; locally upserted on success):
+  - POST   /api/news/feeds                         {"url", "title"?, "category"?}
+  - PATCH  /api/news/feeds/{feed_id}               {"title"?, "category"?}
+  - DELETE /api/news/feeds/{feed_id}
+
+Category CRUD (FreshRSS-side; folder lifecycle is feed-driven so creating
+an empty category is a no-op, just remembered in `news_labels`):
+  - PATCH  /api/news/categories/{old}              {"name": str}
+  - DELETE /api/news/categories/{name}
+
+Plus the existing capture flows and POST /fetch.
 """
 
 from __future__ import annotations
@@ -26,12 +43,20 @@ from app.auth import current_user
 from app.db.connection import get_db
 from app.news import (
     StoredArticle,
+    add_article_label,
     articles,
+    forget_label_everywhere,
     get_article,
     list_articles,
+    list_categories,
     list_feeds_with_counts,
+    list_labels,
     list_recent_runs,
     mark_article_read,
+    mark_article_starred,
+    remember_label,
+    remove_article_label,
+    upsert_feed,
 )
 
 router = APIRouter(prefix="/api/news", tags=["news"])
@@ -175,6 +200,8 @@ def get_articles(
     to: str | None = Query(None),
     feed_id: str | None = Query(None),
     feed_group: str | None = Query(None),
+    label: str | None = Query(None),
+    starred_only: bool = Query(False),
     unread_only: bool = Query(False),
     _user: str = Depends(current_user),
     conn: sqlite3.Connection = Depends(get_db),
@@ -186,6 +213,8 @@ def get_articles(
         to_iso=t,
         feed_id=feed_id,
         feed_group=feed_group,
+        label=label,
+        starred_only=starred_only,
         unread_only=unread_only,
     )
     return [_article_summary_dto(a) for a in arts]
@@ -268,6 +297,429 @@ async def mark_unread(
 ) -> MarkReadResponse:
     """Flip a read article back to unread, locally and on FreshRSS."""
     return _toggle_read(article_id, conn, is_read=False)
+
+
+# ── Starred ────────────────────────────────────────────────────────
+
+
+class MarkStarredResponse(BaseModel):
+    article_id: str
+    is_starred: bool
+
+
+def _toggle_starred(
+    article_id: str, conn: sqlite3.Connection, *, is_starred: bool,
+) -> MarkStarredResponse:
+    a = get_article(conn, article_id)
+    if a is None:
+        raise HTTPException(status_code=404, detail="article not found")
+    mark_article_starred(conn, article_id, is_starred=is_starred)
+
+    async def _push() -> None:
+        from app.news.service import push_starred_state
+
+        try:
+            await push_starred_state(
+                article_id,
+                source=a.source,
+                external_id=a.external_id,
+                is_starred=is_starred,
+            )
+        except Exception:
+            log.exception(
+                "push_starred_state background failed for %s (is_starred=%s)",
+                article_id, is_starred,
+            )
+
+    asyncio.create_task(_push())
+    return MarkStarredResponse(article_id=article_id, is_starred=is_starred)
+
+
+@router.post("/articles/{article_id}/star", response_model=MarkStarredResponse)
+async def mark_starred(
+    article_id: str,
+    _user: str = Depends(current_user),
+    conn: sqlite3.Connection = Depends(get_db),
+) -> MarkStarredResponse:
+    return _toggle_starred(article_id, conn, is_starred=True)
+
+
+@router.post("/articles/{article_id}/unstar", response_model=MarkStarredResponse)
+async def mark_unstarred(
+    article_id: str,
+    _user: str = Depends(current_user),
+    conn: sqlite3.Connection = Depends(get_db),
+) -> MarkStarredResponse:
+    return _toggle_starred(article_id, conn, is_starred=False)
+
+
+# ── Labels ─────────────────────────────────────────────────────────
+
+
+_LABEL_NAME_RE = "[A-Za-z0-9 _.\\-/]{1,64}"
+
+
+class LabelRequest(BaseModel):
+    label: str = Field(..., min_length=1, max_length=64, pattern=_LABEL_NAME_RE)
+
+
+class LabelsResponse(BaseModel):
+    article_id: str
+    labels: list[str]
+
+
+@router.get("/labels", response_model=list[str])
+def get_labels(
+    _user: str = Depends(current_user),
+    conn: sqlite3.Connection = Depends(get_db),
+) -> list[str]:
+    return list_labels(conn)
+
+
+@router.delete("/labels/{name}")
+async def delete_label_endpoint(
+    name: str,
+    _user: str = Depends(current_user),
+    conn: sqlite3.Connection = Depends(get_db),
+) -> dict[str, int | str]:
+    """Detach a label from every article and drop it from the
+    autocomplete index. Pushes the removal upstream for every
+    article that had it. Best-effort on the upstream side — local
+    state still reflects the deletion if FreshRSS is unreachable
+    for a given article."""
+    from app.news.service import push_label
+
+    affected = [
+        (r["article_id"], r["source"], r["external_id"])
+        for r in conn.execute(
+            "SELECT al.article_id, a.source, a.external_id "
+            "FROM news_article_labels al "
+            "JOIN news_articles a ON a.id = al.article_id "
+            "WHERE al.label = ?",
+            (name,),
+        ).fetchall()
+    ]
+    count = forget_label_everywhere(conn, name)
+
+    async def _push() -> None:
+        for aid, source, ext in affected:
+            try:
+                await push_label(
+                    aid, source=source, external_id=ext, label=name, add=False,
+                )
+            except Exception:
+                log.exception(
+                    "push_label remove (bulk) failed for %s label=%s",
+                    aid, name,
+                )
+
+    asyncio.create_task(_push())
+    return {"label": name, "affected": count}
+
+
+@router.post(
+    "/articles/{article_id}/labels", response_model=LabelsResponse,
+)
+async def add_label_endpoint(
+    article_id: str,
+    body: LabelRequest,
+    _user: str = Depends(current_user),
+    conn: sqlite3.Connection = Depends(get_db),
+) -> LabelsResponse:
+    a = get_article(conn, article_id)
+    if a is None:
+        raise HTTPException(status_code=404, detail="article not found")
+    add_article_label(conn, article_id, body.label)
+
+    async def _push() -> None:
+        from app.news.service import push_label
+
+        try:
+            await push_label(
+                article_id,
+                source=a.source,
+                external_id=a.external_id,
+                label=body.label,
+                add=True,
+            )
+        except Exception:
+            log.exception(
+                "push_label add failed for %s (label=%s)", article_id, body.label,
+            )
+
+    asyncio.create_task(_push())
+    # Re-fetch to return the canonical list.
+    updated = get_article(conn, article_id)
+    return LabelsResponse(
+        article_id=article_id,
+        labels=list(updated.labels) if updated else [body.label],
+    )
+
+
+@router.delete(
+    "/articles/{article_id}/labels/{label}", response_model=LabelsResponse,
+)
+async def remove_label_endpoint(
+    article_id: str,
+    label: str,
+    _user: str = Depends(current_user),
+    conn: sqlite3.Connection = Depends(get_db),
+) -> LabelsResponse:
+    a = get_article(conn, article_id)
+    if a is None:
+        raise HTTPException(status_code=404, detail="article not found")
+    remove_article_label(conn, article_id, label)
+
+    async def _push() -> None:
+        from app.news.service import push_label
+
+        try:
+            await push_label(
+                article_id,
+                source=a.source,
+                external_id=a.external_id,
+                label=label,
+                add=False,
+            )
+        except Exception:
+            log.exception(
+                "push_label remove failed for %s (label=%s)", article_id, label,
+            )
+
+    asyncio.create_task(_push())
+    updated = get_article(conn, article_id)
+    return LabelsResponse(
+        article_id=article_id,
+        labels=list(updated.labels) if updated else [],
+    )
+
+
+# ── Categories ─────────────────────────────────────────────────────
+
+
+class CategoryRenameRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=64, pattern=_LABEL_NAME_RE)
+
+
+@router.get("/categories", response_model=list[str])
+def get_categories(
+    _user: str = Depends(current_user),
+    conn: sqlite3.Connection = Depends(get_db),
+) -> list[str]:
+    return list_categories(conn)
+
+
+@router.patch("/categories/{old_name}")
+async def rename_category_endpoint(
+    old_name: str,
+    body: CategoryRenameRequest,
+    _user: str = Depends(current_user),
+    conn: sqlite3.Connection = Depends(get_db),
+) -> dict[str, str]:
+    """Rename a FreshRSS category. Local feed rows are renamed in step
+    so the sidebar reflects the change without waiting for the next
+    fetch cron."""
+    from app.news.service import rename_category
+
+    if old_name == body.name:
+        return {"old": old_name, "new": body.name}
+    try:
+        await rename_category(old_name, body.name)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    conn.execute(
+        "UPDATE news_feeds SET feed_group = ? WHERE feed_group = ?",
+        (body.name, old_name),
+    )
+    conn.execute(
+        "UPDATE news_articles SET feed_group = ? WHERE feed_group = ?",
+        (body.name, old_name),
+    )
+    return {"old": old_name, "new": body.name}
+
+
+@router.delete("/categories/{name}")
+async def delete_category_endpoint(
+    name: str,
+    _user: str = Depends(current_user),
+    conn: sqlite3.Connection = Depends(get_db),
+) -> dict[str, str]:
+    """Delete a FreshRSS category. Tries `disable-tag` first; if the
+    instance doesn't expose it the service falls back to removing the
+    label from every member feed (FreshRSS auto-prunes empty
+    categories). Member feeds remain — they just go to the root."""
+    from app.news.service import delete_category
+
+    member_ids = [
+        r["id"]
+        for r in conn.execute(
+            "SELECT id FROM news_feeds WHERE feed_group = ?", (name,)
+        ).fetchall()
+    ]
+    try:
+        await delete_category(name, member_feed_ids=member_ids)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    conn.execute(
+        "UPDATE news_feeds SET feed_group = NULL WHERE feed_group = ?", (name,)
+    )
+    conn.execute(
+        "UPDATE news_articles SET feed_group = NULL WHERE feed_group = ?", (name,)
+    )
+    return {"deleted": name}
+
+
+# ── Feeds CRUD ─────────────────────────────────────────────────────
+
+
+class FeedCreateRequest(BaseModel):
+    url: str = Field(..., min_length=1, max_length=2048)
+    title: str | None = Field(default=None, max_length=200)
+    category: str | None = Field(
+        default=None, max_length=64, pattern=_LABEL_NAME_RE,
+    )
+
+
+class FeedUpdateRequest(BaseModel):
+    title: str | None = Field(default=None, max_length=200)
+    category: str | None = Field(
+        default=None, max_length=64, pattern=_LABEL_NAME_RE,
+    )
+    # Explicit detach: pass {"category": null, "detach": true} to drop
+    # the feed out of its current category without re-filing it. (Without
+    # this flag, ``category=None`` means "leave unchanged".)
+    detach: bool = False
+
+
+class FeedResponse(BaseModel):
+    feed_id: str
+    title: str | None
+    feed_group: str | None
+    site_url: str | None
+
+
+@router.post("/feeds", response_model=FeedResponse, status_code=201)
+async def subscribe_feed_endpoint(
+    body: FeedCreateRequest,
+    _user: str = Depends(current_user),
+    conn: sqlite3.Connection = Depends(get_db),
+) -> FeedResponse:
+    from app.news.service import subscribe_feed
+
+    try:
+        stream_id = await subscribe_feed(
+            body.url, title=body.title, category=body.category,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    feed_id = stream_id[len("feed/"):] if stream_id.startswith("feed/") else stream_id
+    title = body.title or body.url
+    upsert_feed(
+        conn,
+        feed_id=feed_id,
+        title=title,
+        feed_group=body.category,
+        site_url=None,
+        favicon_data_uri=None,
+    )
+    if body.category:
+        # Keep the autocomplete index in sync so the new category
+        # shows up immediately in the sidebar / picker.
+        remember_label(conn, body.category)
+    return FeedResponse(
+        feed_id=feed_id, title=title,
+        feed_group=body.category, site_url=None,
+    )
+
+
+@router.patch("/feeds/{feed_id}", response_model=FeedResponse)
+async def edit_feed_endpoint(
+    feed_id: str,
+    body: FeedUpdateRequest,
+    _user: str = Depends(current_user),
+    conn: sqlite3.Connection = Depends(get_db),
+) -> FeedResponse:
+    from app.news.service import edit_feed
+
+    row = conn.execute(
+        "SELECT id, title, feed_group, site_url FROM news_feeds WHERE id = ?",
+        (feed_id,),
+    ).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="feed not found")
+    current_cat = row["feed_group"]
+    add_cat: str | None = None
+    remove_cat: str | None = None
+    if body.detach and current_cat:
+        remove_cat = current_cat
+    elif body.category and body.category != current_cat:
+        add_cat = body.category
+        if current_cat:
+            remove_cat = current_cat
+    try:
+        await edit_feed(
+            feed_id, title=body.title, add_category=add_cat,
+            remove_category=remove_cat,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    new_title = body.title if body.title is not None else row["title"]
+    new_cat = None if body.detach else (
+        body.category if body.category is not None else current_cat
+    )
+    conn.execute(
+        "UPDATE news_feeds SET title = COALESCE(?, title), feed_group = ? "
+        "WHERE id = ?",
+        (new_title, new_cat, feed_id),
+    )
+    # Keep article rows aligned for sidebar counts / filtering.
+    conn.execute(
+        "UPDATE news_articles SET feed_title = COALESCE(?, feed_title), "
+        "feed_group = ? WHERE feed_id = ?",
+        (new_title, new_cat, feed_id),
+    )
+    if new_cat:
+        remember_label(conn, new_cat)
+    return FeedResponse(
+        feed_id=feed_id, title=new_title,
+        feed_group=new_cat, site_url=row["site_url"],
+    )
+
+
+@router.delete("/feeds/{feed_id}")
+async def unsubscribe_feed_endpoint(
+    feed_id: str,
+    _user: str = Depends(current_user),
+    conn: sqlite3.Connection = Depends(get_db),
+) -> dict[str, str]:
+    from app.news.service import unsubscribe_feed
+
+    row = conn.execute(
+        "SELECT id FROM news_feeds WHERE id = ?", (feed_id,)
+    ).fetchone()
+    if row is None:
+        # Tolerate orphan rows in news_articles — still try the
+        # upstream unsubscribe in case it's a feed we know upstream
+        # but never persisted locally.
+        log.info("unsubscribe: feed %s not in news_feeds, calling upstream anyway", feed_id)
+    try:
+        await unsubscribe_feed(feed_id)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    # Local cleanup: drop the feed row + every article it owns. The
+    # cascade on news_article_labels removes any labels too.
+    aids = [
+        r["id"]
+        for r in conn.execute(
+            "SELECT id FROM news_articles WHERE feed_id = ?", (feed_id,)
+        ).fetchall()
+    ]
+    conn.execute("DELETE FROM news_articles WHERE feed_id = ?", (feed_id,))
+    conn.execute("DELETE FROM news_feeds WHERE id = ?", (feed_id,))
+    for aid in aids:
+        articles.delete_article(aid)
+    return {"feed_id": feed_id, "deleted": "ok"}
 
 
 # ── Capture: turn an article into an Obsidian vault note ───────────
