@@ -270,6 +270,48 @@ export default function TrendsBubbles({
     return s.length <= n ? s : s.slice(0, n - 1) + "…";
   }
 
+  // Word-wrap a trend name into N lines so the title actually fits
+  // inside its bubble. Greedy: pack as many words as fit per line,
+  // overflow on the next line; if `maxLines` is exhausted, the last
+  // line gets a trailing ellipsis.
+  function wrapLabel(text: string, maxCharsPerLine: number, maxLines: number): string[] {
+    const words = text.trim().split(/\s+/);
+    const lines: string[] = [];
+    let current = "";
+    let i = 0;
+    while (i < words.length && lines.length < maxLines) {
+      const w = words[i];
+      // Break a single overlong word: hard split.
+      if (w.length > maxCharsPerLine) {
+        if (current) {
+          lines.push(current);
+          current = "";
+          if (lines.length >= maxLines) break;
+        }
+        lines.push(w.slice(0, maxCharsPerLine - 1) + "…");
+        i++;
+        continue;
+      }
+      const candidate = current ? current + " " + w : w;
+      if (candidate.length <= maxCharsPerLine) {
+        current = candidate;
+        i++;
+      } else {
+        lines.push(current);
+        current = "";
+      }
+    }
+    if (current && lines.length < maxLines) lines.push(current);
+    // If we ran out of room before consuming all words, ellipsise.
+    if (i < words.length && lines.length > 0) {
+      const last = lines[lines.length - 1];
+      const room = maxCharsPerLine - 1;
+      lines[lines.length - 1] =
+        last.length <= room ? last + "…" : last.slice(0, room) + "…";
+    }
+    return lines;
+  }
+
   function fmtDate(iso: string): string {
     try {
       return new Intl.DateTimeFormat(i18n.language, {
@@ -322,7 +364,21 @@ export default function TrendsBubbles({
             {cat.children.map((b) => {
               const c = colorFor(b.direction);
               const isHover = b.trend.id === hoverId;
-              const label = truncate(b.trend.name, Math.max(8, Math.floor(b.r / 4)));
+              const fontSize = Math.max(11, Math.min(15, b.r / 4.5));
+              // Approximate character width for sans-serif at this
+              // font size. Used to size the wrap budget.
+              const charWidth = fontSize * 0.55;
+              // Inscribed-square width within the circle ≈ r * √2;
+              // we keep a little inset so text doesn't kiss the edge.
+              const usableWidth = b.r * 1.6;
+              const maxCharsPerLine = Math.max(
+                5, Math.floor(usableWidth / charWidth),
+              );
+              const maxLines = b.r >= 55 ? 3 : b.r >= 38 ? 2 : 2;
+              const lines = wrapLabel(
+                b.trend.name, maxCharsPerLine, maxLines,
+              );
+              const lineHeight = fontSize * 1.05;
               return (
                 <g
                   key={b.trend.id}
@@ -342,16 +398,27 @@ export default function TrendsBubbles({
                   />
                   <text
                     textAnchor="middle"
-                    dominantBaseline="middle"
+                    dominantBaseline="central"
                     fill={c.text}
                     style={{
-                      fontSize: `${Math.max(10, Math.min(15, b.r / 4.5))}px`,
+                      fontSize: `${fontSize}px`,
                       fontWeight: 600,
                       pointerEvents: "none",
                       userSelect: "none",
                     }}
                   >
-                    {label}
+                    {lines.map((line, i) => (
+                      <tspan
+                        key={i}
+                        x={0}
+                        dy={i === 0
+                          ? -((lines.length - 1) * lineHeight) / 2
+                          : lineHeight
+                        }
+                      >
+                        {line}
+                      </tspan>
+                    ))}
                   </text>
                 </g>
               );
