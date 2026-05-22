@@ -254,12 +254,35 @@ async def _news_fetch_job() -> None:
     except Exception:
         log.exception("scheduled news fetch failed")
 
+    # Newly ingested articles → trends pipeline. Best-effort: if the
+    # trends LLM is slow or fails, news still ingests fine.
+    try:
+        from app.trends.worker import process_pending
+        await process_pending()
+    except Exception:
+        log.exception("trends worker (post-fetch) failed")
+
+
+async def _trends_safety_job() -> None:
+    """Independent cron: drain any pending articles even when the news
+    fetch hook didn't (or hasn't yet) fired. Keeps the trends DB
+    catching up after restarts or LLM outages."""
+    try:
+        from app.trends.worker import process_pending
+        await process_pending()
+    except Exception:
+        log.exception("trends safety-net run failed")
+
 
 def start_scheduler() -> None:
     global _SCHEDULER
     settings = get_settings()
-    if not settings.organize.enabled and not settings.news.enabled:
-        log.info("scheduler disabled (organize.enabled and news.enabled both false)")
+    if (
+        not settings.organize.enabled
+        and not settings.news.enabled
+        and not settings.trends.enabled
+    ):
+        log.info("scheduler disabled (organize, news, trends all off)")
         return
     if _SCHEDULER is not None:
         return
@@ -287,6 +310,17 @@ def start_scheduler() -> None:
             coalesce=True,
         )
         log.info("scheduler: news fetch = %s", settings.news.fetch_schedule)
+
+    if settings.trends.enabled:
+        sched.add_job(
+            _trends_safety_job,
+            trigger=CronTrigger.from_crontab(settings.trends.process_schedule, timezone="UTC"),
+            id="trends-safety",
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+        )
+        log.info("scheduler: trends safety = %s", settings.trends.process_schedule)
 
     sched.start()
     _SCHEDULER = sched

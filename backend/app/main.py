@@ -72,6 +72,18 @@ async def lifespan(_: FastAPI):
             except Exception:
                 log.exception("startup news fetch failed (non-fatal)")
 
+            # Drain any pending articles into the trends DB (covers
+            # backlogs from before the trends feature was enabled, plus
+            # whatever the backfill just inserted).
+            if settings.trends.enabled:
+                try:
+                    from app.trends.worker import process_pending
+                    log.info("startup trends pass: starting")
+                    n = await process_pending()
+                    log.info("startup trends pass: done (%d processed)", n)
+                except Exception:
+                    log.exception("startup trends pass failed (non-fatal)")
+
         asyncio.create_task(_initial_news_fetch())
 
     try:
