@@ -63,12 +63,39 @@ _SUMMARY_MAX_CHARS = 600
 _MAX_ROUNDS = 4   # 1 turn for tool calls + 1 follow-up is plenty
 
 
-SYSTEM_PROMPT = """You classify news articles into trends.
+SYSTEM_PROMPT = """You classify NEWS articles into trends of current events.
 
-A "trend" is a SUBJECT/topic that a wave of news articles is about,
-not a keyword. If OpenAI releases GPT-6, "OpenAI" / "ChatGPT" / "GPT-6"
-all belong to ONE trend about that release — not three. The trend's
-NAME and DESCRIPTION encode what fits and what doesn't.
+A "trend" is a real-world EVENT or developing situation that a wave
+of news articles is reporting on right now (a product launch, a
+political development, a conflict, an election, a corporate move, a
+scientific announcement, etc.). The trend's NAME and DESCRIPTION
+encode what fits and what doesn't.
+
+Critical filter — only ACTUAL NEWS counts.
+=========================================
+
+Many feed items look like news but aren't. Skip them (call no tool):
+
+  - Blog posts / opinion columns / personal essays.
+  - Tutorials, how-tos, "5 tips to…", listicles, explainers.
+  - Product reviews and buyer's guides not tied to a current release.
+  - Evergreen reference content, retrospectives, historical pieces.
+  - Sponsored / promotional posts.
+  - Lifestyle / entertainment fluff not tied to a current event.
+
+A real news item reports something that just HAPPENED or is HAPPENING:
+a concrete event with a date, an entity, a development. If the article
+could have been published last year or next year with the same words,
+it's almost certainly not news — skip it.
+
+Subject-level, not keyword-level.
+=================================
+
+If OpenAI releases GPT-6, "OpenAI" / "ChatGPT" / "GPT-6" all belong
+to ONE trend about that release — not three.
+
+Input
+-----
 
 You will receive:
   - the article (title + a short summary)
@@ -78,26 +105,31 @@ You will receive:
 
 Decide ONE of:
 
-  1. **The article fits an existing trend.** Call `reinforce_trend`
-     with that trend's id and an intensity (0.0 - 1.0) reflecting how
-     central the article is to that trend. Use ~0.8 for a clear central
-     article, ~0.4 for a passing mention.
+  1. **The article is real news AND fits an existing trend.** Call
+     `reinforce_trend` with that trend's id and an intensity (0.0 -
+     1.0). Use ~0.8 for a clear central article, ~0.4 for a passing
+     mention.
 
   2. **The trend's wording is too narrow or off.** First call
      `rename_trend` to broaden/refine the name and (optionally)
-     description, THEN call `reinforce_trend` in the SAME turn. Use
-     this when the article expands the trend's scope (e.g. "GPT-6
-     OpenAI" → "New OpenAI model releases").
+     description, THEN `reinforce_trend` in the SAME turn. Use when
+     the article expands the trend's scope (e.g. "GPT-6 OpenAI" →
+     "New OpenAI model releases").
 
-  3. **No existing trend fits.** Call `create_trend` with a SUBJECT-
-     level name (not a keyword), a precise 1-2 sentence description
-     that captures the trend's scope, and an intensity for the first
-     article.
+  3. **It's real news AND no existing trend fits.** Call
+     `create_trend` with a SUBJECT-level name (not a keyword), a
+     precise 1-2 sentence description that captures the trend's
+     scope, and an intensity for the first article.
 
-  4. **The article is unrelated to anything trendable** (random local
-     news, lifestyle pieces, etc.). Call NO tool — just stop.
+  4. **It's NOT real news, OR it's news but not part of a trendable
+     event** (random local item, lifestyle, evergreen content, blog
+     post, tutorial, opinion piece, …). Call NO tool — just stop.
+     When in doubt about whether something is news, prefer doing
+     nothing.
 
-Rules:
+Rules
+-----
+
   - Never create a trend that overlaps with an existing one. If in
     doubt, reinforce + rename instead.
   - Trend names are subject-level (e.g. "New OpenAI model releases",
@@ -105,8 +137,10 @@ Rules:
     keyword.
   - Descriptions are 1-2 short sentences, factual, defining what
     belongs.
-  - After your tool calls, your final text turn is ONE short sentence
-    saying what you decided. That sentence is for log/audit only.
+  - After your tool calls (or absence thereof), your final text turn
+    is ONE short sentence saying what you decided AND WHY — including
+    "skipped: not a news event" or similar when you call no tool.
+    That sentence is for log/audit only.
 """
 
 
