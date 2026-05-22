@@ -32,6 +32,7 @@ class TrendRecord:
     id: str
     name: str
     description: str
+    category: str
     weight: float
     created_at: str
     last_reinforced_at: str
@@ -48,10 +49,18 @@ def _row_to_trend(row: sqlite3.Row) -> TrendRecord:
             examples = []
     except json.JSONDecodeError:
         examples = []
+    # ``category`` was added in migration 0017 with a default of
+    # 'Other' — sqlite3.Row.keys() doesn't help us here so we read
+    # defensively by index existence.
+    try:
+        category = str(row["category"])
+    except IndexError:  # pragma: no cover — pre-migration safety
+        category = "Other"
     return TrendRecord(
         id=str(row["id"]),
         name=str(row["name"]),
         description=str(row["description"]),
+        category=category,
         weight=float(row["weight"]),
         created_at=str(row["created_at"]),
         last_reinforced_at=str(row["last_reinforced_at"]),
@@ -99,6 +108,7 @@ def create_trend(
     *,
     name: str,
     description: str,
+    category: str,
     weight: float,
     example_title: str | None = None,
 ) -> TrendRecord:
@@ -107,11 +117,11 @@ def create_trend(
     examples = [example_title] if example_title else []
     conn.execute(
         "INSERT INTO trends "
-        "(id, name, description, weight, created_at, last_reinforced_at, "
-        " reinforcement_count, examples_json, pruned_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, 1, ?, NULL)",
+        "(id, name, description, category, weight, created_at, "
+        " last_reinforced_at, reinforcement_count, examples_json, pruned_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, NULL)",
         (
-            trend_id, name, description, weight, now, now,
+            trend_id, name, description, category, weight, now, now,
             json.dumps(examples, ensure_ascii=False),
         ),
     )
@@ -174,10 +184,12 @@ def rename_trend(
     trend_id: str,
     new_name: str | None,
     new_description: str | None,
+    new_category: str | None = None,
 ) -> bool:
-    """Rename a trend and/or refine its description. At least one of
-    new_name/new_description must be non-empty. Returns True if the row
-    was updated."""
+    """Rename a trend and/or refine its description and/or move it to
+    a different category. At least one of new_name/new_description/
+    new_category must be non-empty. Returns True if the row was
+    updated."""
     sets: list[str] = []
     params: list[object] = []
     if new_name and new_name.strip():
@@ -186,6 +198,9 @@ def rename_trend(
     if new_description and new_description.strip():
         sets.append("description = ?")
         params.append(new_description.strip())
+    if new_category and new_category.strip():
+        sets.append("category = ?")
+        params.append(new_category.strip())
     if not sets:
         return False
     params.append(trend_id)

@@ -215,6 +215,26 @@ trends:
   # stay flagged "not processed" forever; if you ever bump the window
   # they'll be picked up next tick.
   process_window_days: 7
+  # Per-article body cap (plain-text characters) sent to the LLM.
+  # The trends classifier reads the full article body (not just the
+  # title) so it can pick up multi-topic items — typically YouTube
+  # video / podcast descriptions whose body lists chapters / subjects.
+  # 10k is enough for the longest descriptions without blowing tokens.
+  body_max_chars: 10000
+  # Closed set of trend categories. The LLM picks one when creating
+  # a trend; the frontend groups bubbles by category. Keep names
+  # short and disjoint.
+  categories:
+    - AI
+    - Tech
+    - Science
+    - Politics
+    - Economy
+    - World
+    - Culture
+    - Sports
+    - Health
+    - Other
 
 # ---------------------------------------------------------------------------
 # Anki — driven through the AnkiConnect plugin

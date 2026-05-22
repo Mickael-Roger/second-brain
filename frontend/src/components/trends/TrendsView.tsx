@@ -1,35 +1,69 @@
-// Top-level Trends tab. Two-column-ish layout on desktop, stacked on
-// mobile:
-//   - Bubble cloud (sized by softmax weight, coloured by direction).
-//   - Header controls: window selector (24h / 3d / 7d) + manual
-//     "process pending" button.
+// Top-level Trends tab. Trends are grouped by category, each
+// category gets its own bubble cloud with the cloud's footprint
+// scaled to how much weight that category currently holds.
 //
-// We poll lightly (every 30s) so the cloud reflects new ingestion
-// without the user reloading. The bubble component does its own
-// layout and tooltip — this file is plumbing only.
+// Bubble size and direction are computed globally (so a 0.3-weight
+// trend looks the same in any category) — only the cloud arrangement
+// is per-category.
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2, RefreshCw, TrendingUp } from "lucide-react";
 
 import {
   api,
+  type TrendDTO,
   type TrendsHistoryResponse,
   type TrendsListResponse,
 } from "@/lib/api";
 import TrendsBubbles, {
   computeDirections,
-  useElementSize,
+  type TrendDirection,
 } from "./TrendsBubbles";
 
 type WindowHours = 24 | 72 | 168;
+
+interface CategoryGroup {
+  category: string;
+  trends: TrendDTO[];
+  totalWeight: number;
+}
+
+// Order categories by total active weight (most active first), but
+// pin "Other" to the end regardless.
+function groupByCategory(trends: TrendDTO[]): CategoryGroup[] {
+  const by: Record<string, TrendDTO[]> = {};
+  for (const t of trends) {
+    const cat = t.category || "Other";
+    (by[cat] = by[cat] ?? []).push(t);
+  }
+  const groups: CategoryGroup[] = Object.entries(by).map(([category, ts]) => ({
+    category,
+    trends: ts.sort((a, b) => b.weight - a.weight),
+    totalWeight: ts.reduce((acc, t) => acc + t.weight, 0),
+  }));
+  groups.sort((a, b) => {
+    if (a.category === "Other") return 1;
+    if (b.category === "Other") return -1;
+    return b.totalWeight - a.totalWeight;
+  });
+  return groups;
+}
+
+function cloudHeightFor(count: number): number {
+  // Just enough vertical space for the bubbles to lay out without
+  // crowding. Scales with count but caps at ~520px so big categories
+  // don't dominate the page.
+  const min = 240;
+  const max = 520;
+  return Math.max(min, Math.min(max, 140 + count * 32));
+}
 
 export default function TrendsView() {
   const { t } = useTranslation();
   const qc = useQueryClient();
   const [hours, setHours] = useState<WindowHours>(24);
-  const [stageRef, stageSize] = useElementSize<HTMLDivElement>();
 
   const trendsQ = useQuery({
     queryKey: ["trends"],
@@ -57,10 +91,18 @@ export default function TrendsView() {
   const trends = trendsQ.data?.trends ?? [];
   const snapshots = historyQ.data?.snapshots ?? [];
 
-  const directions = useMemo(
+  const directions = useMemo<
+    Record<string, { direction: TrendDirection; delta: number }>
+  >(
     () => computeDirections(snapshots, trends.map((t) => t.id)),
     [snapshots, trends],
   );
+
+  // Compute a global softmax-relative scale so bubbles are comparable
+  // across categories. We pass each per-category subset to
+  // TrendsBubbles but the underlying weight_softmax is already over
+  // the full active set.
+  const groups = useMemo(() => groupByCategory(trends), [trends]);
 
   const disabledFeature =
     processMut.isError &&
@@ -113,7 +155,7 @@ export default function TrendsView() {
         </div>
       </header>
 
-      {/* Mobile window selector (below header on small screens) */}
+      {/* Mobile window selector */}
       <div className="flex items-center gap-1 border-b border-border bg-bg/40 px-4 py-2 md:hidden">
         <span className="mr-2 text-[11px] uppercase tracking-wide text-muted">
           {t("trends.rangeHours")}
@@ -132,7 +174,7 @@ export default function TrendsView() {
         ))}
       </div>
 
-      <div className="min-h-0 flex-1 overflow-hidden">
+      <div className="min-h-0 flex-1 overflow-y-auto">
         {trendsQ.isLoading && (
           <div className="flex h-full items-center justify-center gap-2 text-sm text-muted">
             <Loader2 className="h-4 w-4 animate-spin" />
@@ -164,17 +206,75 @@ export default function TrendsView() {
           </div>
         )}
 
-        {trends.length > 0 && (
-          <div ref={stageRef} className="h-full w-full">
-            <TrendsBubbles
-              trends={trends}
-              directionsByTrendId={directions}
-              width={stageSize.width || 800}
-              height={stageSize.height || 500}
-            />
+        {groups.length > 0 && (
+          <div className="flex flex-col gap-6 px-4 py-4 md:px-6 md:py-6">
+            {groups.map((g) => (
+              <section key={g.category} className="rounded-lg border border-border bg-surface/50">
+                <header className="flex items-baseline justify-between border-b border-border px-4 py-2">
+                  <h2 className="text-sm font-semibold text-text">{g.category}</h2>
+                  <span className="text-[11px] text-muted">
+                    {g.trends.length}
+                  </span>
+                </header>
+                <CategoryCloud
+                  category={g.category}
+                  trends={g.trends}
+                  directions={directions}
+                />
+              </section>
+            ))}
           </div>
         )}
       </div>
     </div>
   );
+}
+
+
+function CategoryCloud({
+  trends,
+  directions,
+}: {
+  category: string;
+  trends: TrendDTO[];
+  directions: Record<string, { direction: TrendDirection; delta: number }>;
+}) {
+  const [ref, size] = useResizeObserver<HTMLDivElement>();
+  const height = cloudHeightFor(trends.length);
+  return (
+    <div ref={ref} className="w-full" style={{ height }}>
+      {size.width > 0 && (
+        <TrendsBubbles
+          trends={trends}
+          directionsByTrendId={directions}
+          width={size.width}
+          height={height}
+        />
+      )}
+    </div>
+  );
+}
+
+
+// Local lightweight resize observer — measures the parent before
+// rendering the bubble cloud so we know the SVG width ahead of time.
+function useResizeObserver<T extends HTMLElement>(): [
+  React.RefObject<T>,
+  { width: number; height: number },
+] {
+  const ref = useRef<T>(null);
+  const [size, setSize] = useState({ width: 0, height: 0 });
+  useEffect(() => {
+    if (!ref.current) return;
+    const el = ref.current;
+    const ro = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const { width, height } = entry.contentRect;
+        setSize({ width: Math.round(width), height: Math.round(height) });
+      }
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  return [ref, size];
 }

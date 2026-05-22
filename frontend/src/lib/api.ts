@@ -244,6 +244,7 @@ export interface TrendDTO {
   id: string;
   name: string;
   description: string;
+  category: string;
   weight: number;
   weight_softmax: number;
   created_at: string;
@@ -260,7 +261,7 @@ export interface TrendSnapshotDTO {
   id: number;
   recorded_at: string;
   trigger_article_id: string | null;
-  trigger_action: "reinforce" | "create" | "rename" | "noop";
+  trigger_action: "reinforce" | "create" | "rename" | "noop" | "multi";
   trigger_trend_id: string | null;
   weights: Record<string, number>;
 }
@@ -268,6 +269,7 @@ export interface TrendSnapshotDTO {
 export interface TrendMetaDTO {
   name: string;
   description: string;
+  category: string;
   pruned_at: string | null;
 }
 

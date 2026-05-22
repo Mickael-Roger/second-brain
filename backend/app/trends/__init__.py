@@ -14,7 +14,13 @@ read the current list (`store.list_active_trends`) for the bubble
 sizes and the snapshot history for the evolution trend lines.
 """
 
-from .engine import apply_event, EventOutcome
+from .engine import (
+    apply_batch,
+    EventOutcome,
+    IntentCreate,
+    IntentReinforce,
+    IntentRename,
+)
 from .assigner import process_article, AssignerError
 from .store import (
     TrendRecord,
@@ -28,8 +34,11 @@ from .worker import process_pending, start_worker, stop_worker
 __all__ = [
     "AssignerError",
     "EventOutcome",
+    "IntentCreate",
+    "IntentReinforce",
+    "IntentRename",
     "TrendRecord",
-    "apply_event",
+    "apply_batch",
     "list_active_trends",
     "list_snapshots_since",
     "mark_article_processed",

@@ -32,6 +32,7 @@ class TrendDTO(BaseModel):
     id: str
     name: str
     description: str
+    category: str
     weight: float                # raw weight from the engine
     weight_softmax: float        # normalised over the active set, useful for the bubble UI
     created_at: str
@@ -64,6 +65,7 @@ class TrendsHistoryResponse(BaseModel):
 class TrendMetaDTO(BaseModel):
     name: str
     description: str
+    category: str
     pruned_at: str | None
 
 
@@ -92,6 +94,7 @@ def list_trends(
             id=t.id,
             name=t.name,
             description=t.description,
+            category=t.category,
             weight=t.weight,
             weight_softmax=soft.get(t.id, 0.0),
             created_at=t.created_at,
@@ -145,13 +148,14 @@ def get_history(
     meta: dict[str, TrendMetaDTO] = {}
     for tid in referenced:
         row = conn.execute(
-            "SELECT name, description, pruned_at FROM trends WHERE id = ?",
+            "SELECT name, description, category, pruned_at FROM trends WHERE id = ?",
             (tid,),
         ).fetchone()
         if row is not None:
             meta[tid] = TrendMetaDTO(
                 name=str(row["name"]),
                 description=str(row["description"]),
+                category=str(row["category"]) if row["category"] else "Other",
                 pruned_at=row["pruned_at"],
             )
 

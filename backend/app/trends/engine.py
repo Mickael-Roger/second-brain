@@ -1,22 +1,19 @@
 """Trends evolution engine.
 
-The math behind the "neural-like" weight system. Each event is one
-of:
+The math behind the "neural-like" weight system. Each article
+triggers a batch of intents from the LLM:
 
   - reinforce  →  bump one trend's weight by `intensity`
   - create     →  insert a new trend with `weight = intensity`
   - rename     →  no weight change, just metadata
-  - noop       →  LLM didn't call any tool
+  - (no tools) →  noop
 
-In every case, AFTER the primary update we apply a multiplicative
-decay to all OTHER active trends:
-
-    w'[j] = w[j] * (1 - decay_rate)
-
-This is the back-propagation-like piece: a trend that isn't
-reinforced slowly loses ground to those that are. Trends whose
-weight ends up below `prune_threshold` are soft-deleted (their
-history stays).
+Multi-topic articles (typically YouTube / podcast descriptions that
+list several subjects) can emit several reinforce / create intents
+in the SAME LLM turn. We apply them atomically: all the boosts
+first, then ONE decay pass on every other active trend, then ONE
+prune, then ONE snapshot. That way a podcast that bumps three trends
+doesn't decay any of those three on its way down the list.
 
 The engine is a pure orchestrator over the store: it never touches
 the DB directly except through `app.trends.store`. Math first,
@@ -35,28 +32,45 @@ from . import store
 log = logging.getLogger(__name__)
 
 
-# ── Tunables (kept here, exposed through config) ────────────────────
-
-# Default values mirror the `trends:` section of config.yml. The
-# settings loader picks them up; the engine reads from settings at
-# event time so config changes take effect on restart.
+EventAction = Literal["reinforce", "create", "rename", "noop", "multi"]
 
 
-EventAction = Literal["reinforce", "create", "rename", "noop"]
+@dataclass(slots=True)
+class IntentReinforce:
+    trend_id: str
+    intensity: float
+
+
+@dataclass(slots=True)
+class IntentCreate:
+    name: str
+    description: str
+    category: str
+    intensity: float
+
+
+@dataclass(slots=True)
+class IntentRename:
+    trend_id: str
+    new_name: str | None = None
+    new_description: str | None = None
+    new_category: str | None = None
+
+
+Intent = IntentReinforce | IntentCreate | IntentRename
 
 
 @dataclass(slots=True)
 class EventOutcome:
     """What changed after one article was processed by the engine."""
     action: EventAction
-    trend_id: str | None
+    touched_ids: list[str]
     pruned_ids: list[str]
     snapshot_id: int
 
 
 def _settings_or_defaults():
-    """Read the live tunables from config. Centralised so the engine
-    is the only place that knows the defaults."""
+    """Read the live tunables from config."""
     from app.config import get_settings
 
     cfg = get_settings().trends
@@ -65,6 +79,7 @@ def _settings_or_defaults():
         "prune_threshold": cfg.prune_threshold,
         "max_trends": cfg.max_trends,
         "examples_cap": cfg.examples_cap,
+        "categories": list(cfg.categories),
     }
 
 
@@ -80,38 +95,62 @@ def softmax(weights: dict[str, float]) -> dict[str, float]:
     return {k: v / total for k, v in exps.items()}
 
 
+def _normalise_category(category: str, allowed: list[str]) -> str:
+    """Coerce a free-form category from the LLM into the closed set.
+    Case-insensitive match; falls back to 'Other' (or the last entry,
+    whichever exists)."""
+    if not category:
+        return allowed[-1] if allowed else "Other"
+    low = category.strip().lower()
+    for c in allowed:
+        if c.lower() == low:
+            return c
+    return "Other" if "Other" in allowed else (allowed[-1] if allowed else "Other")
+
+
 def _apply_decay(
     conn,
     *,
     decay_rate: float,
-    skip_trend_id: str | None,
+    skip_ids: set[str],
+    fresh_weights: dict[str, float],
 ) -> dict[str, float]:
     """Multiply every active trend's weight by (1 - decay_rate),
-    except the one just touched. Returns the post-decay map of
-    {trend_id: weight} for ALL active trends (including the skipped
-    one — caller fills in its post-event value)."""
+    except those just touched (`skip_ids`). Returns the post-decay
+    {trend_id: weight} for ALL active trends.
+
+    `fresh_weights` carries the post-event weights for the touched
+    trends — we trust those values rather than re-reading them, since
+    a CREATE may have happened in the same batch and the DB row is
+    already in its final state."""
     active = store.list_active_trends(conn)
     weights: dict[str, float] = {}
     for t in active:
-        if t.id == skip_trend_id:
-            weights[t.id] = t.weight  # untouched by decay this round
+        if t.id in skip_ids:
+            weights[t.id] = fresh_weights.get(t.id, t.weight)
             continue
         new_w = t.weight * (1.0 - decay_rate)
         store.update_weight(conn, t.id, new_w)
         weights[t.id] = new_w
+    # Touched trends may include freshly-created ones that aren't yet
+    # in `active` if the caller computed them before this call — the
+    # store should have inserted them by the time we get here, but be
+    # defensive and merge anyway.
+    for tid in skip_ids:
+        if tid not in weights:
+            weights[tid] = fresh_weights.get(tid, 0.0)
     return weights
 
 
 def _maybe_prune(
     conn, weights: dict[str, float], *, prune_threshold: float,
-    max_trends: int, protect_id: str | None,
+    max_trends: int, protect_ids: set[str],
 ) -> list[str]:
-    """Soft-delete trends whose weight is under the threshold, plus
-    the lowest-weighted trends past `max_trends`. Never prunes the
-    trend just reinforced/created (`protect_id`)."""
+    """Soft-delete trends under the threshold OR weakest past the
+    cap. Never prunes anything in `protect_ids` (just touched)."""
     pruned: list[str] = []
     for trend_id, w in list(weights.items()):
-        if trend_id == protect_id:
+        if trend_id in protect_ids:
             continue
         if w < prune_threshold:
             store.prune_trend(conn, trend_id)
@@ -120,11 +159,10 @@ def _maybe_prune(
 
     if max_trends > 0 and len(weights) > max_trends:
         ranked = sorted(weights.items(), key=lambda kv: kv[1])
-        # Drop weakest until under the cap, but never the protected one.
         for trend_id, _ in ranked:
             if len(weights) <= max_trends:
                 break
-            if trend_id == protect_id:
+            if trend_id in protect_ids:
                 continue
             store.prune_trend(conn, trend_id)
             pruned.append(trend_id)
@@ -149,191 +187,177 @@ def _snapshot(
     )
 
 
-# ── Public surface ──────────────────────────────────────────────────
+def _summary_action(
+    n_reinforce: int, n_create: int, n_rename: int,
+) -> EventAction:
+    """Pick a single label for the snapshot's trigger_action when the
+    article fired multiple events. 'multi' if there's more than one
+    actionable intent, else the dominant single action."""
+    actionable = n_reinforce + n_create + n_rename
+    if actionable == 0:
+        return "noop"
+    if actionable > 1:
+        return "multi"
+    if n_create:
+        return "create"
+    if n_reinforce:
+        return "reinforce"
+    return "rename"
 
 
-def apply_reinforce(
+# ── Public surface: batch apply ─────────────────────────────────────
+
+
+def apply_batch(
     conn,
     *,
     article_id: str,
     article_title: str,
-    trend_id: str,
-    intensity: float,
+    intents: list[Intent],
 ) -> EventOutcome:
-    """`intensity ∈ [0, 1]` from the LLM. We add it to the weight (no
-    cap — `softmax` normalises for display); the decay on every other
-    trend keeps things finite."""
+    """Apply one article's worth of LLM intents as a SINGLE event:
+
+      1. Renames first (metadata only).
+      2. Creates (new rows, deduped by name → reinforce if already known).
+      3. Reinforces (weight bumps + example bookkeeping).
+      4. ONE decay pass on every non-touched active trend.
+      5. ONE prune pass (touched trends protected).
+      6. ONE snapshot.
+
+    Empty intents → noop event (decay + snapshot still happen, so
+    every article contributes to the trend lifecycle).
+    """
     cfg = _settings_or_defaults()
-    intensity = max(0.0, min(1.0, intensity))
-    current = store.get_trend(conn, trend_id)
-    if current is None or current.pruned_at is not None:
-        log.warning("reinforce on unknown/pruned trend_id=%s — ignoring", trend_id)
-        # Treat as noop so the worker still snapshots + marks the article.
-        return apply_noop(conn, article_id=article_id)
+    allowed = cfg["categories"]
 
-    new_weight = current.weight + intensity
-    store.reinforce_trend(
-        conn,
-        trend_id=trend_id,
-        new_weight=new_weight,
-        example_title=article_title,
-        examples_cap=cfg["examples_cap"],
-    )
-    weights = _apply_decay(conn, decay_rate=cfg["decay_rate"], skip_trend_id=trend_id)
-    weights[trend_id] = new_weight
-    pruned = _maybe_prune(
-        conn, weights,
-        prune_threshold=cfg["prune_threshold"],
-        max_trends=cfg["max_trends"],
-        protect_id=trend_id,
-    )
-    snap_id = _snapshot(
-        conn, article_id=article_id, action="reinforce",
-        trend_id=trend_id, weights=weights,
-    )
-    return EventOutcome(
-        action="reinforce", trend_id=trend_id,
-        pruned_ids=pruned, snapshot_id=snap_id,
-    )
+    touched: set[str] = set()
+    fresh: dict[str, float] = {}   # post-update weights for touched trends
+    n_reinforce = 0
+    n_create = 0
+    n_rename = 0
+    primary_trend_id: str | None = None  # for snapshot's trigger_trend_id
 
-
-def apply_create(
-    conn,
-    *,
-    article_id: str,
-    article_title: str,
-    name: str,
-    description: str,
-    intensity: float,
-) -> EventOutcome:
-    cfg = _settings_or_defaults()
-    intensity = max(0.0, min(1.0, intensity))
-    initial_weight = max(intensity, cfg["prune_threshold"] * 2.0)
-
-    # If the LLM happens to repeat a known active trend by name, treat
-    # it as a reinforce instead of a duplicate — the description gets
-    # the new wording.
-    existing = store.get_trend_by_name(conn, name)
-    if existing is not None:
-        store.rename_trend(
-            conn, trend_id=existing.id,
-            new_name=None, new_description=description,
+    # 1. Renames
+    for it in intents:
+        if not isinstance(it, IntentRename):
+            continue
+        new_cat = (
+            _normalise_category(it.new_category, allowed)
+            if it.new_category else None
         )
-        return apply_reinforce(
+        if store.rename_trend(
+            conn, trend_id=it.trend_id,
+            new_name=it.new_name,
+            new_description=it.new_description,
+            new_category=new_cat,
+        ):
+            n_rename += 1
+            primary_trend_id = primary_trend_id or it.trend_id
+
+    # 2. Creates (with dedup-by-name → reinforce existing)
+    for it in intents:
+        if not isinstance(it, IntentCreate):
+            continue
+        intensity = max(0.0, min(1.0, it.intensity))
+        category = _normalise_category(it.category, allowed)
+        existing = store.get_trend_by_name(conn, it.name)
+        if existing is not None:
+            # LLM picked an existing name — treat as a reinforce, but
+            # also refresh the description + category to the new wording.
+            store.rename_trend(
+                conn, trend_id=existing.id,
+                new_name=None,
+                new_description=it.description,
+                new_category=category if category != existing.category else None,
+            )
+            new_weight = existing.weight + intensity
+            store.reinforce_trend(
+                conn, trend_id=existing.id,
+                new_weight=new_weight,
+                example_title=article_title,
+                examples_cap=cfg["examples_cap"],
+            )
+            touched.add(existing.id)
+            fresh[existing.id] = new_weight
+            n_reinforce += 1
+            primary_trend_id = primary_trend_id or existing.id
+            continue
+
+        initial = max(intensity, cfg["prune_threshold"] * 2.0)
+        created = store.create_trend(
             conn,
-            article_id=article_id,
-            article_title=article_title,
-            trend_id=existing.id,
-            intensity=intensity,
+            name=it.name,
+            description=it.description,
+            category=category,
+            weight=initial,
+            example_title=article_title,
         )
+        touched.add(created.id)
+        fresh[created.id] = initial
+        n_create += 1
+        primary_trend_id = primary_trend_id or created.id
 
-    created = store.create_trend(
+    # 3. Reinforces
+    for it in intents:
+        if not isinstance(it, IntentReinforce):
+            continue
+        intensity = max(0.0, min(1.0, it.intensity))
+        current = store.get_trend(conn, it.trend_id)
+        if current is None or current.pruned_at is not None:
+            log.warning(
+                "reinforce on unknown/pruned trend_id=%s — ignoring",
+                it.trend_id,
+            )
+            continue
+        # If the same trend was both renamed and reinforced in this
+        # batch the rename already happened above.
+        new_weight = (
+            fresh[current.id]
+            if current.id in fresh
+            else current.weight
+        ) + intensity
+        store.reinforce_trend(
+            conn, trend_id=current.id,
+            new_weight=new_weight,
+            example_title=article_title,
+            examples_cap=cfg["examples_cap"],
+        )
+        touched.add(current.id)
+        fresh[current.id] = new_weight
+        n_reinforce += 1
+        primary_trend_id = primary_trend_id or current.id
+
+    # 4. ONE decay pass (skips every touched trend, including those
+    #    only renamed — a rename shouldn't penalise the trend on
+    #    this round).
+    weights = _apply_decay(
         conn,
-        name=name,
-        description=description,
-        weight=initial_weight,
-        example_title=article_title,
+        decay_rate=cfg["decay_rate"],
+        skip_ids=touched | {
+            it.trend_id for it in intents if isinstance(it, IntentRename)
+        },
+        fresh_weights=fresh,
     )
-    weights = _apply_decay(
-        conn, decay_rate=cfg["decay_rate"], skip_trend_id=created.id,
-    )
-    weights[created.id] = initial_weight
+
+    # 5. Prune
     pruned = _maybe_prune(
         conn, weights,
         prune_threshold=cfg["prune_threshold"],
         max_trends=cfg["max_trends"],
-        protect_id=created.id,
+        protect_ids=touched | {
+            it.trend_id for it in intents if isinstance(it, IntentRename)
+        },
     )
+
+    # 6. Snapshot
+    action = _summary_action(n_reinforce, n_create, n_rename)
     snap_id = _snapshot(
-        conn, article_id=article_id, action="create",
-        trend_id=created.id, weights=weights,
+        conn, article_id=article_id, action=action,
+        trend_id=primary_trend_id, weights=weights,
     )
     return EventOutcome(
-        action="create", trend_id=created.id,
-        pruned_ids=pruned, snapshot_id=snap_id,
+        action=action,
+        touched_ids=sorted(touched),
+        pruned_ids=pruned,
+        snapshot_id=snap_id,
     )
-
-
-def apply_rename(
-    conn,
-    *,
-    article_id: str,
-    trend_id: str,
-    new_name: str | None,
-    new_description: str | None,
-) -> EventOutcome:
-    """Rename + optional description refresh. No weight change, no
-    decay (pure metadata edit). A snapshot is still recorded so the
-    history captures the rename event."""
-    if not store.rename_trend(
-        conn, trend_id=trend_id,
-        new_name=new_name, new_description=new_description,
-    ):
-        return apply_noop(conn, article_id=article_id)
-
-    active = store.list_active_trends(conn)
-    weights = {t.id: t.weight for t in active}
-    snap_id = _snapshot(
-        conn, article_id=article_id, action="rename",
-        trend_id=trend_id, weights=weights,
-    )
-    return EventOutcome(
-        action="rename", trend_id=trend_id,
-        pruned_ids=[], snapshot_id=snap_id,
-    )
-
-
-def apply_noop(conn, *, article_id: str) -> EventOutcome:
-    """Article didn't trigger any tool call. Still apply decay so
-    every news event contributes to the trend lifecycle, then
-    snapshot."""
-    cfg = _settings_or_defaults()
-    weights = _apply_decay(
-        conn, decay_rate=cfg["decay_rate"], skip_trend_id=None,
-    )
-    pruned = _maybe_prune(
-        conn, weights,
-        prune_threshold=cfg["prune_threshold"],
-        max_trends=cfg["max_trends"],
-        protect_id=None,
-    )
-    snap_id = _snapshot(
-        conn, article_id=article_id, action="noop",
-        trend_id=None, weights=weights,
-    )
-    return EventOutcome(
-        action="noop", trend_id=None,
-        pruned_ids=pruned, snapshot_id=snap_id,
-    )
-
-
-def apply_event(
-    conn, *, action: EventAction, article_id: str, article_title: str,
-    trend_id: str | None = None,
-    intensity: float | None = None,
-    name: str | None = None,
-    description: str | None = None,
-    new_name: str | None = None,
-    new_description: str | None = None,
-) -> EventOutcome:
-    """Dispatch helper for callers that already have the parsed
-    tool-call payload. Most code uses the typed helpers above directly."""
-    if action == "reinforce":
-        assert trend_id is not None and intensity is not None
-        return apply_reinforce(
-            conn, article_id=article_id, article_title=article_title,
-            trend_id=trend_id, intensity=intensity,
-        )
-    if action == "create":
-        assert name and description and intensity is not None
-        return apply_create(
-            conn, article_id=article_id, article_title=article_title,
-            name=name, description=description, intensity=intensity,
-        )
-    if action == "rename":
-        assert trend_id is not None
-        return apply_rename(
-            conn, article_id=article_id, trend_id=trend_id,
-            new_name=new_name, new_description=new_description,
-        )
-    return apply_noop(conn, article_id=article_id)

@@ -252,6 +252,20 @@ class TrendsSection(BaseModel):
     # ingested while the worker was down for a long stretch) are
     # silently skipped. Keeps the cost of first-enable bounded.
     process_window_days: int = 7
+    # Per-article body cap (plain-text characters) sent to the LLM.
+    # Higher than the title-only baseline so the model can pick up
+    # multi-topic articles (YouTube video / podcast descriptions
+    # where the body lists chapters / subjects).
+    body_max_chars: int = 10_000
+    # Closed set of allowed trend categories. The LLM must pick from
+    # this list when creating or recategorising a trend. Keep names
+    # short and disjoint — frontend groups trends by category.
+    categories: list[str] = Field(
+        default_factory=lambda: [
+            "AI", "Tech", "Science", "Politics", "Economy",
+            "World", "Culture", "Sports", "Health", "Other",
+        ]
+    )
 
 
 class AnkiSection(BaseModel):
