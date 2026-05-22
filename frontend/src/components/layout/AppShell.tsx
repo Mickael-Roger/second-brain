@@ -23,6 +23,7 @@ import {
   Moon,
   Rss,
   Sun,
+  TrendingUp,
   X,
 } from "lucide-react";
 
@@ -31,7 +32,7 @@ import { setLanguage, currentLanguage } from "@/lib/i18n";
 import { currentTheme, setTheme, type Theme } from "@/lib/theme";
 import Logo from "@/components/layout/Logo";
 
-export type ViewId = "chat" | "wiki" | "news" | "training";
+export type ViewId = "chat" | "wiki" | "news" | "training" | "trends";
 
 interface Props {
   active: ViewId;
@@ -70,6 +71,7 @@ export default function AppShell({
     { id: "wiki", icon: BookOpen, label: t("nav.wiki") },
     { id: "training", icon: GraduationCap, label: t("nav.training") },
     { id: "news", icon: Rss, label: t("nav.news") },
+    { id: "trends", icon: TrendingUp, label: t("nav.trends") },
   ];
 
   return (

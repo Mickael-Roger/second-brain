@@ -9,6 +9,7 @@ import ChatView from "@/components/chat/ChatView";
 import WikiView, { type WikiTarget } from "@/components/wiki/WikiView";
 import NewsView from "@/components/news/NewsView";
 import TrainingView from "@/components/training/TrainingView";
+import TrendsView from "@/components/trends/TrendsView";
 import WikiReviewModal from "@/components/wiki/WikiReviewModal";
 import { api, type TreeEntry, type WikiReviewStatus } from "@/lib/api";
 
@@ -79,6 +80,8 @@ export default function App() {
           <NewsView onOpenChat={() => setView("chat")} />
         ) : view === "training" ? (
           <TrainingView onOpenWiki={openWiki} />
+        ) : view === "trends" ? (
+          <TrendsView />
         ) : (
           <WikiView
             target={wikiTarget}

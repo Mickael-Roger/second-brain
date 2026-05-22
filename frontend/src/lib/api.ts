@@ -240,3 +240,39 @@ export interface TrainingThemeListResponse {
   themes: TrainingThemeSummary[];
 }
 
+export interface TrendDTO {
+  id: string;
+  name: string;
+  description: string;
+  weight: number;
+  weight_softmax: number;
+  created_at: string;
+  last_reinforced_at: string;
+  reinforcement_count: number;
+  examples: string[];
+}
+
+export interface TrendsListResponse {
+  trends: TrendDTO[];
+}
+
+export interface TrendSnapshotDTO {
+  id: number;
+  recorded_at: string;
+  trigger_article_id: string | null;
+  trigger_action: "reinforce" | "create" | "rename" | "noop";
+  trigger_trend_id: string | null;
+  weights: Record<string, number>;
+}
+
+export interface TrendMetaDTO {
+  name: string;
+  description: string;
+  pruned_at: string | null;
+}
+
+export interface TrendsHistoryResponse {
+  snapshots: TrendSnapshotDTO[];
+  trend_meta: Record<string, TrendMetaDTO>;
+}
+

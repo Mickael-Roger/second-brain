@@ -6,7 +6,31 @@
     "chat": "Chat",
     "wiki": "Wiki",
     "news": "News",
-    "training": "Training"
+    "training": "Training",
+    "trends": "Trends"
+  },
+  "trends": {
+    "title": "Trends",
+    "empty": "No trends yet — the first articles haven't been processed.",
+    "process": "Process pending",
+    "processing": "Processing…",
+    "processed": "{{count}} article(s) processed",
+    "disabled": "Trends disabled (trends.enabled = false in config.yml).",
+    "weight": "Weight",
+    "reinforcements": "Reinforcements",
+    "lastReinforced": "Last reinforced",
+    "examples": "Recent articles",
+    "loadError": "Could not load trends.",
+    "rangeHours": "Window",
+    "h24": "24 h",
+    "h72": "3 days",
+    "h168": "7 days",
+    "trendDirection": {
+      "up": "Rising",
+      "down": "Falling",
+      "stable": "Stable",
+      "new": "New"
+    }
   },
   "news": {
     "title": "News",

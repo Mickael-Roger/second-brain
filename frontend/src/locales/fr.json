@@ -6,7 +6,31 @@
     "chat": "Discussion",
     "wiki": "Wiki",
     "news": "Actualités",
-    "training": "Training"
+    "training": "Training",
+    "trends": "Tendances"
+  },
+  "trends": {
+    "title": "Tendances",
+    "empty": "Aucune tendance pour le moment — les premiers articles n'ont pas encore été traités.",
+    "process": "Traiter en attente",
+    "processing": "Traitement…",
+    "processed": "{{count}} article(s) traité(s)",
+    "disabled": "Tendances désactivées (trends.enabled = false dans config.yml).",
+    "weight": "Poids",
+    "reinforcements": "Renforcements",
+    "lastReinforced": "Dernier renforcement",
+    "examples": "Articles attribués",
+    "loadError": "Impossible de charger les tendances.",
+    "rangeHours": "Fenêtre",
+    "h24": "24 h",
+    "h72": "3 jours",
+    "h168": "7 jours",
+    "trendDirection": {
+      "up": "En hausse",
+      "down": "En baisse",
+      "stable": "Stable",
+      "new": "Nouveau"
+    }
   },
   "news": {
     "title": "Actualités",
