@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import datetime, timedelta, timezone
 
 from app.config import get_settings
 from app.db.connection import open_connection
@@ -41,13 +42,21 @@ async def process_pending(*, max_per_run: int | None = None) -> int:
         return 0
 
     cap = max_per_run if max_per_run is not None else settings.trends.max_per_run
+    window_days = settings.trends.process_window_days
+    since_iso = (
+        (datetime.now(timezone.utc) - timedelta(days=window_days)).isoformat()
+        if window_days > 0
+        else None
+    )
 
     async with _WORKER_LOCK:
         processed = 0
         while processed < cap:
             conn = open_connection()
             try:
-                batch = store.pending_articles(conn, limit=min(20, cap - processed))
+                batch = store.pending_articles(
+                    conn, limit=min(20, cap - processed), since_iso=since_iso,
+                )
             finally:
                 conn.close()
             if not batch:

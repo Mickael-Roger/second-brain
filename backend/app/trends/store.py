@@ -295,18 +295,30 @@ class PendingArticle:
 
 
 def pending_articles(
-    conn: sqlite3.Connection, *, limit: int = 50,
+    conn: sqlite3.Connection,
+    *,
+    limit: int = 50,
+    since_iso: str | None = None,
 ) -> list[PendingArticle]:
     """Articles with `trends_processed_at IS NULL`, oldest first
-    (so we process in publication order). The summary comes from the
-    on-disk article JSON — joined here so the worker can run with a
-    single round-trip per batch."""
-    rows = conn.execute(
-        "SELECT id, title FROM news_articles "
-        "WHERE trends_processed_at IS NULL "
-        "ORDER BY published_at ASC LIMIT ?",
-        (limit,),
-    ).fetchall()
+    (so we process in publication order). When `since_iso` is set,
+    only articles published on/after that ISO timestamp are returned —
+    this is how we cap the backlog cost on first enable (anything
+    older than the configured window is silently skipped)."""
+    if since_iso:
+        rows = conn.execute(
+            "SELECT id, title FROM news_articles "
+            "WHERE trends_processed_at IS NULL AND published_at >= ? "
+            "ORDER BY published_at ASC LIMIT ?",
+            (since_iso, limit),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT id, title FROM news_articles "
+            "WHERE trends_processed_at IS NULL "
+            "ORDER BY published_at ASC LIMIT ?",
+            (limit,),
+        ).fetchall()
     return [
         PendingArticle(article_id=str(r["id"]), title=str(r["title"]), summary="")
         for r in rows

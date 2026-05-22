@@ -208,6 +208,13 @@ trends:
   examples_cap: 3               # how many recent article titles each trend keeps for context
   max_per_run: 200              # safety cap per worker tick (LLM cost guard on cold starts)
   process_schedule: "*/7 * * * *"   # cron, UTC — safety-net poll for any missed article
+  # Only articles published within this rolling window are sent to the
+  # LLM. The first enable would otherwise sweep the full 30-day news
+  # backlog — 7 days is plenty to bootstrap meaningful trends without
+  # the cost of a full historical pass. Articles older than the window
+  # stay flagged "not processed" forever; if you ever bump the window
+  # they'll be picked up next tick.
+  process_window_days: 7
 
 # ---------------------------------------------------------------------------
 # Anki — driven through the AnkiConnect plugin

@@ -246,6 +246,12 @@ class TrendsSection(BaseModel):
     examples_cap: int = 3             # example titles kept per trend
     max_per_run: int = 200            # cap per worker tick
     process_schedule: str = "*/7 * * * *"  # cron, UTC — safety-net poll
+    # Only articles published within the last `process_window_days`
+    # are candidates for the trends worker. Older pending articles
+    # (e.g. the news backlog from before trends was enabled, or items
+    # ingested while the worker was down for a long stretch) are
+    # silently skipped. Keeps the cost of first-enable bounded.
+    process_window_days: int = 7
 
 
 class AnkiSection(BaseModel):
