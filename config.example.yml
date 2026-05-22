@@ -58,6 +58,18 @@ llm:
         - claude-sonnet-4-5
         - claude-haiku-4-5
 
+    # ── Small/cheap model used by the trends classifier ──────────────────
+    # The trends pipeline does one LLM call per ingested article — point
+    # it at a cheap small model. This OpenAI-compat entry hits Anthropic's
+    # Haiku 4.5 via the messages-compat endpoint; swap base_url/api_key
+    # for OpenRouter / Groq / a local model if you prefer.
+    trends-cheap:
+      kind: openai
+      base_url: https://api.anthropic.com/v1
+      api_key: sk-ant-REPLACE_ME
+      models:
+        - claude-haiku-4-5
+
     # ── Any OpenAI-compatible endpoint (vLLM / llama.cpp / OpenRouter /
     #     Groq / LM Studio / Ollama / …) — just point base_url at it. ─────
     local:
@@ -85,6 +97,12 @@ llm:
     # organize:
     #   provider: openai
     #   model: gpt-4o-mini
+
+    # Trends classifier — one call per news article. Always use a cheap
+    # small model here; the volume is high (~hundreds of articles/day).
+    trends:
+      provider: trends-cheap
+      model: claude-haiku-4-5
 
 # ---------------------------------------------------------------------------
 # Obsidian — your vault is the brain's only memory.
@@ -170,6 +188,26 @@ news:
       # Names — not numeric ids — because GReader is name-based.
       # Leave empty to ingest everything.
       excluded_categories: []   # e.g. ["Noise", "Off-topic"]
+
+# ---------------------------------------------------------------------------
+# Trends — derive an evolving set of "what's hot in the news" topics from
+# the news stream. Each freshly ingested article gets sent to a small LLM
+# alongside the current trend list; the LLM either reinforces an existing
+# trend, creates a new one, or refines an existing one's name/description.
+# After every event, all OTHER trends decay slightly — under-reinforced
+# trends fade out over time. The frontend "Trends" tab visualises the
+# current set as bubbles sized by weight.
+#
+# Requires `news.enabled: true` and `llm.tasks.trends` configured above.
+# ---------------------------------------------------------------------------
+trends:
+  enabled: false                # flip on once news is flowing and llm.tasks.trends is set
+  decay_rate: 0.01              # per-article multiplicative decay applied to other trends
+  prune_threshold: 0.05         # weight below this → trend soft-deleted (history kept)
+  max_trends: 50                # cap on simultaneously active trends
+  examples_cap: 3               # how many recent article titles each trend keeps for context
+  max_per_run: 200              # safety cap per worker tick (LLM cost guard on cold starts)
+  process_schedule: "*/7 * * * *"   # cron, UTC — safety-net poll for any missed article
 
 # ---------------------------------------------------------------------------
 # Anki — driven through the AnkiConnect plugin

@@ -224,6 +224,30 @@ class NewsSection(BaseModel):
     sources: NewsSourcesSection = NewsSourcesSection()
 
 
+class TrendsSection(BaseModel):
+    """Trends pipeline tunables.
+
+    The engine multiplies every trend's weight by ``(1 - decay_rate)``
+    on every processed article (the one being reinforced/created
+    excepted). A trend is soft-deleted (``pruned_at`` set) when its
+    weight falls under ``prune_threshold`` OR when the active trend
+    count exceeds ``max_trends`` (weakest first). ``max_per_run``
+    caps how many pending articles the worker drains per tick — keeps
+    the LLM bill bounded on cold-starts with a large backlog.
+
+    LLM model selection lives under ``llm.tasks.trends`` (provider +
+    model). Cheap small models are recommended (Haiku 4.5, gpt-4o-mini).
+    """
+
+    enabled: bool = False
+    decay_rate: float = 0.01          # per-article multiplicative decay
+    prune_threshold: float = 0.05     # weight below this → soft-delete
+    max_trends: int = 50              # cap on simultaneously active trends
+    examples_cap: int = 3             # example titles kept per trend
+    max_per_run: int = 200            # cap per worker tick
+    process_schedule: str = "*/7 * * * *"  # cron, UTC — safety-net poll
+
+
 class AnkiSection(BaseModel):
     """Anki integration via the AnkiConnect plugin.
 
@@ -298,6 +322,7 @@ class Settings(BaseModel):
     organize: OrganizeSection = OrganizeSection()
     news: NewsSection = NewsSection()
     anki: AnkiSection = AnkiSection()
+    trends: TrendsSection = TrendsSection()
     smtp: SMTPSection = SMTPSection()
     logging: LoggingSection = LoggingSection()
 
