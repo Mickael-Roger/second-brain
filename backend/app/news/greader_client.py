@@ -73,6 +73,7 @@ class GReaderItem:
     is_starred: bool
     labels: list[str]             # user/-/label/<name> with <name> not a folder
     created_on_time: int          # unix seconds (from `published`)
+    updated_at: int = 0           # unix seconds (from `updated`, FreshRSS' lastUserModified); 0 if absent
 
 
 @dataclass(slots=True)
@@ -716,6 +717,13 @@ class GReaderClient:
             if ts_us.isdigit():
                 published = int(ts_us) // 1_000_000
 
+        # FreshRSS surfaces its internal `lastUserModified` as `updated`
+        # — bumped on content edits, fall back to `published` so we
+        # always have a comparable timestamp for change detection.
+        updated = int(raw.get("updated") or 0)
+        if updated <= 0:
+            updated = published
+
         categories = [str(c) for c in (raw.get("categories") or [])]
         is_read = any(_category_is_state(c, "read") for c in categories)
         is_starred = any(_category_is_state(c, "starred") for c in categories)
@@ -738,6 +746,7 @@ class GReaderClient:
             is_starred=is_starred,
             labels=labels,
             created_on_time=published,
+            updated_at=updated,
         )
 
 

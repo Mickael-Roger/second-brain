@@ -882,8 +882,8 @@ async def trigger_fetch(
                     log.warning("manual news fetch: %s error=%s", s.source, s.error)
                 else:
                     log.info(
-                        "manual news fetch: %s fetched=%d inserted=%d",
-                        s.source, s.fetched, s.inserted,
+                        "manual news fetch: %s fetched=%d inserted=%d updated=%d",
+                        s.source, s.fetched, s.inserted, s.updated,
                     )
         except Exception:
             log.exception("manual news fetch failed")

@@ -81,6 +81,7 @@ class FetchSummary:
     source: str
     fetched: int
     inserted: int
+    updated: int = 0
     error: str | None = None
 
 
@@ -287,11 +288,15 @@ def _store_items(
     feeds: dict[str, "GReaderFeedMeta"],
     excluded_categories: set[str],
     source: str,
-) -> tuple[int, int]:
+) -> tuple[int, int, int]:
     """Persist GReaderItems → SQLite + on-disk JSON.
 
-    Returns (inserted_count, skipped_excluded_count)."""
+    Returns ``(inserted_count, updated_count, skipped_excluded_count)``.
+    ``updated_count`` is the number of already-known articles whose
+    upstream `updated` timestamp was newer than ours, triggering a
+    rewrite of both the SQLite row's content fields and the JSON body."""
     inserted = 0
+    updated = 0
     skipped_excluded = 0
     now_iso = datetime.now(timezone.utc).isoformat()
     conn = open_connection()
@@ -303,7 +308,7 @@ def _store_items(
                 skipped_excluded += 1
                 continue
             article_id = f"{source}:{it.id}"
-            is_new = insert_article(
+            is_new, content_updated = insert_article(
                 conn,
                 source=source,
                 external_id=it.id,
@@ -312,6 +317,7 @@ def _store_items(
                 feed_group=cat,
                 title=it.title,
                 published_at=published_iso(it),
+                updated_at=it.updated_at,
                 is_read=it.is_read,
                 is_starred=it.is_starred,
             )
@@ -319,7 +325,7 @@ def _store_items(
             # — keeps local in sync with edits made elsewhere (web UI,
             # other clients).
             replace_article_labels(conn, article_id, it.labels)
-            if is_new or not articles.article_exists(article_id):
+            if is_new or content_updated or not articles.article_exists(article_id):
                 articles.write_article(
                     articles.ArticleRecord(
                         id=article_id,
@@ -337,13 +343,16 @@ def _store_items(
                         image_url=extract_first_image(it.html),
                         summary=html_to_plain_text(it.html),
                         raw_html=it.html or None,
+                        updated_at=it.updated_at,
                     )
                 )
                 if is_new:
                     inserted += 1
+                elif content_updated:
+                    updated += 1
     finally:
         conn.close()
-    return inserted, skipped_excluded
+    return inserted, updated, skipped_excluded
 
 
 # Lightweight typed view of the bits we keep from GReaderFeed at
@@ -412,6 +421,7 @@ async def fetch_freshrss(
 
     fetched = 0
     inserted = 0
+    updated = 0
     error: str | None = None
     try:
         async with GReaderClient(
@@ -488,13 +498,20 @@ async def fetch_freshrss(
                     "news fetch: freshrss got %d items (read=%d, unread=%d)",
                     fetched, read_count, fetched - read_count,
                 )
-                ins, skipped = _store_items(
+                ins, upd, skipped = _store_items(
                     items,
                     feeds=feeds,
                     excluded_categories=excluded,
                     source=source,
                 )
                 inserted += ins
+                updated += upd
+                if upd:
+                    log.info(
+                        "news fetch: refreshed %d article(s) whose upstream "
+                        "content was modified",
+                        upd,
+                    )
                 if skipped:
                     log.info(
                         "news fetch: skipped %d items from excluded categories %s",
@@ -533,13 +550,14 @@ async def fetch_freshrss(
                     extra = await client.items_by_ids(missing)
                     fetched += len(extra)
                     if extra:
-                        ins, _ = _store_items(
+                        ins, upd, _ = _store_items(
                             extra,
                             feeds=feeds,
                             excluded_categories=excluded,
                             source=source,
                         )
                         inserted += ins
+                        updated += upd
                         log.info(
                             "news fetch: backfilled %d unread (caught up)", ins,
                         )
@@ -579,11 +597,17 @@ async def fetch_freshrss(
         conn.close()
 
     if error:
-        return FetchSummary(source=source, fetched=fetched, inserted=inserted, error=error)
+        return FetchSummary(
+            source=source, fetched=fetched, inserted=inserted, updated=updated,
+            error=error,
+        )
     log.info(
-        "news fetch: freshrss done fetched=%d inserted=%d", fetched, inserted,
+        "news fetch: freshrss done fetched=%d inserted=%d updated=%d",
+        fetched, inserted, updated,
     )
-    return FetchSummary(source=source, fetched=fetched, inserted=inserted)
+    return FetchSummary(
+        source=source, fetched=fetched, inserted=inserted, updated=updated,
+    )
 
 
 async def fetch_all_sources(

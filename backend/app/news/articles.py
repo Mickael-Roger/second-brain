@@ -45,6 +45,7 @@ class ArticleRecord:
     image_url: str | None
     summary: str                 # plain-text body, stripped from html
     raw_html: str | None = None  # original feed body, kept verbatim
+    updated_at: int = 0          # unix seconds; mirrors news_articles.updated_at
     extra: dict = field(default_factory=dict)
 
 
@@ -104,6 +105,7 @@ def read_article(article_id: str) -> ArticleRecord | None:
         image_url=data.get("image_url"),
         summary=str(data.get("summary") or ""),
         raw_html=data.get("raw_html"),
+        updated_at=int(data.get("updated_at") or 0),
         extra=data.get("extra") or {},
     )
 

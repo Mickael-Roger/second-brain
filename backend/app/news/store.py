@@ -123,19 +123,24 @@ def insert_article(
     feed_group: str | None,
     title: str,
     published_at: str,
+    updated_at: int = 0,
     is_read: bool = False,
     is_starred: bool = False,
-) -> bool:
-    """Insert (or refresh is_read/is_starred on duplicate). Returns True
-    on first sight, False when the article was already known."""
+) -> tuple[bool, bool]:
+    """Insert (or refresh on duplicate). Returns ``(is_new, content_updated)``:
+      - ``is_new``: True on first sight.
+      - ``content_updated``: True when an existing row's title/published_at
+        was refreshed because ``updated_at`` is strictly newer than what we
+        had (FreshRSS bumped ``lastUserModified``). The is_read/is_starred
+        reconciliation runs on every call independent of ``updated_at``."""
     article_id = f"{source}:{external_id}"
     is_read_int = 1 if is_read else 0
     is_starred_int = 1 if is_starred else 0
     cur = conn.execute(
         "INSERT OR IGNORE INTO news_articles "
         "(id, source, external_id, feed_id, feed_title, feed_group, "
-        " title, published_at, is_read, is_starred) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        " title, published_at, updated_at, is_read, is_starred) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             article_id,
             source,
@@ -145,17 +150,33 @@ def insert_article(
             feed_group,
             title,
             published_at,
+            updated_at,
             is_read_int,
             is_starred_int,
         ),
     )
     if cur.rowcount > 0:
-        return True
+        return True, False
     conn.execute(
         "UPDATE news_articles SET is_read = ?, is_starred = ? WHERE id = ?",
         (is_read_int, is_starred_int, article_id),
     )
-    return False
+    cur2 = conn.execute(
+        "UPDATE news_articles "
+        "   SET title = ?, published_at = ?, updated_at = ?, "
+        "       feed_title = ?, feed_group = ? "
+        " WHERE id = ? AND ? > updated_at",
+        (
+            title,
+            published_at,
+            updated_at,
+            feed_title,
+            feed_group,
+            article_id,
+            updated_at,
+        ),
+    )
+    return False, cur2.rowcount > 0
 
 
 def mark_article_read(
