@@ -570,15 +570,26 @@ class GReaderClient:
         the new feed's stream id ``feed/<id>``."""
         resp = await self._post_write(
             "/reader/api/0/subscription/quickadd",
-            params={"quickadd": url},
+            params={"quickadd": url, "output": "json"},
         )
-        body = resp.json() if resp.headers.get("content-type", "").startswith(
-            "application/json"
-        ) else {}
-        stream_id = str(body.get("streamId") or "")
+        # FreshRSS quickadd is supposed to reply with JSON, but some
+        # versions / error paths return text/html (or plain "OK") — try
+        # to parse regardless of content-type, then fall back to a
+        # diagnostic error that shows what we actually got.
+        body: Any = None
+        try:
+            body = resp.json()
+        except ValueError:
+            body = None
+        stream_id = ""
+        if isinstance(body, dict):
+            stream_id = str(body.get("streamId") or "")
         if not stream_id.startswith("feed/"):
+            ctype = resp.headers.get("content-type", "?")
             raise GReaderError(
-                f"quickadd did not return a streamId: {body!r}"
+                f"quickadd did not return a streamId "
+                f"(HTTP {resp.status_code}, content-type={ctype!r}): "
+                f"body={resp.text[:500]!r}"
             )
         # Optional title + folder fix-up.
         edit_params: dict[str, str | list[str]] = {
