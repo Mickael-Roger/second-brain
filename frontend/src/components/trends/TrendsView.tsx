@@ -14,13 +14,26 @@ type WindowHours = 24 | 72 | 168;
 function directionClass(direction: string): string {
   switch (direction) {
     case "up":
-      return "border-emerald-400/60 bg-emerald-500/15 text-emerald-100";
+      return "border-emerald-500/50 bg-emerald-500/10";
     case "down":
-      return "border-red-400/50 bg-red-500/10 text-red-100";
+      return "border-red-500/40 bg-red-500/10";
     case "new":
-      return "border-violet-400/60 bg-violet-500/15 text-violet-100";
+      return "border-violet-500/50 bg-violet-500/10";
     default:
-      return "border-slate-400/40 bg-slate-500/10 text-slate-100";
+      return "border-border bg-surface";
+  }
+}
+
+function directionLabelClass(direction: string): string {
+  switch (direction) {
+    case "up":
+      return "text-emerald-600 dark:text-emerald-300";
+    case "down":
+      return "text-red-600 dark:text-red-300";
+    case "new":
+      return "text-violet-600 dark:text-violet-300";
+    default:
+      return "text-muted";
   }
 }
 
@@ -38,37 +51,50 @@ function fmtDate(iso: string, language: string): string {
 function MomentBubble({ moment, maxScore }: { moment: TrendMomentDTO; maxScore: number }) {
   const { t, i18n } = useTranslation();
   const ratio = Math.sqrt(moment.virality_score / Math.max(maxScore, 0.001));
-  const size = Math.round(190 + ratio * 190);
+  const size = Math.round(52 + ratio * 42);
   return (
     <article
-      className={`flex flex-col rounded-full border p-6 shadow-lg ${directionClass(moment.direction)}`}
-      style={{ width: size, minHeight: size }}
+      className={`grid gap-4 rounded-2xl border p-4 shadow-sm md:grid-cols-[auto_1fr] ${directionClass(moment.direction)}`}
     >
-      <div className="flex items-center justify-between gap-2">
-        <span className="rounded-full bg-black/20 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide">
-          {moment.category}
-        </span>
-        <span className="font-mono text-xs">{moment.virality_score.toFixed(2)}</span>
+      <div
+        className="flex shrink-0 items-center justify-center rounded-full border border-accent/30 bg-accent/15 font-mono text-sm font-semibold text-accent"
+        style={{ width: size, height: size }}
+        title="Virality score"
+      >
+        {moment.virality_score.toFixed(1)}
       </div>
-      <h2 className="mt-4 text-center text-base font-semibold leading-tight md:text-lg">
-        {moment.title}
-      </h2>
-      <p className="mt-2 line-clamp-3 text-center text-xs opacity-80">
-        {moment.description}
-      </p>
-      <div className="mt-3 text-center text-[11px] opacity-80">
-        {moment.mention_count} mentions · {moment.source_count} sources · {moment.direction}
-      </div>
-      <div className="mt-3 min-h-0 flex-1 overflow-hidden text-[11px] opacity-90">
-        {moment.articles.slice(0, 3).map((article) => (
-          <div key={`${article.article_id}-${article.evidence}`} className="mt-1 line-clamp-2">
-            <span className="font-semibold">{article.feed_title || article.feed_group || "Source"}</span>
-            {" · "}{article.title}
-          </div>
-        ))}
-      </div>
-      <div className="mt-2 text-center text-[10px] opacity-60">
-        {t("trends.lastReinforced")}: {fmtDate(moment.last_seen_at, i18n.language)}
+      <div className="min-w-0">
+        <div className="flex flex-wrap items-center gap-2 text-[11px] font-medium uppercase tracking-wide">
+          <span className="rounded-full border border-border bg-bg px-2 py-1 text-muted">
+            {moment.category}
+          </span>
+          <span className={directionLabelClass(moment.direction)}>{moment.direction}</span>
+          <span className="text-muted">
+            {moment.mention_count} mentions · {moment.source_count} sources
+          </span>
+        </div>
+        <h2 className="mt-2 text-base font-semibold leading-snug text-text md:text-lg">
+          {moment.title}
+        </h2>
+        <p className="mt-1 line-clamp-2 text-sm text-muted">{moment.description}</p>
+        <div className="mt-3 space-y-2">
+          {moment.articles.slice(0, 3).map((article) => (
+            <div
+              key={`${article.article_id}-${article.evidence}`}
+              className="rounded-lg border border-border bg-bg/70 px-3 py-2 text-xs"
+            >
+              <div className="line-clamp-1 font-medium text-text">
+                {article.feed_title || article.feed_group || "Source"} · {article.title}
+              </div>
+              {article.evidence && (
+                <div className="mt-1 line-clamp-2 text-muted">{article.evidence}</div>
+              )}
+            </div>
+          ))}
+        </div>
+        <div className="mt-3 text-[11px] text-muted">
+          {t("trends.lastReinforced")}: {fmtDate(moment.last_seen_at, i18n.language)}
+        </div>
       </div>
     </article>
   );
@@ -191,7 +217,7 @@ export default function TrendsView() {
           </div>
         )}
         {moments.length > 0 && (
-          <div className="flex flex-wrap items-center justify-center gap-5">
+          <div className="mx-auto grid max-w-5xl gap-4">
             {moments.map((moment) => (
               <MomentBubble key={moment.id} moment={moment} maxScore={maxScore} />
             ))}

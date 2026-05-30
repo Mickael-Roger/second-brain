@@ -224,6 +224,8 @@ def list_moments(
         age_hours = max((now - newest).total_seconds() / 3600.0, 0.0)
         freshness = 1.0 / (1.0 + age_hours / 18.0)
         score = weighted * source_factor * freshness
+        if score < 0.35:
+            continue
         first_seen = min(m.published_at for m in cluster_mentions)
         last_seen = max(m.published_at for m in cluster_mentions)
         direction = _direction(cluster_mentions, hours)
@@ -239,7 +241,11 @@ def list_moments(
                 confidence=m.confidence,
                 evidence=m.evidence,
             )
-            for m in cluster_mentions[:6]
+            for m in sorted(
+                cluster_mentions,
+                key=lambda item: item.intensity * item.confidence,
+                reverse=True,
+            )[:6]
         ]
         scored.append(
             (
