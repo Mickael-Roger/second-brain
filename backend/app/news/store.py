@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import sqlite3
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Literal
 
 FetchRunKind = Literal["fetch", "cluster"]
@@ -22,7 +22,7 @@ FetchRunStatus = Literal["running", "ok", "error"]
 
 
 def _utcnow_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 @dataclass(slots=True)
@@ -41,7 +41,7 @@ class StoredArticle:
     is_read: bool
     is_starred: bool
     feed_favicon: str | None  # joined from news_feeds
-    labels: list[str]         # joined from news_article_labels
+    labels: list[str]  # joined from news_article_labels
 
 
 @dataclass(slots=True)
@@ -77,12 +77,9 @@ RETENTION_DAYS = 30
 
 
 def purge_old_articles(conn: sqlite3.Connection, *, days: int = RETENTION_DAYS) -> int:
-    cutoff = (
-        datetime.now(timezone.utc) - timedelta(days=days)
-    ).isoformat()
+    cutoff = (datetime.now(UTC) - timedelta(days=days)).isoformat()
     cur = conn.execute(
-        "DELETE FROM news_articles "
-        "WHERE published_at < ? AND is_read = 1",
+        "DELETE FROM news_articles WHERE published_at < ? AND is_read = 1",
         (cutoff,),
     )
     return cur.rowcount
@@ -94,20 +91,16 @@ def purge_old_articles_with_ids(
     """Delete READ articles older than `days` and return their ids
     so the caller can also remove the corresponding JSON files on
     disk. Unread articles are preserved indefinitely."""
-    cutoff = (
-        datetime.now(timezone.utc) - timedelta(days=days)
-    ).isoformat()
+    cutoff = (datetime.now(UTC) - timedelta(days=days)).isoformat()
     rows = conn.execute(
-        "SELECT id FROM news_articles "
-        "WHERE published_at < ? AND is_read = 1",
+        "SELECT id FROM news_articles WHERE published_at < ? AND is_read = 1",
         (cutoff,),
     ).fetchall()
     if not rows:
         return []
     ids = [r["id"] for r in rows]
     conn.execute(
-        "DELETE FROM news_articles "
-        "WHERE published_at < ? AND is_read = 1",
+        "DELETE FROM news_articles WHERE published_at < ? AND is_read = 1",
         (cutoff,),
     )
     return ids
@@ -123,24 +116,25 @@ def insert_article(
     feed_group: str | None,
     title: str,
     published_at: str,
+    content_hash: str,
     updated_at: int = 0,
     is_read: bool = False,
     is_starred: bool = False,
 ) -> tuple[bool, bool]:
     """Insert (or refresh on duplicate). Returns ``(is_new, content_updated)``:
-      - ``is_new``: True on first sight.
-      - ``content_updated``: True when an existing row's title/published_at
-        was refreshed because ``updated_at`` is strictly newer than what we
-        had (FreshRSS bumped ``lastUserModified``). The is_read/is_starred
-        reconciliation runs on every call independent of ``updated_at``."""
+    - ``is_new``: True on first sight.
+    - ``content_updated``: True when an existing row's content fingerprint
+      changed, or when upstream ``updated_at`` is strictly newer than what
+      we had. The is_read/is_starred reconciliation runs on every call
+      independent of content freshness."""
     article_id = f"{source}:{external_id}"
     is_read_int = 1 if is_read else 0
     is_starred_int = 1 if is_starred else 0
     cur = conn.execute(
         "INSERT OR IGNORE INTO news_articles "
         "(id, source, external_id, feed_id, feed_title, feed_group, "
-        " title, published_at, updated_at, is_read, is_starred) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        " title, published_at, content_hash, updated_at, is_read, is_starred) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             article_id,
             source,
@@ -150,6 +144,7 @@ def insert_article(
             feed_group,
             title,
             published_at,
+            content_hash,
             updated_at,
             is_read_int,
             is_starred_int,
@@ -163,25 +158,27 @@ def insert_article(
     )
     cur2 = conn.execute(
         "UPDATE news_articles "
-        "   SET title = ?, published_at = ?, updated_at = ?, "
+        "   SET title = ?, published_at = ?, content_hash = ?, "
+        "       updated_at = CASE WHEN ? > updated_at THEN ? ELSE updated_at END, "
         "       feed_title = ?, feed_group = ? "
-        " WHERE id = ? AND ? > updated_at",
+        " WHERE id = ? AND (content_hash IS NOT ? OR ? > updated_at)",
         (
             title,
             published_at,
+            content_hash,
+            updated_at,
             updated_at,
             feed_title,
             feed_group,
             article_id,
+            content_hash,
             updated_at,
         ),
     )
     return False, cur2.rowcount > 0
 
 
-def mark_article_read(
-    conn: sqlite3.Connection, article_id: str, *, is_read: bool = True
-) -> bool:
+def mark_article_read(conn: sqlite3.Connection, article_id: str, *, is_read: bool = True) -> bool:
     cur = conn.execute(
         "UPDATE news_articles SET is_read = ? WHERE id = ?",
         (1 if is_read else 0, article_id),
@@ -202,14 +199,11 @@ def mark_article_starred(
 # ── Labels ─────────────────────────────────────────────────────────
 
 
-def add_article_label(
-    conn: sqlite3.Connection, article_id: str, label: str
-) -> None:
+def add_article_label(conn: sqlite3.Connection, article_id: str, label: str) -> None:
     """Attach ``label`` to ``article_id``. Idempotent. Also ensures the
     label exists in the ``news_labels`` autocomplete index."""
     conn.execute(
-        "INSERT OR IGNORE INTO news_article_labels (article_id, label) "
-        "VALUES (?, ?)",
+        "INSERT OR IGNORE INTO news_article_labels (article_id, label) VALUES (?, ?)",
         (article_id, label),
     )
     conn.execute(
@@ -218,18 +212,14 @@ def add_article_label(
     )
 
 
-def remove_article_label(
-    conn: sqlite3.Connection, article_id: str, label: str
-) -> None:
+def remove_article_label(conn: sqlite3.Connection, article_id: str, label: str) -> None:
     conn.execute(
         "DELETE FROM news_article_labels WHERE article_id = ? AND label = ?",
         (article_id, label),
     )
 
 
-def replace_article_labels(
-    conn: sqlite3.Connection, article_id: str, labels: list[str]
-) -> None:
+def replace_article_labels(conn: sqlite3.Connection, article_id: str, labels: list[str]) -> None:
     """Diff-replace the label set for ``article_id``. Used by the
     fetch path to keep local labels aligned with FreshRSS on every
     pass."""
@@ -248,8 +238,7 @@ def replace_article_labels(
         )
     for lbl in target - current:
         conn.execute(
-            "INSERT OR IGNORE INTO news_article_labels (article_id, label) "
-            "VALUES (?, ?)",
+            "INSERT OR IGNORE INTO news_article_labels (article_id, label) VALUES (?, ?)",
             (article_id, lbl),
         )
         conn.execute(
@@ -259,9 +248,7 @@ def replace_article_labels(
 
 
 def list_labels(conn: sqlite3.Connection) -> list[str]:
-    rows = conn.execute(
-        "SELECT name FROM news_labels ORDER BY name COLLATE NOCASE ASC"
-    ).fetchall()
+    rows = conn.execute("SELECT name FROM news_labels ORDER BY name COLLATE NOCASE ASC").fetchall()
     return [r["name"] for r in rows]
 
 
@@ -276,9 +263,7 @@ def forget_label_everywhere(conn: sqlite3.Connection, name: str) -> int:
     """Detach ``name`` from every article and drop it from the autocomplete
     index. Returns the number of articles that had it. Used when the user
     deletes a label from the manage UI."""
-    cur = conn.execute(
-        "DELETE FROM news_article_labels WHERE label = ?", (name,)
-    )
+    cur = conn.execute("DELETE FROM news_article_labels WHERE label = ?", (name,))
     affected = cur.rowcount
     conn.execute("DELETE FROM news_labels WHERE name = ?", (name,))
     return affected
@@ -300,9 +285,7 @@ def reconcile_read_state(
 
     Uses a temp table so the IN-list is unbounded (avoids SQLite's
     ~32k parameter cap on busy aggregators)."""
-    conn.execute(
-        "CREATE TEMP TABLE IF NOT EXISTS _unread_ids (external_id TEXT PRIMARY KEY)"
-    )
+    conn.execute("CREATE TEMP TABLE IF NOT EXISTS _unread_ids (external_id TEXT PRIMARY KEY)")
     try:
         conn.execute("DELETE FROM _unread_ids")
         if unread_external_ids:
@@ -343,9 +326,7 @@ def reconcile_starred_state(
 ) -> tuple[int, int]:
     """Mirror of :func:`reconcile_read_state` for the starred flag.
     Returns (newly_starred, newly_unstarred)."""
-    conn.execute(
-        "CREATE TEMP TABLE IF NOT EXISTS _starred_ids (external_id TEXT PRIMARY KEY)"
-    )
+    conn.execute("CREATE TEMP TABLE IF NOT EXISTS _starred_ids (external_id TEXT PRIMARY KEY)")
     try:
         conn.execute("DELETE FROM _starred_ids")
         if starred_external_ids:
@@ -501,9 +482,7 @@ def list_articles(
 
 
 def get_article(conn: sqlite3.Connection, article_id: str) -> StoredArticle | None:
-    row = conn.execute(
-        _ARTICLE_SELECT + " WHERE a.id = ?", (article_id,)
-    ).fetchone()
+    row = conn.execute(_ARTICLE_SELECT + " WHERE a.id = ?", (article_id,)).fetchone()
     if row is None:
         return None
     art = _row_to_article(row)
@@ -511,9 +490,7 @@ def get_article(conn: sqlite3.Connection, article_id: str) -> StoredArticle | No
     return art
 
 
-def get_article_labels(
-    conn: sqlite3.Connection, article_id: str
-) -> list[str]:
+def get_article_labels(conn: sqlite3.Connection, article_id: str) -> list[str]:
     rows = conn.execute(
         "SELECT label FROM news_article_labels WHERE article_id = ? "
         "ORDER BY label COLLATE NOCASE ASC",
@@ -522,9 +499,7 @@ def get_article_labels(
     return [r["label"] for r in rows]
 
 
-def _attach_labels(
-    conn: sqlite3.Connection, articles: list[StoredArticle]
-) -> None:
+def _attach_labels(conn: sqlite3.Connection, articles: list[StoredArticle]) -> None:
     """Backfill ``labels`` on a batch of articles in one SELECT.
     Avoids the per-row N+1 you'd get from looping :func:`get_article_labels`."""
     if not articles:
@@ -544,9 +519,7 @@ def _attach_labels(
         a.labels = by_id.get(a.id, [])
 
 
-def existing_external_ids(
-    conn: sqlite3.Connection, source: str
-) -> set[str]:
+def existing_external_ids(conn: sqlite3.Connection, source: str) -> set[str]:
     """All external_ids stored for `source`. Used by the unread
     completeness pass to find ids we haven't fetched yet."""
     rows = conn.execute(
@@ -569,9 +542,7 @@ def list_categories(conn: sqlite3.Connection) -> list[str]:
     return [r["feed_group"] for r in rows]
 
 
-def list_id_mappings(
-    conn: sqlite3.Connection, source: str
-) -> list[tuple[str, str]]:
+def list_id_mappings(conn: sqlite3.Connection, source: str) -> list[tuple[str, str]]:
     """(article_id, external_id) for every row of ``source``. Used by
     the one-shot decimal→hex re-encode at first start under the
     GReader client."""
@@ -645,9 +616,7 @@ def finish_fetch_run(
     )
 
 
-def list_recent_runs(
-    conn: sqlite3.Connection, *, limit: int = 20
-) -> list[StoredFetchRun]:
+def list_recent_runs(conn: sqlite3.Connection, *, limit: int = 20) -> list[StoredFetchRun]:
     rows = conn.execute(
         "SELECT * FROM news_fetch_runs ORDER BY started_at DESC LIMIT ?",
         (limit,),

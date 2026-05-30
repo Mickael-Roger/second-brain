@@ -40,10 +40,11 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
 import logging
 import sqlite3
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import httpx
 
@@ -93,6 +94,10 @@ _FAVICON_REFRESH_DAYS = 30
 _HEX_MIGRATION_MARKER = "greader_external_id_hex_reencode_v1"
 
 
+def _content_hash(html: str) -> str:
+    return hashlib.sha256(html.encode("utf-8")).hexdigest()
+
+
 def _normalise_favicon(raw: str | bytes | None) -> str | None:
     """Coerce a favicon payload into a `data:` URI. Accepts a raw
     base64 string, a complete data URI, or raw bytes."""
@@ -129,7 +134,7 @@ async def _maybe_fetch_favicon(
     if existing_data_uri and existing_updated_at:
         try:
             updated = datetime.fromisoformat(existing_updated_at)
-            if (datetime.now(timezone.utc) - updated).days < _FAVICON_REFRESH_DAYS:
+            if (datetime.now(UTC) - updated).days < _FAVICON_REFRESH_DAYS:
                 return existing_data_uri
         except ValueError:
             pass
@@ -157,7 +162,7 @@ def _published_to_unix(iso_str: str) -> int:
     try:
         dt = datetime.fromisoformat(iso_str)
         if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
+            dt = dt.replace(tzinfo=UTC)
         return int(dt.timestamp())
     except ValueError:
         return 0
@@ -187,7 +192,7 @@ def _hex_migration_marker_present(conn: sqlite3.Connection) -> bool:
 
 
 def _record_hex_migration(conn: sqlite3.Connection, *, count: int) -> None:
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     conn.execute(
         "INSERT INTO news_fetch_runs "
         "(kind, source, started_at, finished_at, status, fetched, inserted, error) "
@@ -285,7 +290,7 @@ def _migrate_external_ids_to_hex(conn: sqlite3.Connection) -> int:
 def _store_items(
     items: list[GReaderItem],
     *,
-    feeds: dict[str, "GReaderFeedMeta"],
+    feeds: dict[str, GReaderFeedMeta],
     excluded_categories: set[str],
     source: str,
 ) -> tuple[int, int, int]:
@@ -298,7 +303,7 @@ def _store_items(
     inserted = 0
     updated = 0
     skipped_excluded = 0
-    now_iso = datetime.now(timezone.utc).isoformat()
+    now_iso = datetime.now(UTC).isoformat()
     conn = open_connection()
     try:
         for it in items:
@@ -308,6 +313,7 @@ def _store_items(
                 skipped_excluded += 1
                 continue
             article_id = f"{source}:{it.id}"
+            body_hash = _content_hash(it.html or "")
             is_new, content_updated = insert_article(
                 conn,
                 source=source,
@@ -317,6 +323,7 @@ def _store_items(
                 feed_group=cat,
                 title=it.title,
                 published_at=published_iso(it),
+                content_hash=body_hash,
                 updated_at=it.updated_at,
                 is_read=it.is_read,
                 is_starred=it.is_starred,
@@ -401,7 +408,8 @@ async def fetch_freshrss(
         if purged_ids:
             log.info(
                 "news fetch: purged %d read article(s) older than %d days",
-                len(purged_ids), RETENTION_DAYS,
+                len(purged_ids),
+                RETENTION_DAYS,
             )
         for aid in purged_ids:
             articles.delete_article(aid)
@@ -411,12 +419,14 @@ async def fetch_freshrss(
 
     if from_ts is None:
         log.info(
-            "news fetch: freshrss starting (incremental, since_ts=%d)", since_ts,
+            "news fetch: freshrss starting (incremental, since_ts=%d)",
+            since_ts,
         )
     else:
         log.info(
             "news fetch: freshrss starting (range, from_ts=%d, to_ts=%s)",
-            from_ts, "now" if to_ts is None else str(to_ts),
+            from_ts,
+            "now" if to_ts is None else str(to_ts),
         )
 
     fetched = 0
@@ -440,13 +450,15 @@ async def fetch_freshrss(
                     "SELECT id, favicon_data_uri, updated_at FROM news_feeds"
                 ).fetchall():
                     existing_favicons[str(row["id"])] = (
-                        row["favicon_data_uri"], row["updated_at"],
+                        row["favicon_data_uri"],
+                        row["updated_at"],
                     )
             finally:
                 conn.close()
 
             sem = asyncio.Semaphore(4)
             async with httpx.AsyncClient(timeout=_FAVICON_TIMEOUT) as http:
+
                 async def _resolve_favicon(fid: str) -> tuple[str, str | None]:
                     f = feeds_raw[fid]
                     existing_uri, existing_at = existing_favicons.get(fid, (None, None))
@@ -484,11 +496,13 @@ async def fetch_freshrss(
             # ── Primary fetch pass ───────────────────────────────────
             if from_ts is None:
                 items = await client.items_since(
-                    since_ts=since_ts, max_items=cfg.max_items_per_run,
+                    since_ts=since_ts,
+                    max_items=cfg.max_items_per_run,
                 )
             else:
                 items = await client.items_in_range(
-                    from_ts=from_ts, to_ts=to_ts,
+                    from_ts=from_ts,
+                    to_ts=to_ts,
                 )
             fetched = len(items)
             excluded = set(cfg.excluded_categories or [])
@@ -496,7 +510,9 @@ async def fetch_freshrss(
                 read_count = sum(1 for it in items if it.is_read)
                 log.info(
                     "news fetch: freshrss got %d items (read=%d, unread=%d)",
-                    fetched, read_count, fetched - read_count,
+                    fetched,
+                    read_count,
+                    fetched - read_count,
                 )
                 ins, upd, skipped = _store_items(
                     items,
@@ -508,14 +524,14 @@ async def fetch_freshrss(
                 updated += upd
                 if upd:
                     log.info(
-                        "news fetch: refreshed %d article(s) whose upstream "
-                        "content was modified",
+                        "news fetch: refreshed %d article(s) whose upstream content was modified",
                         upd,
                     )
                 if skipped:
                     log.info(
                         "news fetch: skipped %d items from excluded categories %s",
-                        skipped, sorted(excluded),
+                        skipped,
+                        sorted(excluded),
                     )
 
             # ── Unread completeness + reconciliation ────────────────
@@ -530,13 +546,15 @@ async def fetch_freshrss(
                 conn = open_connection()
                 try:
                     newly_read, newly_unread = reconcile_read_state(
-                        conn, source=source, unread_external_ids=unread_set,
+                        conn,
+                        source=source,
+                        unread_external_ids=unread_set,
                     )
                     if newly_read or newly_unread:
                         log.info(
-                            "news fetch: reconciled read-state "
-                            "(newly_read=%d, newly_unread=%d)",
-                            newly_read, newly_unread,
+                            "news fetch: reconciled read-state (newly_read=%d, newly_unread=%d)",
+                            newly_read,
+                            newly_unread,
                         )
                     already = existing_external_ids(conn, source)
                 finally:
@@ -559,7 +577,8 @@ async def fetch_freshrss(
                         inserted += ins
                         updated += upd
                         log.info(
-                            "news fetch: backfilled %d unread (caught up)", ins,
+                            "news fetch: backfilled %d unread (caught up)",
+                            ins,
                         )
 
             # ── Starred reconciliation ──────────────────────────────
@@ -572,13 +591,16 @@ async def fetch_freshrss(
                 conn = open_connection()
                 try:
                     newly_starred, newly_unstarred = reconcile_starred_state(
-                        conn, source=source, starred_external_ids=set(starred_ids),
+                        conn,
+                        source=source,
+                        starred_external_ids=set(starred_ids),
                     )
                     if newly_starred or newly_unstarred:
                         log.info(
                             "news fetch: reconciled starred-state "
                             "(newly_starred=%d, newly_unstarred=%d)",
-                            newly_starred, newly_unstarred,
+                            newly_starred,
+                            newly_unstarred,
                         )
                 finally:
                     conn.close()
@@ -589,24 +611,35 @@ async def fetch_freshrss(
     conn = open_connection()
     try:
         finish_fetch_run(
-            conn, run_id,
+            conn,
+            run_id,
             status="error" if error else "ok",
-            fetched=fetched, inserted=inserted, error=error,
+            fetched=fetched,
+            inserted=inserted,
+            error=error,
         )
     finally:
         conn.close()
 
     if error:
         return FetchSummary(
-            source=source, fetched=fetched, inserted=inserted, updated=updated,
+            source=source,
+            fetched=fetched,
+            inserted=inserted,
+            updated=updated,
             error=error,
         )
     log.info(
         "news fetch: freshrss done fetched=%d inserted=%d updated=%d",
-        fetched, inserted, updated,
+        fetched,
+        inserted,
+        updated,
     )
     return FetchSummary(
-        source=source, fetched=fetched, inserted=inserted, updated=updated,
+        source=source,
+        fetched=fetched,
+        inserted=inserted,
+        updated=updated,
     )
 
 
@@ -624,9 +657,7 @@ async def fetch_all_sources(
         out.append(await fetch_freshrss(from_ts=from_ts, to_ts=to_ts))
     except Exception as exc:
         log.exception("news fetch: freshrss raised")
-        out.append(
-            FetchSummary(source="freshrss", fetched=0, inserted=0, error=str(exc))
-        )
+        out.append(FetchSummary(source="freshrss", fetched=0, inserted=0, error=str(exc)))
     return out
 
 
@@ -634,9 +665,7 @@ def thirty_days_ago_ts() -> int:
     """Unix-seconds 30 days back, used by the cron to scope its
     ranged walk. The cron always fetches the full 30-day window so
     nothing is missed across restarts."""
-    return int(
-        (datetime.now(timezone.utc) - timedelta(days=RETENTION_DAYS)).timestamp()
-    )
+    return int((datetime.now(UTC) - timedelta(days=RETENTION_DAYS)).timestamp())
 
 
 # ── Upstream pushes (called from the API layer) ────────────────────
@@ -676,8 +705,7 @@ async def push_read_state(
         return
     try:
         await _with_client(
-            lambda c: c.mark_read(external_id) if is_read
-            else c.mark_unread(external_id)
+            lambda c: c.mark_read(external_id) if is_read else c.mark_unread(external_id)
         )
     except Exception:
         log.exception("push_read_state: failed for %s (is_read=%s)", article_id, is_read)
@@ -694,12 +722,12 @@ async def push_starred_state(
         log.warning("push_starred_state: unsupported source %s", source)
         return
     try:
-        await _with_client(
-            lambda c: c.set_starred(external_id, starred=is_starred)
-        )
+        await _with_client(lambda c: c.set_starred(external_id, starred=is_starred))
     except Exception:
         log.exception(
-            "push_starred_state: failed for %s (is_starred=%s)", article_id, is_starred,
+            "push_starred_state: failed for %s (is_starred=%s)",
+            article_id,
+            is_starred,
         )
 
 
@@ -716,23 +744,30 @@ async def push_label(
         return
     try:
         await _with_client(
-            lambda c: c.add_label(external_id, label) if add
-            else c.remove_label(external_id, label)
+            lambda c: c.add_label(external_id, label) if add else c.remove_label(external_id, label)
         )
     except Exception:
         log.exception(
-            "push_label: failed for %s (label=%s add=%s)", article_id, label, add,
+            "push_label: failed for %s (label=%s add=%s)",
+            article_id,
+            label,
+            add,
         )
 
 
 async def subscribe_feed(
-    url: str, *, title: str | None = None, category: str | None = None,
+    url: str,
+    *,
+    title: str | None = None,
+    category: str | None = None,
 ) -> str:
     """Subscribe to ``url`` on FreshRSS. Returns the new ``feed/<id>``
     stream id so the caller can immediately fetch + persist the feed
     in `news_feeds`."""
+
     async def go(c: GReaderClient) -> str:
         return await c.subscribe(url, title=title, category=category)
+
     result = await _with_client(go)
     if result is None:
         raise RuntimeError("FreshRSS not configured")
@@ -765,7 +800,9 @@ async def rename_category(old: str, new: str) -> None:
 
 
 async def delete_category(
-    name: str, *, member_feed_ids: list[str] | None = None,
+    name: str,
+    *,
+    member_feed_ids: list[str] | None = None,
 ) -> None:
     """Delete category ``name``. Tries ``disable-tag`` first; if the
     instance doesn't support it, falls back to removing the label
@@ -794,7 +831,8 @@ async def delete_category(
             except Exception:
                 log.exception(
                     "delete_category: failed to unfile feed %s from %s",
-                    fid, name,
+                    fid,
+                    name,
                 )
 
 
