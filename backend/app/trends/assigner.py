@@ -43,7 +43,9 @@ events triggers three reinforce/create calls in the same turn.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
+from datetime import UTC
 from typing import Any
 
 from app.config import get_settings
@@ -60,7 +62,6 @@ from app.news.articles import read_article
 
 from . import engine, store
 from .engine import (
-    EventOutcome,
     IntentCreate,
     IntentReinforce,
     IntentRename,
@@ -73,7 +74,19 @@ class AssignerError(RuntimeError):
     pass
 
 
-_MAX_ROUNDS = 4   # 1 turn for tool calls + 1 follow-up is plenty
+_MAX_ROUNDS = 4  # 1 turn for tool calls + 1 follow-up is plenty
+
+_ARTICLE_TYPES = [
+    "single_news",
+    "roundup",
+    "youtube",
+    "podcast",
+    "blogpost",
+    "tutorial",
+    "opinion",
+    "evergreen",
+    "unknown",
+]
 
 
 SYSTEM_PROMPT_TEMPLATE = """You classify NEWS articles into trends of current events.
@@ -207,6 +220,69 @@ _TOOL_REINFORCE = ToolDef(
 )
 
 
+def _build_record_subject_tool(categories: list[str]) -> ToolDef:
+    return ToolDef(
+        name="record_trend_subject",
+        description=(
+            "Record one concrete, current, trendable news subject found in the "
+            "article. Call once per subject. Call no tools when the item is "
+            "blog/opinion/tutorial/evergreen or has no concrete current event."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "article_type": {
+                    "type": "string",
+                    "enum": _ARTICLE_TYPES,
+                    "description": "The kind of item being analysed.",
+                },
+                "title": {
+                    "type": "string",
+                    "description": "Concrete event-level title, not a broad topic or keyword.",
+                },
+                "description": {
+                    "type": "string",
+                    "description": "One short sentence defining what belongs to this event.",
+                },
+                "category": {
+                    "type": "string",
+                    "enum": categories,
+                    "description": "Category for this subject.",
+                },
+                "intensity": {
+                    "type": "number",
+                    "minimum": 0.0,
+                    "maximum": 1.0,
+                    "description": (
+                        "How central this subject is. For roundups, videos, and "
+                        "podcasts, spread intensity across subjects."
+                    ),
+                },
+                "confidence": {
+                    "type": "number",
+                    "minimum": 0.0,
+                    "maximum": 1.0,
+                    "description": "Confidence that this is a real current news event.",
+                },
+                "evidence": {
+                    "type": "string",
+                    "description": "Short phrase from the article explaining the signal.",
+                },
+            },
+            "required": [
+                "article_type",
+                "title",
+                "description",
+                "category",
+                "intensity",
+                "confidence",
+                "evidence",
+            ],
+            "additionalProperties": False,
+        },
+    )
+
+
 def _build_create_tool(categories: list[str]) -> ToolDef:
     return ToolDef(
         name="create_trend",
@@ -229,8 +305,7 @@ def _build_create_tool(categories: list[str]) -> ToolDef:
                 "description": {
                     "type": "string",
                     "description": (
-                        "One or two sentences describing what fits this "
-                        "trend and what doesn't."
+                        "One or two sentences describing what fits this trend and what doesn't."
                     ),
                 },
                 "category": {
@@ -275,8 +350,7 @@ def _build_rename_tool(categories: list[str]) -> ToolDef:
                 "new_description": {
                     "type": "string",
                     "description": (
-                        "Optional new description. Leave empty to keep "
-                        "the existing one."
+                        "Optional new description. Leave empty to keep the existing one."
                     ),
                 },
                 "new_category": {
@@ -306,7 +380,10 @@ def _build_trends_context(trends: list[store.TrendRecord]) -> str:
     """Compact textual rendering of the current trends, grouped by
     category for readability."""
     if not trends:
-        return "(no active trends yet — anything trendable in this article is a candidate for create_trend)"
+        return (
+            "(no active trends yet — anything trendable in this article is "
+            "a candidate for create_trend)"
+        )
     by_cat: dict[str, list[store.TrendRecord]] = {}
     for t in trends:
         by_cat.setdefault(t.category or "Other", []).append(t)
@@ -329,7 +406,10 @@ def _build_categories_block(categories: list[str]) -> str:
 
 
 def _build_user_message(
-    *, title: str, body: str, trends: list[store.TrendRecord],
+    *,
+    title: str,
+    body: str,
+    trends: list[store.TrendRecord],
 ) -> str:
     return (
         "## Article\n\n"
@@ -347,8 +427,20 @@ def _build_user_message(
 @dataclass(slots=True)
 class _ToolIntent:
     """Captured tool call from the LLM, normalised."""
+
     name: str
     args: dict[str, Any]
+
+
+@dataclass(slots=True)
+class TrendSubject:
+    article_type: str
+    title: str
+    description: str
+    category: str
+    intensity: float
+    confidence: float
+    evidence: str
 
 
 def _collect_tool_calls(msg: Message) -> list[_ToolIntent]:
@@ -360,7 +452,10 @@ def _collect_tool_calls(msg: Message) -> list[_ToolIntent]:
 
 
 async def _run_llm(
-    *, title: str, body: str, trends: list[store.TrendRecord],
+    *,
+    title: str,
+    body: str,
+    trends: list[store.TrendRecord],
     categories: list[str],
 ) -> list[_ToolIntent]:
     """Send the article + trends to the LLM and return the tool calls
@@ -370,9 +465,7 @@ async def _run_llm(
     provider = get_llm_router().get(provider_name)
 
     user_text = _build_user_message(title=title, body=body, trends=trends)
-    history: list[Message] = [
-        Message(role="user", content=[TextBlock(text=user_text)])
-    ]
+    history: list[Message] = [Message(role="user", content=[TextBlock(text=user_text)])]
     tools = [
         _TOOL_REINFORCE,
         _build_create_tool(categories),
@@ -393,7 +486,10 @@ async def _run_llm(
         assistant_message: Message | None = None
         try:
             async for ev in provider.stream(
-                messages=history, tools=tools, system=system_prompt, model=model,
+                messages=history,
+                tools=tools,
+                system=system_prompt,
+                model=model,
             ):
                 if ev.type == "error":
                     raise AssignerError(ev.error or "LLM stream error")
@@ -408,9 +504,7 @@ async def _run_llm(
             raise AssignerError("LLM produced no assistant message")
         history.append(assistant_message)
 
-        pending = [
-            b for b in assistant_message.content if isinstance(b, ToolUseBlock)
-        ]
+        pending = [b for b in assistant_message.content if isinstance(b, ToolUseBlock)]
         if not pending:
             break  # final turn, no more tools — we're done
 
@@ -444,83 +538,327 @@ def _intents_from_tool_calls(
                 tid = str(it.args.get("trend_id") or "").strip()
                 if not tid:
                     continue
-                out.append(IntentReinforce(
-                    trend_id=tid,
-                    intensity=float(it.args.get("intensity") or 0.0),
-                ))
+                out.append(
+                    IntentReinforce(
+                        trend_id=tid,
+                        intensity=float(it.args.get("intensity") or 0.0),
+                    )
+                )
             elif it.name == "create_trend":
                 name = str(it.args.get("name") or "").strip()
                 desc = str(it.args.get("description") or "").strip()
                 if not name or not desc:
                     continue
-                out.append(IntentCreate(
-                    name=name,
-                    description=desc,
-                    category=str(it.args.get("category") or "").strip(),
-                    intensity=float(it.args.get("intensity") or 0.0),
-                ))
+                out.append(
+                    IntentCreate(
+                        name=name,
+                        description=desc,
+                        category=str(it.args.get("category") or "").strip(),
+                        intensity=float(it.args.get("intensity") or 0.0),
+                    )
+                )
             elif it.name == "rename_trend":
                 tid = str(it.args.get("trend_id") or "").strip()
                 if not tid:
                     continue
-                out.append(IntentRename(
-                    trend_id=tid,
-                    new_name=(str(it.args.get("new_name") or "").strip() or None),
-                    new_description=(
-                        str(it.args.get("new_description") or "").strip() or None
-                    ),
-                    new_category=(
-                        str(it.args.get("new_category") or "").strip() or None
-                    ),
-                ))
+                out.append(
+                    IntentRename(
+                        trend_id=tid,
+                        new_name=(str(it.args.get("new_name") or "").strip() or None),
+                        new_description=(str(it.args.get("new_description") or "").strip() or None),
+                        new_category=(str(it.args.get("new_category") or "").strip() or None),
+                    )
+                )
             else:
                 log.warning("trends assigner: ignoring unknown tool %s", it.name)
         except Exception:
             log.exception(
-                "trends assigner: malformed tool args for %s, dropping", it.name,
+                "trends assigner: malformed tool args for %s, dropping",
+                it.name,
             )
     return out
+
+
+async def _run_subject_llm(
+    *,
+    title: str,
+    body: str,
+    categories: list[str],
+    feed_group: str | None,
+) -> list[_ToolIntent]:
+    settings = get_settings()
+    provider_name, model, _ = settings.llm.resolve_task("trends")
+    provider = get_llm_router().get(provider_name)
+    system_prompt = f"""You extract momentary NEWS trend subjects.
+
+A valid subject is a concrete current event or developing situation reported now.
+Return zero subjects for blog posts, opinions, tutorials, evergreen explainers,
+reviews, and generic commentary unless they are clearly tied to a recent event.
+
+Some items are roundups, YouTube videos, or podcasts. They can contain many
+subjects. For those, call the tool once per concrete event and spread intensity
+across subjects; do not make every passing mention a full-strength signal.
+
+Use these categories exactly: {_build_categories_block(categories)}.
+
+Subject titles must be event-level, not broad themes. Prefer "Anthropic releases
+Claude Opus 4.8" over "AI labs product strategy".
+
+If there is no current, trendable news event, call no tools and finish with a
+short sentence explaining why it was skipped.
+"""
+    user_text = (
+        "## Article\n\n"
+        f"Feed category: {feed_group or '(unknown)'}\n"
+        f"Title: {title}\n\n"
+        f"Body:\n{body or '(empty)'}\n\n"
+        "Extract zero, one, or many concrete trend subjects."
+    )
+    history: list[Message] = [Message(role="user", content=[TextBlock(text=user_text)])]
+    tools = [_build_record_subject_tool(categories)]
+    collected: list[_ToolIntent] = []
+    rounds_left = _MAX_ROUNDS
+    while True:
+        rounds_left -= 1
+        if rounds_left < 0:
+            log.warning("trends subject extractor: max rounds reached")
+            break
+        assistant_message: Message | None = None
+        try:
+            async for ev in provider.stream(
+                messages=history,
+                tools=tools,
+                system=system_prompt,
+                model=model,
+            ):
+                if ev.type == "error":
+                    raise AssignerError(ev.error or "LLM stream error")
+                if ev.type == "message_done" and ev.message:
+                    assistant_message = ev.message
+        except AssignerError:
+            raise
+        except Exception as exc:
+            raise AssignerError(f"LLM call failed: {exc}") from exc
+        if assistant_message is None:
+            raise AssignerError("LLM produced no assistant message")
+        history.append(assistant_message)
+        pending = [b for b in assistant_message.content if isinstance(b, ToolUseBlock)]
+        if not pending:
+            break
+        collected.extend(_collect_tool_calls(assistant_message))
+        history.append(
+            Message(
+                role="user",
+                content=[
+                    ToolResultBlock(
+                        tool_use_id=call.id,
+                        content=[TextBlock(text="ok")],
+                        is_error=False,
+                    )
+                    for call in pending
+                ],
+            )
+        )
+    return collected
+
+
+def _subjects_from_tool_calls(raw: list[_ToolIntent]) -> list[TrendSubject]:
+    out: list[TrendSubject] = []
+    for it in raw:
+        if it.name != "record_trend_subject":
+            continue
+        try:
+            title = str(it.args.get("title") or "").strip()
+            desc = str(it.args.get("description") or "").strip()
+            if not title or not desc:
+                continue
+            article_type = str(it.args.get("article_type") or "unknown").strip()
+            if article_type not in _ARTICLE_TYPES:
+                article_type = "unknown"
+            out.append(
+                TrendSubject(
+                    article_type=article_type,
+                    title=title,
+                    description=desc,
+                    category=str(it.args.get("category") or "").strip(),
+                    intensity=float(it.args.get("intensity") or 0.0),
+                    confidence=float(it.args.get("confidence") or 0.0),
+                    evidence=str(it.args.get("evidence") or "").strip(),
+                )
+            )
+        except Exception:
+            log.exception("trends subject extractor: malformed tool args")
+    return out
+
+
+_STOPWORDS = {
+    "a",
+    "an",
+    "and",
+    "are",
+    "as",
+    "at",
+    "for",
+    "from",
+    "in",
+    "into",
+    "is",
+    "new",
+    "of",
+    "on",
+    "or",
+    "over",
+    "the",
+    "to",
+    "with",
+}
+
+
+def _tokens(text: str) -> set[str]:
+    return {t for t in re.findall(r"[a-z0-9]+", text.lower()) if len(t) > 2 and t not in _STOPWORDS}
+
+
+def _similarity(a: str, b: str) -> float:
+    ta = _tokens(a)
+    tb = _tokens(b)
+    if not ta or not tb:
+        return 0.0
+    return len(ta & tb) / len(ta | tb)
+
+
+def _match_cluster(
+    subject: TrendSubject,
+    clusters: list[store.TrendClusterRecord],
+) -> store.TrendClusterRecord | None:
+    best: tuple[float, store.TrendClusterRecord] | None = None
+    needle = f"{subject.title} {subject.description}"
+    for cluster in clusters:
+        score = _similarity(needle, f"{cluster.title} {cluster.description}")
+        if cluster.category != subject.category:
+            score *= 0.85
+        if best is None or score > best[0]:
+            best = (score, cluster)
+    if best and best[0] >= 0.38:
+        return best[1]
+    return None
 
 
 # ── Public entry point ──────────────────────────────────────────────
 
 
 async def process_article(
-    article_id: str, *, article_title: str,
-) -> EventOutcome:
-    """Run the full pipeline for one news article: load full body,
-    ask the LLM (which may emit several intents for a multi-topic
-    item), apply them as ONE atomic batch event."""
+    article_id: str,
+    *,
+    article_title: str,
+) -> int:
+    """Extract zero/many moment-trend mentions for one content version.
+
+    This intentionally processes article content, not just metadata. The worker
+    delays eligibility so this usually sees the post-news-synthesis body.
+    Returns the number of stored mentions.
+    """
     settings = get_settings()
     body_cap = settings.trends.body_max_chars
     categories = list(settings.trends.categories)
 
-    # 1. Load full body from the on-disk article JSON.
     record = read_article(article_id)
     body = _truncate(record.summary if record else "", body_cap)
     title = article_title or (record.title if record else "")
+    feed_group = record.feed_group if record else None
+    published_at = record.published_at if record else _utcnow_fallback()
 
-    # 2. Snapshot the current trend landscape (used as the LLM's context).
     conn = open_connection()
     try:
-        trends = store.list_active_trends(conn)
+        row = conn.execute(
+            "SELECT content_hash, published_at FROM news_articles WHERE id = ?",
+            (article_id,),
+        ).fetchone()
+        if row is None or not row["content_hash"]:
+            return 0
+        content_hash = str(row["content_hash"])
+        published_at = str(row["published_at"] or published_at)
     finally:
         conn.close()
 
-    # 3. LLM call (collect intents, don't mutate the DB yet).
-    raw = await _run_llm(
-        title=title, body=body, trends=trends, categories=categories,
+    raw = await _run_subject_llm(
+        title=title,
+        body=body,
+        categories=categories,
+        feed_group=feed_group,
     )
-    intents = _intents_from_tool_calls(raw)
+    subjects = _subjects_from_tool_calls(raw)
 
-    # 4. Apply atomically: one decay, one prune, one snapshot.
     conn = open_connection()
     try:
-        return engine.apply_batch(
+        conn.execute("BEGIN")
+        store.replace_article_mentions(
             conn,
             article_id=article_id,
-            article_title=title,
-            intents=intents,
+            content_hash=content_hash,
         )
+        since_iso = _window_start_iso(settings.trends.backfill_days)
+        clusters = store.list_recent_clusters(conn, since_iso=since_iso)
+        stored = 0
+        for subject in subjects:
+            if subject.confidence < 0.35 or subject.intensity <= 0.05:
+                continue
+            category = _normalise_subject_category(subject.category, categories)
+            subject.category = category
+            cluster = _match_cluster(subject, clusters)
+            if cluster is None:
+                cluster = store.create_cluster(
+                    conn,
+                    title=subject.title,
+                    description=subject.description,
+                    category=category,
+                    seen_at=published_at,
+                )
+                clusters.append(cluster)
+            else:
+                store.touch_cluster(
+                    conn,
+                    cluster.id,
+                    seen_at=published_at,
+                    description=subject.description,
+                    category=category,
+                )
+            store.insert_mention(
+                conn,
+                cluster_id=cluster.id,
+                article_id=article_id,
+                content_hash=content_hash,
+                subject_title=subject.title,
+                subject_description=subject.description,
+                article_type=subject.article_type,
+                intensity=subject.intensity,
+                confidence=subject.confidence,
+                evidence=subject.evidence,
+            )
+            stored += 1
+        conn.execute("COMMIT")
+        return stored
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
     finally:
         conn.close()
+
+
+def _utcnow_fallback() -> str:
+    from datetime import datetime
+
+    return datetime.now(UTC).isoformat()
+
+
+def _window_start_iso(days: int) -> str:
+    from datetime import datetime, timedelta
+
+    return (datetime.now(UTC) - timedelta(days=days)).isoformat()
+
+
+def _normalise_subject_category(category: str, allowed: list[str]) -> str:
+    low = (category or "").strip().lower()
+    for item in allowed:
+        if item.lower() == low:
+            return item
+    return "Other" if "Other" in allowed else (allowed[-1] if allowed else "Other")

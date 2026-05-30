@@ -14,3 +14,4 @@
 
 ## Lessons Learned
 - FreshRSS content edits made by `news-synthesis` can be visible through GReader `summary` while the GReader item omits `updated`. Track article body changes with a stored content hash so `second-brain` refreshes stale JSON caches.
+- Trend extraction must be delayed and content-version-aware: process only recent articles inside `trends.backfill_days`, wait `trends.min_article_age_minutes` for `news-synthesis`, and compare `content_hash` with `trends_content_hash` so updated summaries can be reprocessed without sweeping stale RSS backlogs.

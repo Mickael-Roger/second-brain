@@ -208,13 +208,13 @@ trends:
   examples_cap: 3               # how many recent article titles each trend keeps for context
   max_per_run: 200              # safety cap per worker tick (LLM cost guard on cold starts)
   process_schedule: "*/7 * * * *"   # cron, UTC — safety-net poll for any missed article
-  # Only articles published within this rolling window are sent to the
-  # LLM. The first enable would otherwise sweep the full 30-day news
-  # backlog — 7 days is plenty to bootstrap meaningful trends without
-  # the cost of a full historical pass. Articles older than the window
-  # stay flagged "not processed" forever; if you ever bump the window
-  # they'll be picked up next tick.
-  process_window_days: 7
+  # Only articles inside this rolling window are sent to the LLM. This
+  # is permanent, not first-run only: adding a large RSS feed should not
+  # make thousands of old imported articles trendable.
+  backfill_days: 7
+  # Wait before trend extraction so news-synthesis has time to enrich
+  # FreshRSS descriptions for regular news, YouTube videos, and podcasts.
+  min_article_age_minutes: 90
   # Per-article body cap (plain-text characters) sent to the LLM.
   # The trends classifier reads the full article body (not just the
   # title) so it can pick up multi-topic items — typically YouTube

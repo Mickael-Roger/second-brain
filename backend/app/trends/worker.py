@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from app.config import get_settings
 from app.db.connection import open_connection
@@ -42,12 +42,13 @@ async def process_pending(*, max_per_run: int | None = None) -> int:
         return 0
 
     cap = max_per_run if max_per_run is not None else settings.trends.max_per_run
-    window_days = settings.trends.process_window_days
+    window_days = settings.trends.backfill_days
     since_iso = (
-        (datetime.now(timezone.utc) - timedelta(days=window_days)).isoformat()
-        if window_days > 0
-        else None
+        (datetime.now(UTC) - timedelta(days=window_days)).isoformat() if window_days > 0 else None
     )
+    until_iso = (
+        datetime.now(UTC) - timedelta(minutes=settings.trends.min_article_age_minutes)
+    ).isoformat()
 
     async with _WORKER_LOCK:
         processed = 0
@@ -55,7 +56,10 @@ async def process_pending(*, max_per_run: int | None = None) -> int:
             conn = open_connection()
             try:
                 batch = store.pending_articles(
-                    conn, limit=min(20, cap - processed), since_iso=since_iso,
+                    conn,
+                    limit=min(20, cap - processed),
+                    since_iso=since_iso,
+                    until_iso=until_iso,
                 )
             finally:
                 conn.close()
@@ -67,13 +71,15 @@ async def process_pending(*, max_per_run: int | None = None) -> int:
                     break
                 try:
                     await process_article(
-                        pending.article_id, article_title=pending.title,
+                        pending.article_id,
+                        article_title=pending.title,
                     )
                 except AssignerError as exc:
                     log.warning(
                         "trends worker: assigner failed for %s: %s — "
                         "marking processed to avoid infinite retry",
-                        pending.article_id, exc,
+                        pending.article_id,
+                        exc,
                     )
                 except Exception:
                     log.exception(
@@ -86,7 +92,11 @@ async def process_pending(*, max_per_run: int | None = None) -> int:
                 # signal from one news on rare provider hiccups.
                 conn = open_connection()
                 try:
-                    store.mark_article_processed(conn, pending.article_id)
+                    store.mark_article_processed(
+                        conn,
+                        pending.article_id,
+                        pending.content_hash,
+                    )
                 finally:
                     conn.close()
                 processed += 1
@@ -134,4 +144,5 @@ def trigger_in_background() -> None:
         except Exception:
             log.exception("trends worker: background run failed")
 
-    loop.create_task(_run())
+    global _WORKER_TASK
+    _WORKER_TASK = loop.create_task(_run())

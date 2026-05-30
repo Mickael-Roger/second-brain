@@ -278,3 +278,33 @@ export interface TrendsHistoryResponse {
   trend_meta: Record<string, TrendMetaDTO>;
 }
 
+export interface TrendMomentArticleDTO {
+  article_id: string;
+  title: string;
+  feed_title: string | null;
+  feed_group: string | null;
+  published_at: string;
+  article_type: string;
+  intensity: number;
+  confidence: number;
+  evidence: string;
+}
+
+export interface TrendMomentDTO {
+  id: string;
+  title: string;
+  description: string;
+  category: string;
+  virality_score: number;
+  mention_count: number;
+  source_count: number;
+  article_count: number;
+  first_seen_at: string;
+  last_seen_at: string;
+  direction: "up" | "down" | "stable" | "new" | string;
+  articles: TrendMomentArticleDTO[];
+}
+
+export interface TrendMomentsResponse {
+  moments: TrendMomentDTO[];
+}

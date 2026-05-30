@@ -59,7 +59,7 @@ class LLMProviderConfig(BaseModel):
         return v
 
     @model_validator(mode="after")
-    def _check_required(self) -> "LLMProviderConfig":
+    def _check_required(self) -> LLMProviderConfig:
         if self.kind in ("openai", "anthropic"):
             if not self.base_url:
                 raise ValueError(f"{self.kind} provider requires `base_url`")
@@ -107,9 +107,7 @@ class LLMSection(BaseModel):
 
     def resolved_default(self) -> LLMProviderConfig:
         if self.default not in self.providers:
-            raise ValueError(
-                f"llm.default = '{self.default}' is not in llm.providers"
-            )
+            raise ValueError(f"llm.default = '{self.default}' is not in llm.providers")
         return self.providers[self.default]
 
     def resolve_task(self, task_name: str) -> tuple[str, str | None, LLMTaskConfig]:
@@ -129,7 +127,8 @@ class LLMSection(BaseModel):
         model = cfg.model
         if model is not None and model not in self.providers[provider_name].models:
             raise ValueError(
-                f"llm.tasks.{task_name}.model = '{model}' is not in providers.{provider_name}.models"
+                f"llm.tasks.{task_name}.model = '{model}' is not in "
+                f"providers.{provider_name}.models"
             )
         return provider_name, model, cfg
 
@@ -155,9 +154,9 @@ class ObsidianSection(BaseModel):
     # Vault-relative filenames for the three "context" files that get
     # auto-injected into the LLM's system prompt at every chat session.
     # Each file is optional — a missing file is silently skipped.
-    index_file: str = "INDEX.md"             # the vault's structural map
-    user_file: str = "USER.md"               # facts about the user
-    preferences_file: str = "PREFERENCES.md" # how the brain should operate
+    index_file: str = "INDEX.md"  # the vault's structural map
+    user_file: str = "USER.md"  # facts about the user
+    preferences_file: str = "PREFERENCES.md"  # how the brain should operate
     # System prompt for the nightly Organize task. Optional — missing file
     # falls back to the built-in default in app.jobs.organize.
     organize_prompt_file: str = "ORGANIZE.md"
@@ -220,7 +219,7 @@ class NewsSourcesSection(BaseModel):
 
 class NewsSection(BaseModel):
     enabled: bool = False
-    fetch_schedule: str = "*/5 * * * *"    # cron, UTC — every 5 minutes by default
+    fetch_schedule: str = "*/5 * * * *"  # cron, UTC — every 5 minutes by default
     sources: NewsSourcesSection = NewsSourcesSection()
 
 
@@ -240,18 +239,19 @@ class TrendsSection(BaseModel):
     """
 
     enabled: bool = False
-    decay_rate: float = 0.01          # per-article multiplicative decay
-    prune_threshold: float = 0.05     # weight below this → soft-delete
-    max_trends: int = 50              # cap on simultaneously active trends
-    examples_cap: int = 3             # example titles kept per trend
-    max_per_run: int = 200            # cap per worker tick
+    decay_rate: float = 0.01  # per-article multiplicative decay
+    prune_threshold: float = 0.05  # weight below this → soft-delete
+    max_trends: int = 50  # cap on simultaneously active trends
+    examples_cap: int = 3  # example titles kept per trend
+    max_per_run: int = 200  # cap per worker tick
     process_schedule: str = "*/7 * * * *"  # cron, UTC — safety-net poll
-    # Only articles published within the last `process_window_days`
-    # are candidates for the trends worker. Older pending articles
-    # (e.g. the news backlog from before trends was enabled, or items
-    # ingested while the worker was down for a long stretch) are
-    # silently skipped. Keeps the cost of first-enable bounded.
-    process_window_days: int = 7
+    # Only articles inside this rolling window are candidates for the
+    # trends worker. This is permanent, not first-run only: adding a
+    # large RSS feed should not make old imported articles trendable.
+    backfill_days: int = Field(default=7, ge=1)
+    # Wait for external enrichment (notably news-synthesis updating
+    # FreshRSS summaries/transcripts) before extracting trends.
+    min_article_age_minutes: int = Field(default=90, ge=0)
     # Per-article body cap (plain-text characters) sent to the LLM.
     # Higher than the title-only baseline so the model can pick up
     # multi-topic articles (YouTube video / podcast descriptions
@@ -262,10 +262,28 @@ class TrendsSection(BaseModel):
     # short and disjoint — frontend groups trends by category.
     categories: list[str] = Field(
         default_factory=lambda: [
-            "AI", "Tech", "Science", "Politics", "Economy",
-            "World", "Culture", "Sports", "Health", "Other",
+            "AI",
+            "Tech",
+            "Science",
+            "Politics",
+            "Economy",
+            "World",
+            "Culture",
+            "Sports",
+            "Health",
+            "Other",
         ]
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _accept_legacy_process_window_days(cls, data: object) -> object:
+        if isinstance(data, dict) and "backfill_days" not in data:
+            legacy = data.get("process_window_days")
+            if legacy is not None:
+                data = dict(data)
+                data["backfill_days"] = legacy
+        return data
 
 
 class AnkiSection(BaseModel):
@@ -308,24 +326,17 @@ class SMTPSection(BaseModel):
     format: Literal["text", "html"] = "text"
 
     @model_validator(mode="after")
-    def _resolve_and_check(self) -> "SMTPSection":
+    def _resolve_and_check(self) -> SMTPSection:
         # Backfill `security` when not explicitly set:
         #   - port 465 is canonically implicit-TLS → ssl,
         #   - otherwise honor the legacy `starttls` boolean.
         if self.security is None:
-            if self.port == 465:
-                resolved = "ssl"
-            else:
-                resolved = "starttls" if self.starttls else "none"
+            resolved = "ssl" if self.port == 465 else "starttls" if self.starttls else "none"
             object.__setattr__(self, "security", resolved)
         if self.enabled:
-            missing = [
-                f for f in ("host", "from_address", "to_address") if not getattr(self, f)
-            ]
+            missing = [f for f in ("host", "from_address", "to_address") if not getattr(self, f)]
             if missing:
-                raise ValueError(
-                    f"smtp.enabled = true but missing fields: {', '.join(missing)}"
-                )
+                raise ValueError(f"smtp.enabled = true but missing fields: {', '.join(missing)}")
         return self
 
 
