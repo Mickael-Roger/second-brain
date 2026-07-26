@@ -371,6 +371,9 @@ export default function NewsView({ onOpenChat }: Props) {
             unreadOnly={unreadOnly}
             onUnreadToggle={setUnreadOnly}
             onSelect={setSelectedId}
+            toggleRead={(id, target) =>
+              toggleRead.mutate({ articleId: id, isRead: target })
+            }
           />
         </div>
 
@@ -652,6 +655,7 @@ interface ArticleListProps {
   unreadOnly: boolean;
   onUnreadToggle: (v: boolean) => void;
   onSelect: (id: string) => void;
+  toggleRead: (id: string, target: boolean) => void;
 }
 
 function ArticleList({
@@ -661,6 +665,7 @@ function ArticleList({
   unreadOnly,
   onUnreadToggle,
   onSelect,
+  toggleRead,
 }: ArticleListProps) {
   const { t } = useTranslation();
   return (
@@ -685,41 +690,58 @@ function ArticleList({
           <p className="px-3 py-3 text-sm text-muted">{t("news.noArticles")}</p>
         ) : (
           articles.map((a) => (
-            <button
+            <div
               key={a.id}
-              type="button"
-              onClick={() => onSelect(a.id)}
-              className={`flex w-full flex-col gap-0.5 border-b border-border px-3 py-2 text-left transition ${
+              className={`flex items-stretch border-b border-border transition ${
                 selectedId === a.id
                   ? "bg-accent/10"
                   : "bg-bg hover:bg-surface"
               }`}
             >
-              <div className="flex items-start gap-2">
-                <FeedIcon
-                  favicon={a.feed_favicon}
-                  isRead={a.is_read}
-                  alt={a.feed_title ?? a.source}
-                />
-                <span
-                  className={`line-clamp-2 flex-1 text-sm ${
-                    a.is_read ? "text-muted" : "text-text"
-                  }`}
-                >
-                  {a.title}
-                </span>
-                {a.is_starred && (
-                  <Star
-                    className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-500"
-                    fill="currentColor"
-                    aria-hidden
+              <button
+                type="button"
+                onClick={() => onSelect(a.id)}
+                className="flex min-w-0 flex-1 flex-col gap-0.5 px-3 py-2 text-left"
+              >
+                <div className="flex items-start gap-2">
+                  <FeedIcon
+                    favicon={a.feed_favicon}
+                    isRead={a.is_read}
+                    alt={a.feed_title ?? a.source}
                   />
+                  <span
+                    className={`line-clamp-2 flex-1 text-sm ${
+                      a.is_read ? "text-muted" : "text-text"
+                    }`}
+                  >
+                    {a.title}
+                  </span>
+                  {a.is_starred && (
+                    <Star
+                      className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-500"
+                      fill="currentColor"
+                      aria-hidden
+                    />
+                  )}
+                </div>
+                <span className="ml-6 text-[10px] text-muted">
+                  {(a.feed_title ?? a.source) + " · " + a.published_at.slice(0, 10)}
+                </span>
+              </button>
+              <button
+                type="button"
+                onClick={() => toggleRead(a.id, !a.is_read)}
+                aria-label={a.is_read ? t("news.markUnread") : t("news.markRead")}
+                title={a.is_read ? t("news.markUnread") : t("news.markRead")}
+                className="flex w-9 shrink-0 items-center justify-center text-muted transition hover:text-accent"
+              >
+                {a.is_read ? (
+                  <Mail className="h-4 w-4" />
+                ) : (
+                  <MailOpen className="h-4 w-4" />
                 )}
-              </div>
-              <span className="ml-6 text-[10px] text-muted">
-                {(a.feed_title ?? a.source) + " · " + a.published_at.slice(0, 10)}
-              </span>
-            </button>
+              </button>
+            </div>
           ))
         )}
       </div>
