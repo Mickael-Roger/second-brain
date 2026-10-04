@@ -23,7 +23,7 @@ import {
   Moon,
   Rss,
   Sun,
-  TrendingUp,
+  Layers,
   X,
 } from "lucide-react";
 
@@ -32,13 +32,14 @@ import { setLanguage, currentLanguage } from "@/lib/i18n";
 import { currentTheme, setTheme, type Theme } from "@/lib/theme";
 import Logo from "@/components/layout/Logo";
 
-export type ViewId = "chat" | "wiki" | "news" | "training" | "trends";
+export type ViewId = "chat" | "wiki" | "news" | "training" | "anki";
 
 interface Props {
   active: ViewId;
   onSelect: (v: ViewId) => void;
   reviewNeeded?: boolean;
   onOpenReview?: () => void;
+  ankiEnabled?: boolean;
   children: React.ReactNode;
 }
 
@@ -47,6 +48,7 @@ export default function AppShell({
   onSelect,
   reviewNeeded,
   onOpenReview,
+  ankiEnabled,
   children,
 }: Props) {
   const { t, i18n } = useTranslation();
@@ -71,8 +73,8 @@ export default function AppShell({
     { id: "wiki", icon: BookOpen, label: t("nav.wiki") },
     { id: "training", icon: GraduationCap, label: t("nav.training") },
     { id: "news", icon: Rss, label: t("nav.news") },
-    { id: "trends", icon: TrendingUp, label: t("nav.trends") },
   ];
+  if (ankiEnabled) items.push({ id: "anki", icon: Layers, label: t("nav.anki") });
 
   return (
     <div className="flex h-full flex-col md:flex-row">

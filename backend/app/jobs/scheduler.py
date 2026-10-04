@@ -102,7 +102,8 @@ async def run_nightly(*, since: timedelta | None = None) -> str:
             organize = await run_organize(since=since)
             log.info(
                 "nightly job: organize considered=%d errors=%d",
-                len(organize.candidate_paths), len(organize.errors),
+                len(organize.candidate_paths),
+                len(organize.errors),
             )
         except Exception as exc:
             organize_error = str(exc)
@@ -130,7 +131,8 @@ async def run_nightly(*, since: timedelta | None = None) -> str:
             committed = commit_and_push(f"nightly organize {today}")
             finalise_msg = (
                 f"committed and pushed nightly organize {today}"
-                if committed else "no changes to commit"
+                if committed
+                else "no changes to commit"
             )
         except Exception as exc:
             log.exception("nightly bulk commit/push failed")
@@ -140,7 +142,8 @@ async def run_nightly(*, since: timedelta | None = None) -> str:
             stashed = stash(f"second-brain organize dry-run {today}")
             finalise_msg = (
                 f"dry-run: changes stashed as 'second-brain organize dry-run {today}'"
-                if stashed else "dry-run: no changes produced"
+                if stashed
+                else "dry-run: no changes produced"
             )
         except Exception as exc:
             log.exception("nightly stash failed")
@@ -160,9 +163,11 @@ async def run_nightly(*, since: timedelta | None = None) -> str:
         _format_archive_section(archive),
         "",
     ]
-    parts.extend(_format_organize_section(
-        organize, organize_error, considered, modified_paths, skipped_paths
-    ))
+    parts.extend(
+        _format_organize_section(
+            organize, organize_error, considered, modified_paths, skipped_paths
+        )
+    )
     report = "\n".join(parts)
 
     try:
@@ -174,10 +179,7 @@ async def run_nightly(*, since: timedelta | None = None) -> str:
                 f"considered {len(considered)}, modified {len(modified_paths)}"
             )
         else:
-            subject = (
-                f"[second-brain] nightly — archived {archive.moved} "
-                f"(organize failed)"
-            )
+            subject = f"[second-brain] nightly — archived {archive.moved} (organize failed)"
         try:
             html = render_nightly_email_html(
                 subject=subject,
@@ -254,35 +256,12 @@ async def _news_fetch_job() -> None:
     except Exception:
         log.exception("scheduled news fetch failed")
 
-    # Newly ingested articles → trends pipeline. Best-effort: if the
-    # trends LLM is slow or fails, news still ingests fine.
-    try:
-        from app.trends.worker import process_pending
-        await process_pending()
-    except Exception:
-        log.exception("trends worker (post-fetch) failed")
-
-
-async def _trends_safety_job() -> None:
-    """Independent cron: drain any pending articles even when the news
-    fetch hook didn't (or hasn't yet) fired. Keeps the trends DB
-    catching up after restarts or LLM outages."""
-    try:
-        from app.trends.worker import process_pending
-        await process_pending()
-    except Exception:
-        log.exception("trends safety-net run failed")
-
 
 def start_scheduler() -> None:
     global _SCHEDULER
     settings = get_settings()
-    if (
-        not settings.organize.enabled
-        and not settings.news.enabled
-        and not settings.trends.enabled
-    ):
-        log.info("scheduler disabled (organize, news, trends all off)")
+    if not settings.organize.enabled and not settings.news.enabled:
+        log.info("scheduler disabled (organize and news both off)")
         return
     if _SCHEDULER is not None:
         return
@@ -310,17 +289,6 @@ def start_scheduler() -> None:
             coalesce=True,
         )
         log.info("scheduler: news fetch = %s", settings.news.fetch_schedule)
-
-    if settings.trends.enabled:
-        sched.add_job(
-            _trends_safety_job,
-            trigger=CronTrigger.from_crontab(settings.trends.process_schedule, timezone="UTC"),
-            id="trends-safety",
-            replace_existing=True,
-            max_instances=1,
-            coalesce=True,
-        )
-        log.info("scheduler: trends safety = %s", settings.trends.process_schedule)
 
     sched.start()
     _SCHEDULER = sched

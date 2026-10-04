@@ -16,11 +16,11 @@ from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from app.api import anki as anki_api
 from app.api import auth as auth_api
 from app.api import chat as chat_api
 from app.api import news as news_api
 from app.api import training as training_api
-from app.api import trends as trends_api
 from app.api import vault as vault_api
 from app.api import wiki_reviews as wiki_reviews_api
 from app.config import get_settings
@@ -73,18 +73,6 @@ async def lifespan(_: FastAPI):
             except Exception:
                 log.exception("startup news fetch failed (non-fatal)")
 
-            # Drain any pending articles into the trends DB (covers
-            # backlogs from before the trends feature was enabled, plus
-            # whatever the backfill just inserted).
-            if settings.trends.enabled:
-                try:
-                    from app.trends.worker import process_pending
-                    log.info("startup trends pass: starting")
-                    n = await process_pending()
-                    log.info("startup trends pass: done (%d processed)", n)
-                except Exception:
-                    log.exception("startup trends pass failed (non-fatal)")
-
         asyncio.create_task(_initial_news_fetch())
 
     try:
@@ -116,7 +104,7 @@ def create_app() -> FastAPI:
     app.include_router(news_api.router)
     app.include_router(wiki_reviews_api.router)
     app.include_router(training_api.router)
-    app.include_router(trends_api.router)
+    app.include_router(anki_api.router)
 
     @app.get("/api/health")
     def health() -> dict[str, str]:

@@ -7,30 +7,24 @@
     "wiki": "Wiki",
     "news": "Actualités",
     "training": "Training",
-    "trends": "Tendances"
+    "anki": "Anki"
   },
-  "trends": {
-    "title": "Tendances",
-    "empty": "Aucune tendance pour le moment — les premiers articles n'ont pas encore été traités.",
-    "process": "Traiter en attente",
-    "processing": "Traitement…",
-    "processed": "{{count}} article(s) traité(s)",
-    "disabled": "Tendances désactivées (trends.enabled = false dans config.yml).",
-    "weight": "Poids",
-    "reinforcements": "Renforcements",
-    "lastReinforced": "Dernier renforcement",
-    "examples": "Articles attribués",
-    "loadError": "Impossible de charger les tendances.",
-    "rangeHours": "Fenêtre",
-    "h24": "24 h",
-    "h72": "3 jours",
-    "h168": "7 jours",
-    "trendDirection": {
-      "up": "En hausse",
-      "down": "En baisse",
-      "stable": "Stable",
-      "new": "Nouveau"
-    }
+  "anki": {
+    "title": "Ajouter des cartes Anki",
+    "description": "Anki doit être ouvert sur votre ordinateur avec AnkiConnect. Synchronisez ensuite Anki pour retrouver les cartes sur votre téléphone.",
+    "deck": "Deck",
+    "refresh": "Actualiser les decks",
+    "noDecks": "Aucun deck disponible",
+    "front": "Recto (question)",
+    "back": "Verso (réponse)",
+    "mode": "Type de carte",
+    "normal": "Simple : recto → verso",
+    "reverse": "Inversée : recto → verso et verso → recto",
+    "tags": "Tags (optionnels)",
+    "tagsPlaceholder": "Tags séparés par des espaces",
+    "add": "Ajouter",
+    "adding": "Ajout…",
+    "success": "{{count}} carte(s) créée(s) dans Anki."
   },
   "news": {
     "title": "Actualités",

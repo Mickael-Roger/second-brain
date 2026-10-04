@@ -9,7 +9,7 @@ import ChatView from "@/components/chat/ChatView";
 import WikiView, { type WikiTarget } from "@/components/wiki/WikiView";
 import NewsView from "@/components/news/NewsView";
 import TrainingView from "@/components/training/TrainingView";
-import TrendsView from "@/components/trends/TrendsView";
+import AnkiView from "@/components/anki/AnkiView";
 import WikiReviewModal from "@/components/wiki/WikiReviewModal";
 import { api, type TreeEntry, type WikiReviewStatus } from "@/lib/api";
 
@@ -18,6 +18,11 @@ export default function App() {
   const me = useMe();
   const [view, setView] = useState<ViewId>("chat");
   const [reviewOpen, setReviewOpen] = useState(false);
+  const ankiConfig = useQuery({
+    queryKey: ["anki-config"],
+    queryFn: () => api.get<{ enabled: boolean }>("/api/anki/config"),
+    enabled: !!me.data,
+  });
 
   // Cross-view wiki navigation: chat (or anywhere else) can ask the wiki
   // to open a specific path. The nonce makes consecutive requests for the
@@ -73,6 +78,7 @@ export default function App() {
         onSelect={setView}
         reviewNeeded={reviewNeeded}
         onOpenReview={() => setReviewOpen(true)}
+        ankiEnabled={ankiConfig.data?.enabled === true}
       >
         {view === "chat" ? (
           <ChatView onOpenWiki={openWiki} />
@@ -80,8 +86,8 @@ export default function App() {
           <NewsView onOpenChat={() => setView("chat")} />
         ) : view === "training" ? (
           <TrainingView onOpenWiki={openWiki} />
-        ) : view === "trends" ? (
-          <TrendsView />
+        ) : view === "anki" ? (
+          ankiConfig.data?.enabled ? <AnkiView /> : <ChatView onOpenWiki={openWiki} />
         ) : (
           <WikiView
             target={wikiTarget}

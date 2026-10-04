@@ -64,9 +64,36 @@ export default function NewsView({ onOpenChat }: Props) {
   const [unreadOnly, setUnreadOnly] = useState(true);
   const [selection, setSelection] = useState<Selection>({ kind: "all" });
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const detailHistoryEntry = useRef(false);
   // Mobile-only: feeds live in a slide-over drawer (left). Desktop has them
   // permanently visible in the first grid column.
   const [feedsOpen, setFeedsOpen] = useState(false);
+
+  function openArticle(id: string) {
+    if (!detailHistoryEntry.current) {
+      window.history.pushState(window.history.state, "");
+      detailHistoryEntry.current = true;
+    }
+    setSelectedId(id);
+  }
+
+  function closeArticle() {
+    if (detailHistoryEntry.current) {
+      window.history.back();
+      return;
+    }
+    setSelectedId(null);
+  }
+
+  useEffect(() => {
+    function onPopState() {
+      detailHistoryEntry.current = false;
+      setSelectedId(null);
+    }
+
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, []);
 
   // No more period selector — list endpoints default to 30d (the
   // article retention window), which means the UI shows everything
@@ -334,7 +361,7 @@ export default function NewsView({ onOpenChat }: Props) {
             selection={selection}
             onSelect={(s) => {
               setSelection(s);
-              setSelectedId(null);
+              closeArticle();
             }}
           />
         </div>
@@ -370,7 +397,7 @@ export default function NewsView({ onOpenChat }: Props) {
             selectedId={selectedId}
             unreadOnly={unreadOnly}
             onUnreadToggle={setUnreadOnly}
-            onSelect={setSelectedId}
+            onSelect={openArticle}
             toggleRead={(id, target) =>
               toggleRead.mutate({ articleId: id, isRead: target })
             }
@@ -395,7 +422,7 @@ export default function NewsView({ onOpenChat }: Props) {
           <div className="flex items-center gap-2 border-b border-border bg-surface px-3 py-2 md:hidden">
             <button
               type="button"
-              onClick={() => setSelectedId(null)}
+              onClick={closeArticle}
               aria-label="back"
               className="flex h-8 w-8 items-center justify-center rounded text-muted hover:bg-bg hover:text-text"
             >
@@ -424,8 +451,8 @@ export default function NewsView({ onOpenChat }: Props) {
             }
             labelMutating={addLabel.isPending || removeLabel.isPending}
             onChat={startChatAbout}
-            onPrev={prevId ? () => setSelectedId(prevId) : undefined}
-            onNext={nextId ? () => setSelectedId(nextId) : undefined}
+            onPrev={prevId ? () => openArticle(prevId) : undefined}
+            onNext={nextId ? () => openArticle(nextId) : undefined}
           />
         </div>
       </div>
@@ -466,7 +493,7 @@ export default function NewsView({ onOpenChat }: Props) {
               selection={selection}
               onSelect={(s) => {
                 setSelection(s);
-                setSelectedId(null);
+                closeArticle();
                 setFeedsOpen(false);
               }}
             />
@@ -1760,4 +1787,3 @@ function ManageCategoriesTab({
     </ul>
   );
 }
-
