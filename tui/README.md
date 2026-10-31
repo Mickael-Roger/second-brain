@@ -33,6 +33,26 @@ Sign in with the same username/password as the web app. Credentials and cookies
 are kept only in memory. The client does not load server configuration or
 access a local vault/database. It uses standard TLS certificate verification.
 
+## Install with Nix
+
+With the `nix-command` and `flakes` features enabled, install the tagged TUI package:
+
+```bash
+nix profile install 'github:Mickael-Roger/second-brain/v0.1.0#tui'
+second-brain-tui https://brain.example.com
+```
+
+Or run it without installing:
+
+```bash
+nix run 'github:Mickael-Roger/second-brain/v0.1.0#tui' -- https://brain.example.com
+```
+
+The `tui` output builds only the terminal client, using Go 1.26 and the committed
+vendored dependencies. It does not install the server or frontend. The flake
+exposes packages for x86_64 and aarch64 on Linux and macOS. From a local checkout,
+use `nix build .#tui`; the executable is `result/bin/second-brain-tui`.
+
 ## Navigation
 
 The interface follows a k9s-style resource workflow: a black background, a compact
