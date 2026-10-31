@@ -29,8 +29,11 @@ def test_disabled_config_and_operations(client, monkeypatch):
     )
     add = AsyncMock()
     monkeypatch.setattr(anki, "add_card", add)
+    sync = AsyncMock()
+    monkeypatch.setattr(anki, "sync", sync)
     assert client.get("/api/anki/config").json() == {"enabled": False}
     assert client.get("/api/anki/decks").status_code == 403
+    assert client.post("/api/anki/sync").status_code == 403
     assert client.get("/api/anki/deck-stats").status_code == 403
     assert client.get("/api/anki/due?deck=Test").status_code == 403
     assert client.get("/api/anki/media?filename=picture.png").status_code == 403
@@ -40,6 +43,7 @@ def test_disabled_config_and_operations(client, monkeypatch):
         == 403
     )
     add.assert_not_awaited()
+    sync.assert_not_awaited()
 
 
 def test_authentication_required(client):
@@ -47,6 +51,7 @@ def test_authentication_required(client):
     client.app.dependency_overrides[optional_current_user] = lambda: None
     assert client.get("/api/anki/config").status_code == 401
     assert client.get("/api/anki/decks").status_code == 401
+    assert client.post("/api/anki/sync").status_code == 401
     assert client.get("/api/anki/deck-stats").status_code == 401
     assert client.get("/api/anki/due?deck=Test").status_code == 401
     assert client.get("/api/anki/media?filename=picture.png").status_code == 401
@@ -144,3 +149,21 @@ def test_media_endpoints(client, monkeypatch):
     assert client.get("/api/anki/media?filename=missing.png").status_code == 404
     retrieve.side_effect = AnkiConnectError("Anki offline")
     assert client.get("/api/anki/media?filename=picture.png").status_code == 502
+
+
+def test_sync_collection(client, monkeypatch):
+    sync = AsyncMock()
+    monkeypatch.setattr(anki, "sync", sync)
+    response = client.post("/api/anki/sync")
+    assert response.status_code == 200
+    assert response.json() == {"synced": True}
+    sync.assert_awaited_once_with()
+
+
+def test_sync_error_preserves_anki_message(client, monkeypatch):
+    sync = AsyncMock(side_effect=AnkiConnectError("sync: auth not configured"))
+    monkeypatch.setattr(anki, "sync", sync)
+    response = client.post("/api/anki/sync")
+    assert response.status_code == 502
+    assert response.json() == {"detail": "sync: auth not configured"}
+    sync.assert_awaited_once_with()

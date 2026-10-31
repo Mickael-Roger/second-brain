@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"image"
 	"net/url"
 	"path"
 	"strings"
 
 	htmlmd "github.com/JohannesKaufmann/html-to-markdown/v2"
+	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 	"golang.org/x/net/html"
 )
@@ -163,19 +165,30 @@ type ankiState struct {
 	tags           *tview.InputField
 	form           *tview.Form
 	enabled, busy  bool
+	syncing        bool
 	doc            *document
 	buttons        *tview.Flex
+	intervals      *tview.Flex
 	decks          []ankiDeck
-	cards          []ankiCard
+	cards          map[string][]ankiCard
+	loading        map[string]bool
+	loadErrors     map[string]string
 	currentDeck    string
 	card           ankiCard
 	answerShown    bool
 	request        int
 	statsAvailable bool
+	reviewOpen     bool
+	review         *tview.Flex
+	reviewBody     *tview.Flex
+	reviewMedia    *mediaPane
 }
 
 func (u *ui) buildAnki() page {
 	a := &u.anki
+	a.cards = map[string][]ankiCard{}
+	a.loading = map[string]bool{}
+	a.loadErrors = map[string]string{}
 	a.deck = tview.NewDropDown().SetLabel("Deck: ")
 	a.mode = tview.NewDropDown().SetLabel("Mode: ").SetOptions([]string{"Normal", "Normal + reverse"}, nil).SetCurrentOption(0)
 	a.front = tview.NewTextArea().SetLabel("Front: ").SetSize(6, 0)
@@ -191,18 +204,58 @@ func (u *ui) buildAnki() page {
 	a.form.SetCancelFunc(close)
 	a.doc = newDocument(u.openLink)
 	a.buttons = toolbar(action{"Show answer", u.showAnkiAnswer})
-	panel := tview.NewFlex().SetDirection(tview.FlexRow).AddItem(a.doc, 0, 1, true).AddItem(a.buttons, 1, 0, false)
-	return page{"Anki", panel, []tview.Primitive{a.doc.text, a.doc.links, a.buttons}, a.doc, u.refreshAnki}
+	a.intervals = tview.NewFlex()
+	a.reviewBody = tview.NewFlex().AddItem(a.doc, 0, 1, true)
+	a.reviewMedia = newMedia("halfcell")
+	a.reviewMedia.load = u.loadAnkiImage
+	a.review = tview.NewFlex().SetDirection(tview.FlexRow).AddItem(a.reviewBody, 0, 1, true).
+		AddItem(a.buttons, 1, 0, false).AddItem(a.intervals, 1, 0, false)
+	a.review.SetBorder(true).SetTitle("Anki review")
+	a.review.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+		switch event.Key() {
+		case tcell.KeyEscape:
+			u.closeAnkiReview()
+			return nil
+		case tcell.KeyTab, tcell.KeyBacktab:
+			focus := []tview.Primitive{a.doc.text}
+			if a.doc.links.GetItemCount() > 0 {
+				focus = append(focus, a.doc.links)
+			}
+			for index := 0; index < a.buttons.GetItemCount(); index++ {
+				focus = append(focus, a.buttons.GetItem(index))
+			}
+			if len(a.reviewMedia.sources) > 0 {
+				for index := 0; index < a.reviewMedia.buttons.GetItemCount(); index++ {
+					focus = append(focus, a.reviewMedia.buttons.GetItem(index))
+				}
+			}
+			current, step := 0, 1
+			for index, item := range focus {
+				if item.HasFocus() {
+					current = index
+					break
+				}
+			}
+			if event.Key() == tcell.KeyBacktab {
+				step = -1
+			}
+			u.app.SetFocus(focus[(current+step+len(focus))%len(focus)])
+			return nil
+		}
+		return event
+	})
+	return page{"Anki", a.review, []tview.Primitive{a.doc.text, a.doc.links, a.buttons}, a.doc, u.refreshAnki}
 }
 
 func (u *ui) refreshAnki() {
+	if u.anki.syncing {
+		return
+	}
 	u.anki.request++
 	request := u.anki.request
-	deck := u.anki.currentDeck
 	u.job("Loading Anki decks", func(ctx context.Context) (func(), error) {
 		var config struct{ Enabled bool }
 		var decks []ankiDeck
-		var cards []ankiCard
 		statsAvailable := true
 		if err := u.client.request(ctx, "GET", "api/anki/config", nil, &config); err != nil {
 			return nil, err
@@ -218,15 +271,6 @@ func (u *ui) refreshAnki() {
 					return nil, err
 				}
 			}
-			if deck != "" {
-				if err := u.client.request(ctx, "GET", query("api/anki/due", url.Values{"deck": {deck}, "include_new": {"true"}}), nil, &cards); err != nil {
-					var api *apiError
-					if errors.As(err, &api) && api.Status == 404 {
-						return nil, fmt.Errorf("Anki reviews require the updated backend. Deploy the latest server version and restart it")
-					}
-					return nil, err
-				}
-			}
 		}
 		options := []string{}
 		for _, deck := range decks {
@@ -238,11 +282,8 @@ func (u *ui) refreshAnki() {
 			}
 			u.anki.enabled = config.Enabled
 			u.anki.statsAvailable = statsAvailable
-			u.anki.decks, u.anki.cards = decks, cards
+			u.anki.decks = decks
 			_, selectedDeck := u.anki.deck.GetCurrentOption()
-			if deck != "" {
-				selectedDeck = deck
-			}
 			u.anki.deck.SetOptions(options, nil)
 			for index, name := range options {
 				if name == selectedDeck || selectedDeck == "" && index == 0 {
@@ -250,11 +291,41 @@ func (u *ui) refreshAnki() {
 				}
 			}
 			u.fillAnki()
+			if config.Enabled {
+				for _, deck := range decks {
+					if u.browsers[1].expanded["anki-deck:"+deck.Name] {
+						u.loadAnkiDeck(deck.Name)
+					}
+				}
+			}
 			if !config.Enabled {
 				u.say("Anki is disabled on this server.")
 			} else if !statsAvailable {
 				u.say("Decks loaded. Update and restart the backend to enable Anki counts and reviews.")
 			}
+		}, nil
+	})
+}
+
+func (u *ui) syncAnki() {
+	a := &u.anki
+	if !u.authenticated || a.busy || u.dialogOpen {
+		return
+	}
+	a.busy, a.syncing = true, true
+	a.request++ // Discard deck statistics requested before the sync.
+	u.updateChrome()
+	u.job("Synchronizing Anki with AnkiWeb", func(ctx context.Context) (func(), error) {
+		err := u.client.request(ctx, "POST", "api/anki/sync", nil, nil)
+		return func() {
+			a.busy, a.syncing = false, false
+			u.updateChrome()
+			if err != nil {
+				u.fail(err)
+				return
+			}
+			u.refreshAnki()
+			u.say("AnkiWeb sync complete. Refreshing decks and cards…")
 		}, nil
 	})
 }
@@ -306,51 +377,118 @@ func (u *ui) newAnkiNote() {
 		u.say("Anki is disabled or decks are still loading.")
 		return
 	}
+	b := u.browsers[1]
+	index := b.list.GetCurrentItem()
+	for index >= 0 && index < len(b.rows) && b.rows[index].depth > 0 {
+		index--
+	}
+	if index >= 0 && index < len(b.rows) {
+		for deckIndex, deck := range u.anki.decks {
+			if b.rows[index].item.id == "anki-deck:"+deck.Name {
+				u.anki.deck.SetCurrentOption(deckIndex)
+				break
+			}
+		}
+	}
 	u.dialog(u.anki.form, "New Anki note", 90, 26)
+}
+
+func (u *ui) loadAnkiDeck(deck string) {
+	a := &u.anki
+	if a.loading[deck] || a.syncing {
+		return
+	}
+	request := a.request
+	a.loading[deck] = true
+	delete(a.loadErrors, deck)
+	u.fillAnki()
+	u.job("Loading cards — "+deck, func(ctx context.Context) (func(), error) {
+		var cards []ankiCard
+		err := u.client.request(ctx, "GET", query("api/anki/due", url.Values{"deck": {deck}, "include_new": {"true"}}), nil, &cards)
+		return func() {
+			a.loading[deck] = false
+			if request != a.request {
+				if !a.syncing && u.browsers[1].expanded["anki-deck:"+deck] {
+					u.loadAnkiDeck(deck)
+				}
+				return
+			}
+			if err != nil {
+				var api *apiError
+				if errors.As(err, &api) && api.Status == 404 {
+					err = fmt.Errorf("Anki reviews require the updated backend. Deploy the latest server version and restart it")
+				}
+				a.loadErrors[deck] = err.Error()
+				u.fillAnki()
+				u.fail(err)
+				return
+			}
+			a.cards[deck] = cards
+			u.fillAnki()
+		}, nil
+	})
 }
 
 func (u *ui) fillAnki() {
 	a, b := &u.anki, u.browsers[1]
 	items := []*resource{}
-	if a.currentDeck == "" {
-		b.columns = []string{"DECK", "REVIEW", "NEW", "LEARNING", "TOTAL"}
-		b.mode = "decks"
-		for _, deck := range a.decks {
-			counts := []string{fmt.Sprint(deck.Review), fmt.Sprint(deck.New), fmt.Sprint(deck.Learning), fmt.Sprint(deck.Total)}
-			if !a.statsAvailable {
-				counts = []string{"—", "—", "—", "—"}
-			}
-			items = append(items, &resource{id: deck.Name, title: deck.Name,
-				columns: counts,
-				open:    func() { a.currentDeck = deck.Name; b.filter = ""; u.refreshAnki() }})
+	b.columns = []string{"DECK / CARD", "REVIEW", "NEW", "LEARNING", "TOTAL", "STATE", "INTERVAL"}
+	b.mode = "decks"
+	for _, deck := range a.decks {
+		counts := []string{fmt.Sprint(deck.Review), fmt.Sprint(deck.New), fmt.Sprint(deck.Learning), fmt.Sprint(deck.Total)}
+		if !a.statsAvailable {
+			counts = []string{"—", "—", "—", "—"}
 		}
-	} else {
-		b.columns = []string{"CARD — " + a.currentDeck, "STATE", "INTERVAL (DAYS)"}
-		b.mode = "due"
-		for _, card := range a.cards {
+		group := &resource{id: "anki-deck:" + deck.Name, title: deck.Name, columns: counts, children: []*resource{},
+			onToggle: func(expanded bool) {
+				if expanded {
+					a.currentDeck = deck.Name
+					u.loadAnkiDeck(deck.Name)
+				}
+			}}
+		for _, card := range a.cards[deck.Name] {
 			question := card.Front
 			if card.Question != "" {
 				question = card.Question
 			}
 			front, _ := htmlmd.ConvertString(question)
-			items = append(items, &resource{id: fmt.Sprint(card.ID), title: strings.Join(strings.Fields(front), " "),
-				columns: []string{card.State, fmt.Sprint(card.Interval)}, open: func() { u.openAnkiCard(card) }})
+			title := strings.Join(strings.Fields(front), " ")
+			if title == "" {
+				title = fmt.Sprintf("Card %d", card.ID)
+			}
+			group.children = append(group.children, &resource{id: group.id + ":" + fmt.Sprint(card.ID), title: title,
+				columns: []string{"", "", "", "", card.State, fmt.Sprint(card.Interval)}, open: func() { a.currentDeck = deck.Name; u.openAnkiCard(card) }})
 		}
+		if message := a.loadErrors[deck.Name]; message != "" {
+			group.children = append(group.children, &resource{id: group.id + ":error", title: message + " (Enter to retry)", style: "red", open: func() { u.loadAnkiDeck(deck.Name) }})
+		} else if len(group.children) == 0 {
+			message := "No due or new cards"
+			if _, loaded := a.cards[deck.Name]; !loaded || a.loading[deck.Name] {
+				message = "Loading cards…"
+			}
+			group.children = append(group.children, &resource{id: group.id + ":status", title: message, style: "gray"})
+		}
+		items = append(items, group)
 	}
 	b.set(items)
 }
 
 func (u *ui) backAnki() {
 	a, b := &u.anki, u.browsers[1]
-	if b.detail {
-		u.browse()
-	} else if b.filter != "" {
+	if b.filter != "" {
 		b.filter = ""
 		b.render()
-	} else if a.currentDeck != "" {
-		a.currentDeck = ""
-		u.fillAnki()
-		u.refreshAnki()
+	} else {
+		index := b.list.GetCurrentItem()
+		for index >= 0 && index < len(b.rows) && b.rows[index].depth > 0 {
+			index--
+		}
+		if index >= 0 && index < len(b.rows) {
+			b.expanded[b.rows[index].item.id] = false
+			a.currentDeck = ""
+			b.list.SetCurrentItem(index)
+			b.render()
+		}
 	}
 }
 
@@ -368,10 +506,74 @@ func (u *ui) openAnkiCard(card ankiCard) {
 	card.Front = ankiMarkdown(card.Front)
 	card.Back = ankiMarkdown(card.Back)
 	a.card, a.answerShown = card, false
+	a.intervals.Clear()
+	a.reviewOpen = true
 	u.showDocument(a.doc, "Anki — "+a.currentDeck, card.Front, "", "", nil)
 	a.buttons.Clear().AddItem(tview.NewButton("Show answer").SetSelectedFunc(u.showAnkiAnswer), 0, 1, true)
-	u.reveal(1)
+	a.buttons.AddItem(tview.NewButton("Close").SetSelectedFunc(u.closeAnkiReview), 12, 0, false)
+	a.review.SetTitle("Anki review — " + tview.Escape(a.currentDeck))
+	u.updateAnkiReviewMedia()
+	_, _, width, height := u.pages.GetRect()
+	modal := tview.NewFlex().SetDirection(tview.FlexRow).
+		AddItem(centered(a.review, min(110, max(1, width-4)), min(34, max(1, height-4))), 0, 1, true).
+		AddItem(u.status, 2, 0, false)
+	modal.SetMouseCapture(func(action tview.MouseAction, event *tcell.EventMouse) (tview.MouseAction, *tcell.EventMouse) {
+		a.review.MouseHandler()(action, event, func(p tview.Primitive) { u.app.SetFocus(p) })
+		return tview.MouseConsumed, nil
+	})
+	u.dialogOpen = true
+	u.pages.AddPage("dialog", modal, true, true)
 	u.app.SetFocus(a.buttons.GetItem(0))
+}
+
+func (u *ui) closeAnkiReview() {
+	if u.anki.busy {
+		return
+	}
+	u.anki.reviewOpen = false
+	u.anki.card = ankiCard{}
+	u.anki.reviewMedia.setImage(nil)
+	u.closeDialog()
+}
+
+func (u *ui) updateAnkiReviewMedia() {
+	a := &u.anki
+	a.reviewBody.RemoveItem(a.reviewMedia)
+	a.reviewMedia.setImage(nil)
+	a.reviewMedia.sources = nil
+	if u.media.mode == "off" || len(a.doc.images) == 0 {
+		return
+	}
+	a.reviewMedia.sources = append([]string(nil), a.doc.images...)
+	a.reviewBody.AddItem(a.reviewMedia, 30, 0, false)
+	u.loadAnkiImage(0)
+}
+
+func (u *ui) loadAnkiImage(index int) {
+	a, media := &u.anki, u.anki.reviewMedia
+	if index < 0 || index >= len(media.sources) {
+		return
+	}
+	media.index = index
+	media.setImage(nil)
+	generation, source := media.generation, media.sources[index]
+	u.job("Loading Anki image", func(ctx context.Context) (func(), error) {
+		data, err := u.client.image(ctx, source)
+		var img image.Image
+		if err == nil {
+			img, err = decodeImage(data)
+		}
+		return func() {
+			if !a.reviewOpen || generation != media.generation {
+				return
+			}
+			if err != nil {
+				media.caption.SetText("Image unavailable: " + err.Error())
+				return
+			}
+			media.setImage(img)
+		}, nil
+	})
 }
 
 func (u *ui) showAnkiAnswer() {
@@ -386,11 +588,20 @@ func (u *ui) showAnkiAnswer() {
 		content = a.card.Back
 	}
 	u.showDocument(a.doc, "Anki — "+a.currentDeck, content, "", "", nil)
+	u.updateAnkiReviewMedia()
 	a.buttons.Clear()
+	a.intervals.Clear()
 	for index, label := range []string{"Again", "Hard", "Good", "Easy"} {
 		ease := index + 1
 		a.buttons.AddItem(tview.NewButton(label).SetSelectedFunc(func() { u.answerAnki(ease) }), 0, 1, index == 0)
+		interval := "—"
+		if len(a.card.NextReviews) == 4 && a.card.NextReviews[index] != "" {
+			interval = a.card.NextReviews[index]
+		}
+		a.intervals.AddItem(tview.NewTextView().SetText(interval).SetTextColor(tcell.ColorGray).SetTextAlign(tview.AlignCenter), 0, 1, false)
 	}
+	a.buttons.AddItem(tview.NewButton("Close").SetSelectedFunc(u.closeAnkiReview), 12, 0, false)
+	a.intervals.AddItem(nil, 12, 0, false)
 	u.app.SetFocus(a.buttons.GetItem(0))
 }
 
@@ -442,10 +653,7 @@ func (u *ui) answerAnki(ease int) {
 				u.fail(err)
 				return
 			}
-			a.card = ankiCard{}
-			if u.active == 1 {
-				u.browse()
-			}
+			u.closeAnkiReview()
 			u.refreshAnki()
 		}, nil
 	})

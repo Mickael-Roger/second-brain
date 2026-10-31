@@ -126,8 +126,9 @@ Available modes: `auto`, `iterm2`, `sixel`, `halfcell`, `off`. See
 ## Anki — web, PWA and terminal
 
 The Anki view opens on decks with review, new, learning and total card counts.
-Open a deck, select a due/new card, reveal its answer and rate it (Again, Hard,
-Good, Easy). New notes are created in a popup, with deck, front/back, tags and
+Expand a deck to display due/new cards below it, then select a card to review in
+a popup over the same list (Again, Hard, Good, Easy). Multiple decks can remain
+expanded. New notes are created in a popup, with deck, front/back, tags and
 normal/reversed mode. The web and installed PWA share this responsive view; `c`
 opens note creation on desktop and in the TUI.
 

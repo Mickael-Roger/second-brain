@@ -14,7 +14,7 @@ from __future__ import annotations
 import base64
 import binascii
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import httpx
@@ -73,6 +73,7 @@ class AnkiCardInfo:
     question: str = ""
     answer: str = ""
     css: str = ""
+    next_reviews: list[str] = field(default_factory=list)
 
 
 # ── State decoding ───────────────────────────────────────────────────
@@ -294,6 +295,16 @@ def _parse_card_info(raw: dict[str, Any]) -> AnkiCardInfo:
     fields = raw.get("fields") or {}
     front = (fields.get("Front") or {}).get("value", "") if isinstance(fields, dict) else ""
     back = (fields.get("Back") or {}).get("value", "") if isinstance(fields, dict) else ""
+    intervals = raw.get("nextReviews")
+    # Only map the four-button order: Again, Hard, Good, Easy. Older schedulers
+    # may return fewer entries; do not assign those to the wrong rating.
+    next_reviews = []
+    if isinstance(intervals, list) and len(intervals) == 4:
+        isolates = dict.fromkeys(map(ord, "\u2066\u2067\u2068\u2069"))
+        next_reviews = [
+            value.translate(isolates).strip() if isinstance(value, str) else ""
+            for value in intervals
+        ]
     return AnkiCardInfo(
         card_id=int(raw.get("cardId", 0)),
         note_id=int(raw.get("note", 0)),
@@ -308,6 +319,7 @@ def _parse_card_info(raw: dict[str, Any]) -> AnkiCardInfo:
         question=str(raw.get("question", "")),
         answer=str(raw.get("answer", "")),
         css=str(raw.get("css", "")),
+        next_reviews=next_reviews,
     )
 
 

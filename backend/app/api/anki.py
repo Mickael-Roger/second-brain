@@ -17,6 +17,7 @@ from app.anki import (
     list_decks,
     list_due_cards,
     retrieve_media,
+    sync,
 )
 from app.auth import current_user
 from app.config import get_settings
@@ -54,6 +55,15 @@ async def decks() -> list[AnkiDeck]:
         return await list_decks()
     except AnkiConnectError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@router.post("/sync", dependencies=[Depends(require_enabled)])
+async def synchronize() -> dict[str, bool]:
+    try:
+        await sync()
+    except AnkiConnectError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return {"synced": True}
 
 
 @router.post("/cards", status_code=201, dependencies=[Depends(require_enabled)])

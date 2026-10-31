@@ -37,9 +37,10 @@ def bridge(monkeypatch):
 def test_full_anki_http_bridge(bridge):
     calls = []
     answered = False
+    synced = False
 
     def plugin(request):
-        nonlocal answered
+        nonlocal answered, synced
         payload = json.loads(request.content)
         assert payload["version"] == 6
         assert payload["key"] == "test-key"
@@ -56,7 +57,7 @@ def test_full_anki_http_bridge(bridge):
                     "new_count": 0,
                     "learn_count": 0,
                     "review_count": 0 if answered else 1,
-                    "total_in_deck": 7,
+                    "total_in_deck": 600 if synced else 7,
                 }
             }
         elif action == "findCards":
@@ -73,6 +74,7 @@ def test_full_anki_http_bridge(bridge):
                     "question": "<b>Reverse question</b>",
                     "answer": "Reverse answer",
                     "css": ".card {font-size:20px}",
+                    "nextReviews": ["\u20685\u2069h", "\u206818\u2069d", "3.1mo", "9.2mo"],
                     "fields": {},
                 }
             ]
@@ -87,6 +89,10 @@ def test_full_anki_http_bridge(bridge):
         elif action == "retrieveMediaFile":
             assert params == {"filename": "picture.png"}
             result = base64.b64encode(b"image-data").decode()
+        elif action == "sync":
+            assert params == {}
+            synced = True
+            result = None
         else:
             pytest.fail(f"Unexpected AnkiConnect action: {action}")
         return httpx.Response(200, json={"result": result, "error": None})
@@ -100,6 +106,7 @@ def test_full_anki_http_bridge(bridge):
     assert cards.status_code == 200
     assert cards.json()[0]["question"] == "<b>Reverse question</b>"
     assert cards.json()[0]["state"] == "review"
+    assert cards.json()[0]["next_reviews"] == ["5h", "18d", "3.1mo", "9.2mo"]
     assert bridge.post("/api/anki/cards/123/answer", json={"ease": 3}).json() == {"answered": True}
     assert bridge.get("/api/anki/due?deck=Test").json() == []
     assert bridge.get("/api/anki/deck-stats").json()[0]["review_count"] == 0
@@ -116,6 +123,8 @@ def test_full_anki_http_bridge(bridge):
     assert created.status_code == 201
     assert created.json() == {"note_id": 789, "cards_created": 2}
     assert bridge.get("/api/anki/media?filename=picture.png").content == b"image-data"
+    assert bridge.post("/api/anki/sync").json() == {"synced": True}
+    assert bridge.get("/api/anki/deck-stats").json()[0]["total_in_deck"] == 600
     assert {
         "getDeckStats",
         "findCards",
@@ -123,6 +132,7 @@ def test_full_anki_http_bridge(bridge):
         "answerCards",
         "addNote",
         "retrieveMediaFile",
+        "sync",
     } <= set(calls)
 
 

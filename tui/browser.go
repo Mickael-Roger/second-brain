@@ -22,6 +22,7 @@ type resource struct {
 	marked          bool
 	children        []*resource
 	open            func()
+	onToggle        func(bool)
 }
 
 type resourceRow struct {
@@ -61,6 +62,9 @@ func (b *resourceBrowser) activate(index int) {
 	if r.children != nil {
 		b.expanded[r.id] = !b.expanded[r.id]
 		b.render()
+		if r.onToggle != nil {
+			r.onToggle(b.expanded[r.id])
+		}
 	} else if r.open != nil {
 		r.open()
 	}
@@ -149,7 +153,9 @@ func (b *resourceBrowser) render() {
 				style = "aqua"
 			}
 			total, unread := resourceCounts(row.item)
-			values[len(values)-1] = fmt.Sprint(total)
+			if b.title != "anki" {
+				values[len(values)-1] = fmt.Sprint(total)
+			}
 			if b.title == "news" {
 				values[len(values)-1] = fmt.Sprintf("%d/%d", unread, total)
 			}
@@ -407,7 +413,7 @@ func (u *ui) finishCommand(accept bool) {
 	}
 }
 
-var commandNames = []string{"chat", "news", "training", "anki", "new", "plan", "generate", "stop", "fetch", "feeds", "unread", "read", "star", "original", "actions", "clear", "refresh", "logout", "help", "quit"}
+var commandNames = []string{"chat", "news", "training", "anki", "new", "plan", "generate", "stop", "fetch", "feeds", "unread", "read", "star", "original", "actions", "clear", "refresh", "sync", "logout", "help", "quit"}
 
 func (u *ui) executeCommand(text string) {
 	text = strings.TrimPrefix(strings.TrimSpace(text), ":")
@@ -433,6 +439,10 @@ func (u *ui) executeCommand(text string) {
 	case "refresh":
 		if refresh := u.pageDefs[u.active].refresh; refresh != nil {
 			refresh()
+		}
+	case "sync":
+		if u.active == 1 {
+			u.syncAnki()
 		}
 	case "new":
 		if u.active == 0 {

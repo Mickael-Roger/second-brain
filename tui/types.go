@@ -15,6 +15,7 @@ type ankiCard struct {
 	Front, Back, State string
 	Question, Answer   string
 	Interval           int
+	NextReviews        []string `json:"next_reviews"`
 }
 
 type chat struct {

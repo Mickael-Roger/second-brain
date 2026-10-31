@@ -77,6 +77,7 @@ export interface AnkiCard {
   question: string;
   answer: string;
   css: string;
+  next_reviews: string[];
   state: string;
   interval: number;
   tags: string[];

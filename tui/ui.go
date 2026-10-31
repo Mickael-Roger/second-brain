@@ -227,6 +227,10 @@ func (u *ui) capture(event *tcell.EventKey) *tcell.EventKey {
 			}
 			return nil
 		}
+		if event.Rune() == 's' && u.active == 1 {
+			u.syncAnki()
+			return nil
+		}
 		if u.active == 3 {
 			switch event.Rune() {
 			case ' ':

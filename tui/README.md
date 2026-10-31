@@ -183,10 +183,22 @@ Fetch RSS starts the server's background ingestion; use Refresh after it finishe
 Anki opens on a deck list showing review, new, learning and total card counts.
 On an older backend, decks still load and unavailable counts appear as `—`.
 Update and restart the backend to enable deck statistics and reviews.
-Press Enter on a deck to list its due and new cards (up to 1,000), then Enter on a card to
-review it. Select Show answer, then Again, Hard, Good or Easy to save the rating
-in Anki and return to the updated due list. Failed reviews preserve the card for
-retry. Escape returns from a card to its deck, then from the due list to all decks.
+Press Enter on a deck to expand/collapse its due and new cards (up to 1,000)
+directly below it. Multiple decks can remain expanded, and their counters stay
+visible. Enter on a card opens a review popup over the same list. Select Show
+answer, then Again, Hard, Good or Easy to save the rating. Success closes the
+popup and refreshes the expanded decks; failures keep the popup open for retry.
+Close or Escape dismisses a review without rating and restores list selection.
+Tab / Shift+Tab moves between popup controls. Escape on the list collapses the
+selected deck (or clears an active search first).
+Each rating has Anki's estimated next review interval directly below it. `—`
+means the server/plugin did not provide an unambiguous four-button estimate.
+
+Press **`s` / `:sync`** in Anki to synchronize the host desktop's collection with
+AnkiWeb, then reload deck counts and cards while preserving expanded decks.
+The status line shows progress/errors. The desktop profile must already be
+connected to AnkiWeb; synchronize other devices first to upload their changes.
+Use `r` for an ordinary refresh without synchronization.
 
 Press `c` or use `:new` to open the note creation popup: deck, front, back,
 normal/reversed mode and tags. Create note saves it and closes the popup; Cancel

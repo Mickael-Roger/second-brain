@@ -143,3 +143,21 @@ async def test_due_new_cards_pagination_and_deleted_cards(monkeypatch):
     assert len(cards) == 1
     assert cards[0].card_id == 3
     assert cards[0].css == ".card {color:red}"
+
+
+@pytest.mark.parametrize(
+    "intervals,expected",
+    [
+        (
+            ["\u206830\u2069m", "\u20683\u2069h", "\u20681\u2069d", "\u20684\u2069d"],
+            ["30m", "3h", "1d", "4d"],
+        ),
+        (["5h", "18d", "3.1mo", "9.2mo"], ["5h", "18d", "3.1mo", "9.2mo"]),
+        (None, []),
+        (["1m", "1d", "4d"], []),
+        (["1m", None, 0, "4d"], ["1m", "", "", "4d"]),
+    ],
+)
+def test_next_review_intervals_follow_anki_button_order(intervals, expected):
+    card = client._parse_card_info({"cardId": 1, "nextReviews": intervals})
+    assert card.next_reviews == expected
