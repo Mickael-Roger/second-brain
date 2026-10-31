@@ -11,6 +11,7 @@ from app.anki import (
     AnkiConnectError,
     AnkiDeck,
     AnkiDeckStats,
+    AnkiFullSyncRequired,
     add_card,
     answer_card,
     deck_stats,
@@ -61,6 +62,8 @@ async def decks() -> list[AnkiDeck]:
 async def synchronize() -> dict[str, bool]:
     try:
         await sync()
+    except AnkiFullSyncRequired as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except AnkiConnectError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     return {"synced": True}

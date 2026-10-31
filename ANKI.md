@@ -113,6 +113,15 @@ AnkiWeb. Sync errors (including missing AnkiWeb authentication) are displayed
 and can be retried manually. Sync is not triggered automatically on page load,
 ordinary refresh, or offline reconnection; failed syncs are not retried or queued.
 
+If AnkiConnect reports `Sync status 2 not one of [0, 1]`, Anki requires a **full
+sync**, not an ordinary incremental sync. Second Brain returns HTTP 409 with
+desktop instructions. Open Anki on the AnkiConnect host and synchronize there:
+Anki asks whether to Upload the local collection or Download the AnkiWeb
+collection. If AnkiWeb contains the up-to-date collection, choose Download.
+Then retry Sync AnkiWeb in Second Brain. Status 3 specifically requires a full
+Download and status 4 a full Upload. These operations are resolved in Anki's
+desktop interface, rather than selected automatically by Second Brain.
+
 ## Deployment
 
 Deploy the backend and built frontend together. Restarting an old server binary

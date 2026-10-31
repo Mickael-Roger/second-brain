@@ -14,6 +14,7 @@ from __future__ import annotations
 import base64
 import binascii
 import logging
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -40,6 +41,10 @@ _MODE_TO_MODEL = {
 
 class AnkiConnectError(RuntimeError):
     """Raised when AnkiConnect returns an error or is unreachable."""
+
+
+class AnkiFullSyncRequired(AnkiConnectError):
+    """Anki requires a full synchronization to be completed in its desktop UI."""
 
 
 @dataclass(slots=True)
@@ -148,7 +153,21 @@ async def _invoke(action: str, **params: Any) -> Any:
 
 async def sync() -> None:
     """Trigger an AnkiWeb sync from the running desktop client."""
-    await _invoke("sync")
+    try:
+        await _invoke("sync")
+    except AnkiConnectError as exc:
+        status = re.search(r"\bSync status ([234]) not one of \[\s*0\s*,\s*1\s*\]", str(exc))
+        if status is None:
+            raise
+        instruction = {
+            "2": "choose Upload or Download",
+            "3": "complete a full Download from AnkiWeb",
+            "4": "complete a full Upload to AnkiWeb",
+        }[status.group(1)]
+        raise AnkiFullSyncRequired(
+            "Anki requires a full sync. In Anki desktop on the AnkiConnect host, "
+            f"sync with AnkiWeb and {instruction}. Then retry in Second Brain."
+        ) from exc
 
 
 async def list_decks() -> list[AnkiDeck]:
@@ -332,6 +351,7 @@ __all__ = [
     "AnkiConnectError",
     "AnkiDeck",
     "AnkiDeckStats",
+    "AnkiFullSyncRequired",
     "add_card",
     "answer_card",
     "cards_info",

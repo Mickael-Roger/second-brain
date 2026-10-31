@@ -149,3 +149,41 @@ def test_anki_failures_are_gateway_errors(bridge, failure):
     response = bridge.get("/api/anki/deck-stats")
     assert response.status_code == 502
     assert "Anki" in response.json()["detail"]
+
+
+@respx.mock
+@pytest.mark.parametrize(
+    "status,instruction",
+    [(2, "Upload or Download"), (3, "Download from AnkiWeb"), (4, "Upload to AnkiWeb")],
+)
+def test_full_sync_requires_desktop_resolution(bridge, status, instruction):
+    route = respx.post("http://anki.test:8765").respond(
+        200,
+        json={
+            "result": None,
+            "error": f"Sync status {status} not one of [0, 1] - see SyncCollectionResponse",
+        },
+    )
+    response = bridge.post("/api/anki/sync")
+    assert response.status_code == 409
+    detail = response.json()["detail"]
+    assert "Anki requires a full sync" in detail
+    assert "Anki desktop on the AnkiConnect host" in detail
+    assert instruction in detail
+    assert "Then retry in Second Brain" in detail
+    assert route.call_count == 1
+    assert json.loads(route.calls[0].request.content)["action"] == "sync"
+
+
+@respx.mock
+def test_unrecognized_sync_status_remains_gateway_error(bridge):
+    respx.post("http://anki.test:8765").respond(
+        200,
+        json={
+            "result": None,
+            "error": "Sync status 99 not one of [0, 1]",
+        },
+    )
+    response = bridge.post("/api/anki/sync")
+    assert response.status_code == 502
+    assert "Sync status 99" in response.json()["detail"]

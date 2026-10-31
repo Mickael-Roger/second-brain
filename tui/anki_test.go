@@ -309,6 +309,15 @@ func TestAnkiDecksOnOlderBackend(t *testing.T) {
 }
 
 func TestAnkiSyncRefreshesExpandedDeckAndCanRetry(t *testing.T) {
+	testAnkiSyncRetry(t, 502, "sync: auth not configured")
+}
+
+func TestAnkiFullSyncMessageCanRetryAfterDesktopResolution(t *testing.T) {
+	testAnkiSyncRetry(t, 409, "Anki requires a full sync. Open Anki desktop and choose Upload or Download.")
+}
+
+func testAnkiSyncRetry(t *testing.T, failureStatus int, failureMessage string) {
+	t.Helper()
 	var mu sync.Mutex
 	synced, fail := false, true
 	calls := 0
@@ -342,8 +351,8 @@ func TestAnkiSyncRefreshesExpandedDeckAndCanRetry(t *testing.T) {
 			}
 			calls++
 			if fail {
-				w.WriteHeader(502)
-				result = object{"detail": "sync: auth not configured"}
+				w.WriteHeader(failureStatus)
+				result = object{"detail": failureMessage}
 			} else {
 				synced = true
 				result = object{"synced": true}
@@ -368,7 +377,7 @@ func TestAnkiSyncRefreshesExpandedDeckAndCanRetry(t *testing.T) {
 	mu.Unlock()
 	u.app.QueueEvent(tcell.NewEventKey(tcell.KeyRune, 's', tcell.ModNone))
 	awaitUI(t, u, func() bool {
-		return !u.anki.busy && !u.anki.syncing && strings.Contains(u.status.GetText(false), "sync: auth not configured")
+		return !u.anki.busy && !u.anki.syncing && strings.Contains(u.status.GetText(false), failureMessage)
 	})
 	updateUI(t, u, func() {
 		if u.anki.decks[0].Total != 554 || !u.browsers[1].expanded["anki-deck:English"] {
