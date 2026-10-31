@@ -58,6 +58,30 @@ export const api = {
 
 // ---- DTOs ----
 
+export interface AnkiDeckStats {
+  deck_id: number;
+  name: string;
+  new_count: number;
+  learn_count: number;
+  review_count: number;
+  total_in_deck: number;
+}
+
+export interface AnkiCard {
+  card_id: number;
+  note_id: number;
+  deck_name: string;
+  model_name: string;
+  front: string;
+  back: string;
+  question: string;
+  answer: string;
+  css: string;
+  state: string;
+  interval: number;
+  tags: string[];
+}
+
 export interface MeResponse {
   username: string;
 }

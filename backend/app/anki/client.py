@@ -11,6 +11,8 @@ to the user's running desktop client.
 
 from __future__ import annotations
 
+import base64
+import binascii
 import logging
 from dataclasses import dataclass
 from typing import Any
@@ -47,6 +49,16 @@ class AnkiDeck:
 
 
 @dataclass(slots=True)
+class AnkiDeckStats:
+    deck_id: int
+    name: str
+    new_count: int
+    learn_count: int
+    review_count: int
+    total_in_deck: int
+
+
+@dataclass(slots=True)
 class AnkiCardInfo:
     card_id: int
     note_id: int
@@ -54,10 +66,13 @@ class AnkiCardInfo:
     model_name: str
     front: str
     back: str
-    state: str            # new | learning | review | relearning | suspended | buried
-    due: int              # interpretation depends on queue (positions / day offsets / unix ts)
-    interval: int         # days
+    state: str  # new | learning | review | relearning | suspended | buried
+    due: int  # interpretation depends on queue (positions / day offsets / unix ts)
+    interval: int  # days
     tags: list[str]
+    question: str = ""
+    answer: str = ""
+    css: str = ""
 
 
 # ── State decoding ───────────────────────────────────────────────────
@@ -115,6 +130,8 @@ async def _invoke(action: str, **params: Any) -> Any:
             f"AnkiConnect unreachable at {settings.url}: {exc}. "
             "Make sure Anki desktop is running with the AnkiConnect add-on."
         ) from exc
+    except ValueError as exc:
+        raise AnkiConnectError("AnkiConnect returned an invalid JSON response.") from exc
 
     if not isinstance(data, dict) or "result" not in data or "error" not in data:
         raise AnkiConnectError(f"unexpected AnkiConnect response: {data!r}")
@@ -141,6 +158,42 @@ async def list_decks() -> list[AnkiDeck]:
     return decks
 
 
+async def deck_stats() -> list[AnkiDeckStats]:
+    """Return scheduler counts and totals, including decks with no due cards."""
+    decks = await list_decks()
+    if not decks:
+        return []
+    raw = await _invoke("getDeckStats", decks=[deck.name for deck in decks])
+    result = []
+    try:
+        for deck in decks:
+            stats = raw[str(deck.id)]
+            total = stats.get("total_in_deck")
+            # Older Anki versions do not include totals in getDeckStats.
+            if total is None:
+                total = len(await find_card_ids(_deck_query(deck.name)))
+            result.append(
+                AnkiDeckStats(
+                    deck_id=deck.id,
+                    name=deck.name,
+                    new_count=int(stats["new_count"]),
+                    learn_count=int(stats["learn_count"]),
+                    review_count=int(stats["review_count"]),
+                    total_in_deck=int(total),
+                )
+            )
+    except (KeyError, TypeError, ValueError, AttributeError) as exc:
+        raise AnkiConnectError("AnkiConnect returned incomplete deck statistics.") from exc
+    return result
+
+
+async def answer_card(card_id: int, ease: int) -> bool:
+    if ease not in (1, 2, 3, 4):
+        raise AnkiConnectError("Review ease must be between 1 (Again) and 4 (Easy).")
+    result = await _invoke("answerCards", answers=[{"cardId": card_id, "ease": ease}])
+    return bool(result and result[0])
+
+
 async def find_card_ids(query: str) -> list[int]:
     """Run an Anki browser query and return the matching card ids."""
     raw = await _invoke("findCards", query=query)
@@ -152,21 +205,44 @@ async def cards_info(card_ids: list[int]) -> list[AnkiCardInfo]:
     if not card_ids:
         return []
     raw = await _invoke("cardsInfo", cards=card_ids)
-    return [_parse_card_info(c) for c in raw]
+    return [_parse_card_info(c) for c in raw if c and c.get("cardId")]
+
+
+def _deck_query(deck: str) -> str:
+    escaped = deck.replace("\\", "\\\\").replace('"', '\\"')
+    return f'deck:"{escaped}"'
 
 
 async def list_cards(deck: str | None = None, limit: int = 100) -> list[AnkiCardInfo]:
     """List cards optionally restricted to a deck. Returns front/back/state."""
-    query = f'deck:"{deck}"' if deck else "deck:*"
+    query = _deck_query(deck) if deck else "deck:*"
     ids = await find_card_ids(query)
     return await cards_info(ids[:limit])
 
 
-async def list_due_cards(deck: str | None = None, limit: int = 100) -> list[AnkiCardInfo]:
-    """List cards due for review (Anki's `is:due` operator)."""
-    query = f'deck:"{deck}" is:due' if deck else "is:due"
+async def list_due_cards(
+    deck: str | None = None,
+    limit: int = 100,
+    *,
+    include_new: bool = False,
+    offset: int = 0,
+) -> list[AnkiCardInfo]:
+    """List due cards, optionally including new cards; never review buried/suspended cards."""
+    condition = "(is:due OR is:new) -is:suspended -is:buried" if include_new else "is:due"
+    query = f"{_deck_query(deck)} {condition}" if deck else condition
     ids = await find_card_ids(query)
-    return await cards_info(ids[:limit])
+    return await cards_info(ids[offset : offset + limit])
+
+
+async def retrieve_media(filename: str) -> bytes | None:
+    """Read collection media through AnkiConnect; no local collection is needed."""
+    raw = await _invoke("retrieveMediaFile", filename=filename)
+    if raw is False:
+        return None
+    try:
+        return base64.b64decode(raw, validate=True)
+    except (ValueError, TypeError, binascii.Error) as exc:
+        raise AnkiConnectError("AnkiConnect returned invalid media data.") from exc
 
 
 async def add_card(
@@ -183,9 +259,7 @@ async def add_card(
     """
     model = _MODE_TO_MODEL.get(mode)
     if model is None:
-        raise AnkiConnectError(
-            f"mode must be one of {sorted(_MODE_TO_MODEL)} (got {mode!r})"
-        )
+        raise AnkiConnectError(f"mode must be one of {sorted(_MODE_TO_MODEL)} (got {mode!r})")
     note: dict[str, Any] = {
         "deckName": deck,
         "modelName": model,
@@ -214,22 +288,29 @@ def _parse_card_info(raw: dict[str, Any]) -> AnkiCardInfo:
         due=int(raw.get("due", 0)),
         interval=int(raw.get("interval", 0)),
         tags=list(raw.get("tags") or []),
+        question=str(raw.get("question", "")),
+        answer=str(raw.get("answer", "")),
+        css=str(raw.get("css", "")),
     )
 
 
 __all__ = [
+    "MODEL_BASIC",
+    "MODEL_BASIC_REVERSE",
+    "MODE_NORMAL",
+    "MODE_REVERSE",
     "AnkiCardInfo",
     "AnkiConnectError",
     "AnkiDeck",
-    "MODE_NORMAL",
-    "MODE_REVERSE",
-    "MODEL_BASIC",
-    "MODEL_BASIC_REVERSE",
+    "AnkiDeckStats",
     "add_card",
+    "answer_card",
     "cards_info",
+    "deck_stats",
     "find_card_ids",
     "list_cards",
     "list_decks",
     "list_due_cards",
+    "retrieve_media",
     "sync",
 ]

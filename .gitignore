@@ -30,3 +30,7 @@ email.eml
 .vscode/
 .idea/
 .DS_Store
+
+# Go terminal client build output
+/tui/second-brain-tui
+/tui/second-brain-tui.exe
