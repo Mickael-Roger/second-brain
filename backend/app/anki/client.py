@@ -164,9 +164,26 @@ async def deck_stats() -> list[AnkiDeckStats]:
     if not decks:
         return []
     raw = await _invoke("getDeckStats", decks=[deck.name for deck in decks])
+    if not isinstance(raw, dict):
+        raise AnkiConnectError("AnkiConnect returned incomplete deck statistics.")
     result = []
     try:
         for deck in decks:
+            if str(deck.id) not in raw:
+                # AnkiConnect can omit empty decks from the scheduler's due tree.
+                if await find_card_ids(_deck_query(deck.name)):
+                    raise AnkiConnectError("AnkiConnect returned incomplete deck statistics.")
+                result.append(
+                    AnkiDeckStats(
+                        deck_id=deck.id,
+                        name=deck.name,
+                        new_count=0,
+                        learn_count=0,
+                        review_count=0,
+                        total_in_deck=0,
+                    )
+                )
+                continue
             stats = raw[str(deck.id)]
             total = stats.get("total_in_deck")
             # Older Anki versions do not include totals in getDeckStats.

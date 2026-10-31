@@ -84,7 +84,48 @@ async def test_deck_totals_for_older_anki(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_incomplete_stats_are_reported_not_zeroed(monkeypatch):
-    invoke = AsyncMock(side_effect=[{"Test": 1}, {}])
+    invoke = AsyncMock(side_effect=[{"Test": 1}, {}, [123]])
+    monkeypatch.setattr(client, "_invoke", invoke)
+    with pytest.raises(client.AnkiConnectError, match="incomplete deck statistics"):
+        await client.deck_stats()
+
+
+@pytest.mark.asyncio
+async def test_empty_deck_omitted_from_stats_preserves_other_decks(monkeypatch):
+    invoke = AsyncMock(
+        side_effect=[
+            {"Default": 1, "English": 2},
+            {"2": {"new_count": 0, "learn_count": 1, "review_count": 309, "total_in_deck": 554}},
+            [],
+        ]
+    )
+    monkeypatch.setattr(client, "_invoke", invoke)
+    decks = await client.deck_stats()
+    assert [asdict(deck) for deck in decks] == [
+        {
+            "deck_id": 1,
+            "name": "Default",
+            "new_count": 0,
+            "learn_count": 0,
+            "review_count": 0,
+            "total_in_deck": 0,
+        },
+        {
+            "deck_id": 2,
+            "name": "English",
+            "new_count": 0,
+            "learn_count": 1,
+            "review_count": 309,
+            "total_in_deck": 554,
+        },
+    ]
+    assert invoke.await_args_list[2].args == ("findCards",)
+    assert invoke.await_args_list[2].kwargs == {"query": 'deck:"Default"'}
+
+
+@pytest.mark.asyncio
+async def test_partial_stats_for_existing_deck_are_not_zeroed(monkeypatch):
+    invoke = AsyncMock(side_effect=[{"Test": 1}, {"1": {"total_in_deck": 10}}])
     monkeypatch.setattr(client, "_invoke", invoke)
     with pytest.raises(client.AnkiConnectError, match="incomplete deck statistics"):
         await client.deck_stats()
