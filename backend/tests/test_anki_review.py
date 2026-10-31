@@ -132,6 +132,25 @@ async def test_partial_stats_for_existing_deck_are_not_zeroed(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_browse_cards_include_future_and_suspended_cards(monkeypatch):
+    invoke = AsyncMock(
+        side_effect=[
+            [1, 2, 3],
+            [
+                {"cardId": 2, "queue": 2, "type": 2, "interval": 30},
+                {"cardId": 3, "queue": -1, "type": 2},
+            ],
+        ]
+    )
+    monkeypatch.setattr(client, "_invoke", invoke)
+    cards = await client.list_cards('A"B', limit=2, offset=1)
+    assert invoke.await_args_list[0].kwargs == {"query": 'deck:"A\\"B"'}
+    assert invoke.await_args_list[1].kwargs == {"cards": [2, 3]}
+    assert [card.card_id for card in cards] == [2, 3]
+    assert cards[0].interval == 30
+
+
+@pytest.mark.asyncio
 async def test_due_new_cards_pagination_and_deleted_cards(monkeypatch):
     invoke = AsyncMock(side_effect=[[1, 2, 3], [{}, {"cardId": 3, "css": ".card {color:red}"}]])
     monkeypatch.setattr(client, "_invoke", invoke)

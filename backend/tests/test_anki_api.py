@@ -36,6 +36,7 @@ def test_disabled_config_and_operations(client, monkeypatch):
     assert client.post("/api/anki/sync").status_code == 403
     assert client.get("/api/anki/deck-stats").status_code == 403
     assert client.get("/api/anki/due?deck=Test").status_code == 403
+    assert client.get("/api/anki/cards?deck=Test").status_code == 403
     assert client.get("/api/anki/media?filename=picture.png").status_code == 403
     assert client.post("/api/anki/cards/1/answer", json={"ease": 3}).status_code == 403
     assert (
@@ -54,6 +55,7 @@ def test_authentication_required(client):
     assert client.post("/api/anki/sync").status_code == 401
     assert client.get("/api/anki/deck-stats").status_code == 401
     assert client.get("/api/anki/due?deck=Test").status_code == 401
+    assert client.get("/api/anki/cards?deck=Test").status_code == 401
     assert client.get("/api/anki/media?filename=picture.png").status_code == 401
     assert client.post("/api/anki/cards/1/answer", json={"ease": 3}).status_code == 401
     assert (
@@ -102,6 +104,24 @@ def test_connect_error_is_reported(client, monkeypatch):
     response = client.post("/api/anki/cards", json={"deck": "Test", "front": "Q", "back": "A"})
     assert response.status_code == 502
     assert response.json() == {"detail": "Duplicate note"}
+
+
+def test_browse_cards(client, monkeypatch):
+    cards = AsyncMock(return_value=[])
+    monkeypatch.setattr(anki, "list_cards", cards)
+    response = client.get("/api/anki/cards", params={"deck": " Test ", "limit": 20, "offset": 40})
+    assert response.status_code == 200
+    assert response.json() == []
+    cards.assert_awaited_once_with(deck="Test", limit=20, offset=40)
+    for params in [
+        {},
+        {"deck": " "},
+        {"deck": "Test", "offset": -1},
+        {"deck": "Test", "limit": 10001},
+    ]:
+        assert client.get("/api/anki/cards", params=params).status_code == 422
+    cards.side_effect = AnkiConnectError("Anki unreachable")
+    assert client.get("/api/anki/cards?deck=Test").status_code == 502
 
 
 def test_review_endpoints(client, monkeypatch):

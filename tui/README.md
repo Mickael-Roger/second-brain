@@ -183,7 +183,10 @@ Fetch RSS starts the server's background ingestion; use Refresh after it finishe
 Anki opens on a deck list showing review, new, learning and total card counts.
 On an older backend, decks still load and unavailable counts appear as `—`.
 Update and restart the backend to enable deck statistics and reviews.
-Press Enter on a deck to expand/collapse its due and new cards (up to 1,000)
+Deck names are yellow when reviews or learning steps are due, aqua when only new
+cards are available, and gray when up to date. The STATE column also labels this
+status. Nonzero review counts are green, new counts aqua, and learning counts orange.
+Press Enter on a deck to expand/collapse its due and new cards
 directly below it. Multiple decks can remain expanded, and their counters stay
 visible. Enter on a card opens a review popup over the same list. Select Show
 answer, then Again, Hard, Good or Easy to save the rating. Success closes the
@@ -193,6 +196,14 @@ Tab / Shift+Tab moves between popup controls. Escape on the list collapses the
 selected deck (or clears an active search first).
 Each rating has Anki's estimated next review interval directly below it. `—`
 means the server/plugin did not provide an unambiguous four-button estimate.
+
+Press **`u` / `:cards`** to toggle between due/new cards and **all cards**, including
+future, suspended and buried cards. The header shows the next action; the table
+title and footer show `due` or `all cards`. Expanded decks and local search are
+preserved, and their cards reload in the selected mode. Cards load in pages of
+1,000 until the deck is loaded. All-card mode is read-only: Enter opens a browse
+popup and Show answer reveals the back, without rating controls or changes to the
+review schedule. Switch back to due mode to review cards normally.
 
 Press **`s` / `:sync`** in Anki to synchronize the host desktop's collection with
 AnkiWeb, then reload deck counts and cards while preserving expanded decks.

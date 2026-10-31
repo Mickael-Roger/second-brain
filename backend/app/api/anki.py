@@ -15,6 +15,7 @@ from app.anki import (
     add_card,
     answer_card,
     deck_stats,
+    list_cards,
     list_decks,
     list_due_cards,
     retrieve_media,
@@ -88,6 +89,18 @@ async def create_card(payload: CardCreateRequest) -> dict[str, int]:
 async def get_deck_stats() -> list[AnkiDeckStats]:
     try:
         return await deck_stats()
+    except AnkiConnectError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@router.get("/cards", dependencies=[Depends(require_enabled)])
+async def browse_cards(
+    deck: NonEmptyText,
+    limit: int = Query(default=1000, ge=1, le=10000),
+    offset: int = Query(default=0, ge=0),
+) -> list[AnkiCardInfo]:
+    try:
+        return await list_cards(deck=deck, limit=limit, offset=offset)
     except AnkiConnectError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 

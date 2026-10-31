@@ -413,7 +413,7 @@ func (u *ui) finishCommand(accept bool) {
 	}
 }
 
-var commandNames = []string{"chat", "news", "training", "anki", "new", "plan", "generate", "stop", "fetch", "feeds", "unread", "read", "star", "original", "actions", "clear", "refresh", "sync", "logout", "help", "quit"}
+var commandNames = []string{"chat", "news", "training", "anki", "new", "plan", "generate", "stop", "fetch", "feeds", "unread", "cards", "read", "star", "original", "actions", "clear", "refresh", "sync", "logout", "help", "quit"}
 
 func (u *ui) executeCommand(text string) {
 	text = strings.TrimPrefix(strings.TrimSpace(text), ":")
@@ -443,6 +443,10 @@ func (u *ui) executeCommand(text string) {
 	case "sync":
 		if u.active == 1 {
 			u.syncAnki()
+		}
+	case "cards":
+		if u.active == 1 {
+			u.toggleAnkiCards()
 		}
 	case "new":
 		if u.active == 0 {

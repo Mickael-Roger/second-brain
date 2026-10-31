@@ -27,6 +27,11 @@ func (u *ui) updateChrome() {
 			label = "Syncing…"
 		}
 		actions = append(actions, keyHint("s", label))
+		visibility := "Show all cards"
+		if u.anki.showAll {
+			visibility = "Show due only"
+		}
+		actions = append(actions, keyHint("u", visibility))
 	case 2:
 		actions = append(actions, keyHint(":generate", "Generate fiche"), keyHint(":plan", "Learning plan"))
 	case 3:
@@ -89,7 +94,7 @@ func (u *ui) showHelp() {
 		"Space: select / deselect article or group   Esc / :clear: clear selection\n" +
 		"s / :star: toggle star   a / :actions: actions on selected articles\n" +
 		"Open article: o / :original: open original\n\n" +
-		"CHAT / ANKI\nc: new conversation / new Anki note\nAnki: s / :sync: sync with AnkiWeb and refresh decks\nEnter expands decks; Enter on a card opens review popup\nPopup: show answer and rate it; Esc closes; Tab moves focus\n\n" +
+		"CHAT / ANKI\nc: new conversation / new Anki note\nAnki: s / :sync: sync with AnkiWeb and refresh decks\nu / :cards: toggle due / all cards (read-only browsing)\nYellow decks: reviews due; aqua: new cards; gray: up to date\nEnter expands decks; Enter on a card opens a popup\nPopup: show answer; rate in due mode; Esc closes; Tab moves focus\n\n" +
 		"ACTIONS\n:new :plan :generate :stop\n" +
 		":fetch :feeds :refresh :logout :quit\n\n" +
 		"Ctrl+G: send chat\nCtrl+C twice within 3 seconds: quit\n\n" +

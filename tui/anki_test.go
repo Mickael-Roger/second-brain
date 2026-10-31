@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -12,6 +13,104 @@ import (
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 )
+
+func TestAnkiBrowseAllCardsAndDiscardStaleDueResponse(t *testing.T) {
+	releaseDue := make(chan struct{})
+	var release sync.Once
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		var result any = object{}
+		switch r.URL.Path {
+		case "/api/auth/login":
+		case "/api/llm/providers":
+			result = []provider{}
+		case "/api/chats":
+			result = []chat{}
+		case "/api/anki/config":
+			result = object{"enabled": true}
+		case "/api/anki/deck-stats":
+			result = []object{
+				{"name": "Test", "review_count": 1, "total_in_deck": 1001},
+				{"name": "New", "new_count": 2, "total_in_deck": 2},
+				{"name": "Done", "total_in_deck": 10},
+			}
+		case "/api/anki/due":
+			<-releaseDue
+			result = []ankiCard{{ID: 42, Front: "Due card"}}
+		case "/api/anki/cards":
+			if r.Method != "GET" || r.URL.Query().Get("deck") != "Test" || r.URL.Query().Has("include_new") {
+				t.Error("browsing must request all cards for the selected deck")
+			}
+			switch r.URL.Query().Get("offset") {
+			case "0":
+				cards := make([]ankiCard, 1000)
+				for i := range cards {
+					cards[i] = ankiCard{ID: int64(i + 1), Front: fmt.Sprintf("Card %d", i+1)}
+				}
+				result = cards
+			case "1000":
+				result = []ankiCard{{ID: 1001, Front: "Future card", Back: "Future answer", State: "review", Interval: 30}}
+			default:
+				t.Error("unexpected card page")
+			}
+		default:
+			t.Errorf("browsing must not mutate cards: %s", r.URL.Path)
+			w.WriteHeader(404)
+		}
+		_ = json.NewEncoder(w).Encode(result)
+	}))
+	defer server.Close()
+	defer release.Do(func() { close(releaseDue) })
+	u := startUI(t, server.URL)
+	signIn(t, u, "password")
+	awaitUI(t, u, func() bool { return u.authenticated })
+	updateUI(t, u, func() { u.switchPage(1) })
+	awaitUI(t, u, func() bool { return len(u.anki.decks) == 3 })
+	updateUI(t, u, func() {
+		b := u.browsers[1]
+		for i, style := range []string{"yellow", "aqua", "gray"} {
+			if !strings.Contains(b.list.GetCell(i+1, 0).Text, "["+style+"]") {
+				t.Errorf("deck %d must reflect its review status", i)
+			}
+		}
+		if b.items[0].columns[4] != "Due" || b.items[2].columns[4] != "Up to date" {
+			t.Error("deck status must also be readable without colors")
+		}
+		b.activate(0)
+	})
+	awaitUI(t, u, func() bool { return u.anki.loading["Test"] })
+	u.app.QueueEvent(tcell.NewEventKey(tcell.KeyRune, 'u', tcell.ModNone))
+	awaitUI(t, u, func() bool { return u.anki.showAll })
+	release.Do(func() { close(releaseDue) })
+	awaitUI(t, u, func() bool { return !u.anki.loading["Test"] && len(u.anki.cards["Test"]) == 1001 })
+	updateUI(t, u, func() {
+		b := u.browsers[1]
+		if b.mode != "all cards" || !b.expanded["anki-deck:Test"] || !strings.Contains(u.headerActions.GetText(true), "Show due only") {
+			t.Error("all-card mode must be visible and preserve expanded decks")
+		}
+		b.activate(1001)
+	})
+	awaitUI(t, u, func() bool { return u.anki.reviewOpen })
+	updateUI(t, u, func() {
+		u.showAnkiAnswer()
+		if !strings.Contains(u.anki.doc.text.GetText(true), "Future answer") || u.anki.buttons.GetItemCount() != 1 {
+			t.Error("future cards must show both sides without rating controls")
+		}
+		u.answerAnki(3)
+		if u.anki.busy {
+			t.Error("browsing must not schedule a review")
+		}
+		u.closeAnkiReview()
+		u.browsers[1].filter = "card"
+		u.executeCommand("cards")
+	})
+	awaitUI(t, u, func() bool { return !u.anki.showAll && !u.anki.loading["Test"] && len(u.anki.cards["Test"]) == 1 })
+	updateUI(t, u, func() {
+		if u.anki.cards["Test"][0].ID != 42 || u.browsers[1].mode != "due" || !u.browsers[1].expanded["anki-deck:Test"] || u.browsers[1].filter != "card" {
+			t.Error("switching back must reload due cards without losing expansion or search")
+		}
+	})
+}
 
 func TestAnkiDeckReviewAndCreation(t *testing.T) {
 	var mu sync.Mutex
@@ -79,7 +178,7 @@ func TestAnkiDeckReviewAndCreation(t *testing.T) {
 		if u.browsers[1].rows[0].item.title != "Test" || u.browsers[1].rows[1].depth != 1 || u.browsers[1].detail {
 			t.Error("cards must appear below their deck in the same list")
 		}
-		if u.browsers[1].list.GetCell(1, 4).Text != "[aqua]10[-:-:-]" {
+		if u.browsers[1].list.GetCell(1, 4).Text != "[gray]10[-:-:-]" {
 			t.Errorf("deck total must retain API statistics: %s", u.browsers[1].list.GetCell(1, 4).Text)
 		}
 	})
@@ -279,6 +378,9 @@ func TestAnkiDecksOnOlderBackend(t *testing.T) {
 		case "/api/anki/deck-stats", "/api/anki/due":
 			w.WriteHeader(http.StatusNotFound)
 			result = object{"detail": "Not Found"}
+		case "/api/anki/cards":
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			result = object{"detail": "Method Not Allowed"}
 		default:
 			t.Errorf("unexpected route: %s", r.URL.Path)
 		}
@@ -306,6 +408,10 @@ func TestAnkiDecksOnOlderBackend(t *testing.T) {
 		u.browsers[1].activate(0)
 	})
 	awaitUI(t, u, func() bool { return strings.Contains(u.status.GetText(false), "reviews require the updated backend") })
+	updateUI(t, u, u.toggleAnkiCards)
+	awaitUI(t, u, func() bool {
+		return u.anki.showAll && !u.anki.loading["Default"] && strings.Contains(u.anki.loadErrors["Default"], "updated backend")
+	})
 }
 
 func TestAnkiSyncRefreshesExpandedDeckAndCanRetry(t *testing.T) {

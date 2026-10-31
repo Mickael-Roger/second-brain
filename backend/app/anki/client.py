@@ -250,11 +250,13 @@ def _deck_query(deck: str) -> str:
     return f'deck:"{escaped}"'
 
 
-async def list_cards(deck: str | None = None, limit: int = 100) -> list[AnkiCardInfo]:
+async def list_cards(
+    deck: str | None = None, limit: int = 100, *, offset: int = 0
+) -> list[AnkiCardInfo]:
     """List cards optionally restricted to a deck. Returns front/back/state."""
     query = _deck_query(deck) if deck else "deck:*"
     ids = await find_card_ids(query)
-    return await cards_info(ids[:limit])
+    return await cards_info(ids[offset : offset + limit])
 
 
 async def list_due_cards(

@@ -231,6 +231,10 @@ func (u *ui) capture(event *tcell.EventKey) *tcell.EventKey {
 			u.syncAnki()
 			return nil
 		}
+		if event.Rune() == 'u' && u.active == 1 {
+			u.toggleAnkiCards()
+			return nil
+		}
 		if u.active == 3 {
 			switch event.Rune() {
 			case ' ':
